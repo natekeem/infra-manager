@@ -95,9 +95,9 @@ export function DashboardView({ vms, network, software, sops, trend }: Dashboard
             </span>
             <Link
               href="/infrastructure/architecture"
-              className="flex h-8 items-center gap-1 rounded-md bg-[#5750f1] px-2.5 text-[10px] font-medium text-white transition hover:bg-[#4938d6]"
+              className="flex h-8 items-center gap-1 rounded-md bg-[#5750f1] px-2.5 text-[10px] font-medium !text-white dark:!text-white transition hover:bg-[#4938d6]"
             >
-              Open Architecture <ArrowUpRightIcon className="h-3.5 w-3.5" />
+              Open Architecture <ArrowUpRightIcon className="h-3.5 w-3.5 text-white" />
             </Link>
           </>
         }

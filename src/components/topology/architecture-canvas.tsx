@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   BaseEdge,
@@ -11,10 +11,12 @@ import {
   MarkerType,
   Position,
   ReactFlow,
+  applyNodeChanges,
   getSmoothStepPath,
   type Edge,
   type EdgeProps,
   type Node,
+  type NodeChange,
   type NodeProps,
 } from "@xyflow/react";
 import type {
@@ -62,6 +64,8 @@ export type TopologyEdgeData = {
   flowActive?: boolean;
   showLabel?: boolean;
   onSelect?: () => void;
+  edgeIndex?: number;
+  totalEdges?: number;
 };
 
 const zoneOrder = ["WEB", "APP", "DB", "CONTROL", "BOT", "VDI", "SUPPORT", "EXTERNAL"];
@@ -330,13 +334,14 @@ function Metric({ k, v }: { k: string; v?: number }) {
 }
 
 function FlowEdge(props: EdgeProps<Edge<TopologyEdgeData>>) {
-  const [path, x, y] = getSmoothStepPath({
-    sourceX: props.sourceX,
-    sourceY: props.sourceY,
-    sourcePosition: props.sourcePosition,
-    targetX: props.targetX,
-    targetY: props.targetY,
-    targetPosition: props.targetPosition,
+  const { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition } = props;
+  const [path] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
     borderRadius: 8,
   });
   const data = props.data!;
@@ -345,6 +350,18 @@ function FlowEdge(props: EdgeProps<Edge<TopologyEdgeData>>) {
   const isBidi = data.status?.isBidirectional;
   const isReverseUp = isBidi && data.status?.reverseObservation?.tcp === "UP";
   const flowActive = data.flowActive ?? true;
+
+  // Source-anchored sticky badge positioning:
+  // Instead of clustering at the crowded center midpoint (where curves collide),
+  // labels are anchored right outside the source handle with vertical staggering for multi-port edges.
+  const isForward = targetX >= sourceX;
+  const baseOffsetX = isForward ? 44 : -44;
+  const edgeIdx = data.edgeIndex ?? 0;
+  const totalEdg = data.totalEdges ?? 1;
+  const staggerY = (edgeIdx - (totalEdg - 1) / 2) * 20;
+
+  const labelX = sourceX + baseOffsetX;
+  const labelY = sourceY + staggerY;
 
   return (
     <>
@@ -375,12 +392,28 @@ function FlowEdge(props: EdgeProps<Edge<TopologyEdgeData>>) {
       {data.showLabel && (
         <EdgeLabelRenderer>
           <button
-            onClick={() => data.onSelect?.()}
-            style={{ transform: `translate(-50%,-50%) translate(${x}px,${y}px)` }}
-            className="nodrag nopan absolute z-10 rounded border border-[var(--border)] bg-[var(--surface)]/95 px-1.5 py-0.5 text-left shadow-sm backdrop-blur-[1px] transition hover:border-[#5750f1]"
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onSelect?.();
+            }}
+            style={{ transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)` }}
+            className={`nodrag nopan group absolute z-20 flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-left shadow-sm backdrop-blur-sm transition-all hover:scale-105 hover:z-30 ${
+              data.issueCount > 0
+                ? "border-rose-500/40 bg-[var(--surface)] text-rose-500 hover:border-rose-500 dark:bg-[#182331]"
+                : "border-[var(--border)] bg-[var(--surface)]/95 text-[var(--foreground)] hover:border-[#5750f1] hover:text-[#5750f1] dark:bg-[#182331]"
+            }`}
           >
-            <div className="whitespace-nowrap text-[8px] font-semibold">{data.label}</div>
-            <div className="whitespace-nowrap text-[7px] text-[var(--muted)]">{data.secondary}</div>
+            <span
+              className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+                data.issueCount > 0 ? "bg-rose-500" : isTcpUp ? "bg-emerald-500" : "bg-slate-400"
+              }`}
+            />
+            <span className="font-mono text-[8.5px] font-semibold">{data.label}</span>
+            {data.secondary && (
+              <span className="text-[7.5px] text-[var(--muted)] group-hover:text-[var(--foreground)]">
+                {data.secondary}
+              </span>
+            )}
           </button>
         </EdgeLabelRenderer>
       )}
@@ -492,10 +525,22 @@ export function ArchitectureCanvas({
     }
   }, [layoutStorageKey]);
 
-  const renderedNodes = useMemo(
-    () => nodes.map((node) => ({ ...node, position: positionOverrides[node.id] ?? node.position })),
-    [nodes, positionOverrides]
-  );
+  // Real-time smooth dragging state with ghost twin preview
+  const [liveNodes, setLiveNodes] = useState<Node<TopologyNodeData>[]>([]);
+  const [dragOrigin, setDragOrigin] = useState<{ id: string; position: { x: number; y: number } } | null>(null);
+
+  useEffect(() => {
+    setLiveNodes(
+      nodes.map((node) => ({
+        ...node,
+        position: positionOverrides[node.id] ?? node.position,
+      }))
+    );
+  }, [nodes, positionOverrides]);
+
+  const onNodesChange = useCallback((changes: NodeChange[]) => {
+    setLiveNodes((nds) => applyNodeChanges(changes, nds) as Node<TopologyNodeData>[]);
+  }, []);
 
   function saveNodePosition(nodeId: string, position: { x: number; y: number }) {
     const snapped = { x: Math.round(position.x / 20) * 20, y: Math.round(position.y / 20) * 20 };
@@ -506,11 +551,45 @@ export function ArchitectureCanvas({
     });
   }
 
+  const onNodeDragStart = useCallback((_: any, node: Node) => {
+    setDragOrigin({ id: node.id, position: { ...node.position } });
+  }, []);
+
+  const onNodeDragStop = useCallback((_: any, node: Node) => {
+    setDragOrigin(null);
+    saveNodePosition(node.id, node.position);
+  }, [layoutStorageKey]);
+
   function resetLayout() {
     window.localStorage.removeItem(layoutStorageKey);
     setPositionOverrides({});
     setCanvasRevision((value) => value + 1);
   }
+
+  const displayNodes = useMemo(() => {
+    if (!dragOrigin) return liveNodes;
+    const originNode = liveNodes.find((n) => n.id === dragOrigin.id);
+    if (!originNode) return liveNodes;
+
+    const ghostNode: Node<TopologyNodeData> = {
+      id: `${dragOrigin.id}-ghost`,
+      type: originNode.type,
+      position: dragOrigin.position,
+      style: {
+        ...originNode.style,
+        pointerEvents: "none",
+      },
+      className: "react-flow__node-ghost",
+      data: {
+        ...originNode.data,
+        label: `${originNode.data.label} (Original)`,
+      },
+      draggable: false,
+      selectable: false,
+    };
+
+    return [ghostNode, ...liveNodes];
+  }, [liveNodes, dragOrigin]);
 
   function handleSearch(val: string) {
     setQuery(val);
@@ -685,7 +764,7 @@ export function ArchitectureCanvas({
       <div className="relative h-[calc(100vh-170px)] min-h-[640px]">
         <ReactFlow
           key={`${mode}-${envFilter}-${zone}-${canvasRevision}`}
-          nodes={renderedNodes}
+          nodes={displayNodes}
           edges={edges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
@@ -698,7 +777,9 @@ export function ArchitectureCanvas({
           snapToGrid
           snapGrid={[20, 20]}
           elevateEdgesOnSelect
-          onNodeDragStop={(_, node) => saveNodePosition(node.id, node.position)}
+          onNodesChange={onNodesChange}
+          onNodeDragStart={onNodeDragStart}
+          onNodeDragStop={onNodeDragStop}
           onNodeClick={(_, node) => {
             const d = node.data as TopologyNodeData;
             if (d.vm) setSelectedVm(d.vm);
@@ -726,11 +807,30 @@ export function ArchitectureCanvas({
         >
           <Background gap={20} size={1} color="var(--border)" />
           <Controls showInteractive={false} />
-          <MiniMap pannable zoomable nodeColor="#c7cbd1" maskColor="rgba(17,24,39,.08)" />
+          <MiniMap
+            pannable
+            zoomable
+            nodeColor={(n) => {
+              if (n.id.endsWith("-ghost")) return "transparent";
+              if (n.type === "cluster") return "#a855f7";
+              if (n.type === "nas") return "#0ea5e9";
+              const d = n.data as any;
+              if (d?.issueCount > 0 || d?.vm?.health === "critical") return "#f04438";
+              if (d?.vm?.health === "warning") return "#f79009";
+              if (n.type === "tier") return "#64748b";
+              return "#5750f1";
+            }}
+            nodeStrokeWidth={1}
+            nodeBorderRadius={3}
+            maskColor="rgba(15, 23, 42, 0.35)"
+            maskStrokeColor="#5750f1"
+            maskStrokeWidth={1.5}
+            className="!border-[var(--border)] !bg-[var(--surface)] shadow-md"
+          />
         </ReactFlow>
 
-        {/* Informative Legend Overlay */}
-        <div className="pointer-events-none absolute bottom-3 left-3 rounded-md border border-[var(--border)] bg-[var(--surface)]/95 px-2.5 py-2 text-[8px] text-[var(--muted)] shadow-sm">
+        {/* Informative Legend Overlay - Centered bottom to prevent overlapping left zoom controls */}
+        <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 max-w-[90vw] rounded-md border border-[var(--border)] bg-[var(--surface)]/95 px-3 py-1.5 text-center text-[8px] text-[var(--muted)] shadow-sm backdrop-blur-sm">
           <div>
             <b className="text-[var(--foreground)]">Policy (Should Be)</b>: 승인/만료 ·{" "}
             <b className="text-[var(--foreground)]">Actual</b>: Source→Target Telegraf TCP probe (양방향 지원)
@@ -904,7 +1004,14 @@ function buildOverview(
     agg.set(key, cur);
   }
 
-  const edges: Edge<TopologyEdgeData>[] = [...agg.entries()].map(([id, a]) => {
+  const aggEntries = [...agg.entries()];
+  const sourceEdgeCount = new Map<string, number>();
+  for (const [, a] of aggEntries) {
+    sourceEdgeCount.set(a.source, (sourceEdgeCount.get(a.source) || 0) + 1);
+  }
+  const sourceEdgeIdx = new Map<string, number>();
+
+  const edges: Edge<TopologyEdgeData>[] = aggEntries.map(([id, a]) => {
     const label = overlay === "policy" ? `${a.count} Policies` : `${a.count} Flows`;
     const secondary =
       overlay === "policy"
@@ -914,6 +1021,10 @@ function buildOverview(
         : a.issues
           ? `${a.issues} TCP Attention`
           : "All Reachable";
+
+    const idx = sourceEdgeIdx.get(a.source) || 0;
+    sourceEdgeIdx.set(a.source, idx + 1);
+    const total = sourceEdgeCount.get(a.source) || 1;
 
     return {
       id,
@@ -928,6 +1039,8 @@ function buildOverview(
         status: a.sample,
         flowActive,
         showLabel: true,
+        edgeIndex: idx,
+        totalEdges: total,
         onSelect: () => a.sample && onSelectConnection(a.sample),
       },
     };
@@ -1020,22 +1133,37 @@ function buildServices(
     agg.set(k, a);
   }
 
-  const edges: Edge<TopologyEdgeData>[] = [...agg.entries()].map(([id, a]) => ({
-    id,
-    type: "flow",
-    source: `svc-${a.src}`,
-    target: services.includes(a.tgt) ? `svc-${a.tgt}` : `ext-${a.tgt}`,
-    markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
-    data: {
-      label: overlay === "policy" ? `${a.count} Policies` : `${a.count} Flows`,
-      secondary: a.issues ? `${a.issues} Issues` : overlay === "policy" ? "Approved" : "Reachable",
-      issueCount: a.issues,
-      status: a.sample,
-      flowActive,
-      showLabel: true,
-      onSelect: () => a.sample && onSelectConnection(a.sample),
-    },
-  }));
+  const aggEntries = [...agg.entries()];
+  const sourceEdgeCount = new Map<string, number>();
+  for (const [, a] of aggEntries) {
+    sourceEdgeCount.set(a.src, (sourceEdgeCount.get(a.src) || 0) + 1);
+  }
+  const sourceEdgeIdx = new Map<string, number>();
+
+  const edges: Edge<TopologyEdgeData>[] = aggEntries.map(([id, a]) => {
+    const idx = sourceEdgeIdx.get(a.src) || 0;
+    sourceEdgeIdx.set(a.src, idx + 1);
+    const total = sourceEdgeCount.get(a.src) || 1;
+
+    return {
+      id,
+      type: "flow",
+      source: `svc-${a.src}`,
+      target: services.includes(a.tgt) ? `svc-${a.tgt}` : `ext-${a.tgt}`,
+      markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
+      data: {
+        label: overlay === "policy" ? `${a.count} Policies` : `${a.count} Flows`,
+        secondary: a.issues ? `${a.issues} Issues` : overlay === "policy" ? "Approved" : "Reachable",
+        issueCount: a.issues,
+        status: a.sample,
+        flowActive,
+        showLabel: true,
+        edgeIndex: idx,
+        totalEdges: total,
+        onSelect: () => a.sample && onSelectConnection(a.sample),
+      },
+    };
+  });
 
   return { nodes, edges };
 }
@@ -1188,59 +1316,70 @@ function buildVms(
     });
   }
 
-  const edges: Edge<TopologyEdgeData>[] = statuses
-    .filter(
-      (s) =>
-        visibleIds.has(s.policy.sourceVmId) &&
-        (s.policy.targetVmId ? visibleIds.has(s.policy.targetVmId) : true) &&
-        (!issuesOnly || s.overall !== "NORMAL") &&
-        (!q || `${s.policy.port} ${s.policy.protocol} ${s.policy.requestId ?? ""}`.toLowerCase().includes(q))
-    )
-    .map((s) => {
-      const isBidi = s.isBidirectional || s.policy.direction === "BIDIRECTIONAL";
-      const label = `${s.policy.protocol}/${s.policy.port}${isBidi ? " (⇄)" : ""}`;
-      const secondary =
-        overlay === "policy"
-          ? `${s.policy.approvalStatus}${
-              s.daysToExpiry != null
-                ? ` · ${s.daysToExpiry >= 0 ? `D-${s.daysToExpiry}` : `D+${Math.abs(s.daysToExpiry)}`}`
-                : ""
-            }`
-          : s.overall === "RETURN_DIRECTION_FAILED"
-            ? "RETURN FAILED"
-            : `TCP ${s.observation?.tcp ?? "NO DATA"}${
-                s.observation?.tcpLatencyMs != null ? ` (${s.observation.tcpLatencyMs}ms)` : ""
-              }`;
+  const filteredStatuses = statuses.filter(
+    (s) =>
+      visibleIds.has(s.policy.sourceVmId) &&
+      (s.policy.targetVmId ? visibleIds.has(s.policy.targetVmId) : true) &&
+      (!issuesOnly || s.overall !== "NORMAL") &&
+      (!q || `${s.policy.port} ${s.policy.protocol} ${s.policy.requestId ?? ""}`.toLowerCase().includes(q))
+  );
 
-      const sourceId = s.policy.sourceVmId;
-      const targetId = s.policy.targetVmId ?? `ext-${s.policy.targetName}`;
-      const sourceNode = nodes.find((node) => node.id === sourceId);
-      const targetNode = nodes.find((node) => node.id === targetId);
-      const horizontalForward =
-        Boolean(sourceNode && targetNode) &&
-        (targetNode!.position.x - sourceNode!.position.x) > Math.abs(targetNode!.position.y - sourceNode!.position.y);
+  const sourceCounts = new Map<string, number>();
+  for (const s of filteredStatuses) {
+    sourceCounts.set(s.policy.sourceVmId, (sourceCounts.get(s.policy.sourceVmId) || 0) + 1);
+  }
+  const sourceIdxMap = new Map<string, number>();
 
-      return {
-        id: s.policy.id,
-        type: "flow",
-        source: sourceId,
-        target: targetId,
-        sourceHandle: horizontalForward ? "r" : undefined,
-        targetHandle: horizontalForward ? "l" : undefined,
-        markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
-        markerStart: isBidi ? { type: MarkerType.ArrowClosed, width: 12, height: 12 } : undefined,
-        data: {
-          label,
-          secondary,
-          issueCount: s.overall === "NORMAL" ? 0 : 1,
-          status: s,
-          flowActive,
-          // On a 30+ VM canvas, edge labels are opt-in. Status is conveyed by line color/dash; click opens full detail.
-          showLabel: showEdgeLabels,
-          onSelect: () => onSelectConnection(s),
-        },
-      };
-    });
+  const edges: Edge<TopologyEdgeData>[] = filteredStatuses.map((s) => {
+    const isBidi = s.isBidirectional || s.policy.direction === "BIDIRECTIONAL";
+    const label = `${s.policy.protocol}/${s.policy.port}${isBidi ? " (⇄)" : ""}`;
+    const secondary =
+      overlay === "policy"
+        ? `${s.policy.approvalStatus}${
+            s.daysToExpiry != null
+              ? ` · ${s.daysToExpiry >= 0 ? `D-${s.daysToExpiry}` : `D+${Math.abs(s.daysToExpiry)}`}`
+              : ""
+          }`
+        : s.overall === "RETURN_DIRECTION_FAILED"
+          ? "RETURN FAILED"
+          : `TCP ${s.observation?.tcp ?? "NO DATA"}${
+              s.observation?.tcpLatencyMs != null ? ` (${s.observation.tcpLatencyMs}ms)` : ""
+            }`;
+
+    const sourceId = s.policy.sourceVmId;
+    const targetId = s.policy.targetVmId ?? `ext-${s.policy.targetName}`;
+    const sourceNode = nodes.find((node) => node.id === sourceId);
+    const targetNode = nodes.find((node) => node.id === targetId);
+    const horizontalForward =
+      Boolean(sourceNode && targetNode) &&
+      (targetNode!.position.x - sourceNode!.position.x) > Math.abs(targetNode!.position.y - sourceNode!.position.y);
+
+    const edgeIdx = sourceIdxMap.get(sourceId) || 0;
+    sourceIdxMap.set(sourceId, edgeIdx + 1);
+    const totalEdg = sourceCounts.get(sourceId) || 1;
+
+    return {
+      id: s.policy.id,
+      type: "flow",
+      source: sourceId,
+      target: targetId,
+      sourceHandle: horizontalForward ? "r" : undefined,
+      targetHandle: horizontalForward ? "l" : undefined,
+      markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
+      markerStart: isBidi ? { type: MarkerType.ArrowClosed, width: 12, height: 12 } : undefined,
+      data: {
+        label,
+        secondary,
+        issueCount: s.overall === "NORMAL" ? 0 : 1,
+        status: s,
+        flowActive,
+        showLabel: showEdgeLabels,
+        edgeIndex: edgeIdx,
+        totalEdges: totalEdg,
+        onSelect: () => onSelectConnection(s),
+      },
+    };
+  });
 
   return { nodes, edges };
 }

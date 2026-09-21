@@ -2,12 +2,12 @@ import { cn } from "@/utils/cn";
 
 type Tone = "neutral" | "success" | "warning" | "danger" | "info" | "primary";
 const toneClass: Record<Tone, string> = {
-  neutral: "border-[var(--border)] bg-[var(--surface-2)] text-[var(--muted)]",
-  success: "border-[#abefc6] bg-[var(--success-soft)] text-[#067647] dark:border-[#1f5c45] dark:text-[#75e0aa]",
-  warning: "border-[#fedf89] bg-[var(--warning-soft)] text-[#b54708] dark:border-[#654c14] dark:text-[#fdbf5a]",
-  danger: "border-[#fecdca] bg-[var(--danger-soft)] text-[#b42318] dark:border-[#66302e] dark:text-[#ff8a82]",
-  info: "border-[#b2ddff] bg-[var(--info-soft)] text-[#175cd3] dark:border-[#234f74] dark:text-[#78b8ff]",
-  primary: "border-[#d9d6fe] bg-[var(--primary-soft)] text-[#4938d6] dark:border-[#4b4492] dark:text-[#aaa4ff]",
+  neutral: "border-[var(--border)] bg-[var(--surface-2)] text-[var(--muted)] dark:border-white/10 dark:bg-white/[0.04] dark:text-[#94a3b8]",
+  success: "border-[#abefc6] bg-[var(--success-soft)] text-[#067647] dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-400",
+  warning: "border-[#fedf89] bg-[var(--warning-soft)] text-[#b54708] dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-400",
+  danger: "border-[#fecdca] bg-[var(--danger-soft)] text-[#b42318] dark:border-rose-500/25 dark:bg-rose-500/10 dark:text-rose-400",
+  info: "border-[#b2ddff] bg-[var(--info-soft)] text-[#175cd3] dark:border-sky-500/25 dark:bg-sky-500/10 dark:text-sky-400",
+  primary: "border-[#d9d6fe] bg-[var(--primary-soft)] text-[#4938d6] dark:border-indigo-500/25 dark:bg-indigo-500/10 dark:text-indigo-300",
 };
 
 export function Badge({ children, tone = "neutral", dot = false, className }: { children: React.ReactNode; tone?: Tone; dot?: boolean; className?: string }) {

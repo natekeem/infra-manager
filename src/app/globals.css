@@ -40,19 +40,21 @@ html.dark {
   --info-soft: #102a44;
 }
 
-* { box-sizing: border-box; }
-html, body { min-height: 100%; }
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font-family: Arial, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
-  font-size: 13px;
-  letter-spacing: -0.01em;
+@layer base {
+  * { box-sizing: border-box; }
+  html, body { min-height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: Arial, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    font-size: 13px;
+    letter-spacing: -0.01em;
+  }
+  button, input, select, textarea { font: inherit; }
+  a { color: inherit; text-decoration: none; }
+  ::selection { background: #dcd9ff; color: #111827; }
 }
-button, input, select, textarea { font: inherit; }
-a { color: inherit; text-decoration: none; }
-::selection { background: #dcd9ff; color: #111827; }
 
 /* React Flow is intentionally restrained: no neon, no oversized nodes. */
 .react-flow__controls {
@@ -68,8 +70,16 @@ a { color: inherit; text-decoration: none; }
 }
 .react-flow__minimap {
   background: var(--surface) !important;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+  overflow: hidden;
+}
+.react-flow__minimap-mask {
+  fill: rgba(15, 23, 42, 0.2) !important;
+}
+html.dark .react-flow__minimap-mask {
+  fill: rgba(0, 0, 0, 0.55) !important;
 }
 .react-flow__background { background: var(--surface); }
 
@@ -80,3 +90,21 @@ a { color: inherit; text-decoration: none; }
   background: transparent !important;
   box-shadow: none !important;
 }
+
+/* Dragging "Ghost / Soul" state */
+.react-flow__node.dragging {
+  opacity: 0.82 !important;
+  filter: drop-shadow(0 12px 28px rgba(87, 80, 241, 0.28)) !important;
+  cursor: grabbing !important;
+  z-index: 1000 !important;
+}
+
+/* Ethereal ghost placeholder left at the origin during drag */
+.react-flow__node-ghost {
+  border: 1.5px dashed #5750f1 !important;
+  background: rgba(87, 80, 241, 0.04) !important;
+  border-radius: 6px !important;
+  opacity: 0.65 !important;
+  pointer-events: none !important;
+}
+

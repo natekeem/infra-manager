@@ -1,0 +1,74 @@
+@import "tailwindcss";
+@import "@xyflow/react/dist/style.css";
+
+:root {
+  --sidebar: 216px;
+  --header: 52px;
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --surface-2: #f9fafb;
+  --border: #e5e7eb;
+  --border-strong: #d1d5db;
+  --text: #111827;
+  --muted: #6b7280;
+  --muted-2: #9ca3af;
+  --primary: #5750f1;
+  --primary-soft: #eeedff;
+  --success: #12b76a;
+  --success-soft: #ecfdf3;
+  --warning: #f79009;
+  --warning-soft: #fffaeb;
+  --danger: #f04438;
+  --danger-soft: #fef3f2;
+  --info: #2e90fa;
+  --info-soft: #eff8ff;
+}
+
+html.dark {
+  --bg: #0f1720;
+  --surface: #141d2a;
+  --surface-2: #182331;
+  --border: #253243;
+  --border-strong: #334155;
+  --text: #f1f5f9;
+  --muted: #9aa8b8;
+  --muted-2: #738195;
+  --primary-soft: #25204f;
+  --success-soft: #0d2a20;
+  --warning-soft: #32250b;
+  --danger-soft: #331718;
+  --info-soft: #102a44;
+}
+
+* { box-sizing: border-box; }
+html, body { min-height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Arial, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+button, input, select, textarea { font: inherit; }
+a { color: inherit; text-decoration: none; }
+::selection { background: #dcd9ff; color: #111827; }
+
+/* React Flow is intentionally restrained: no neon, no oversized nodes. */
+.react-flow__controls {
+  border: 1px solid var(--border) !important;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 0.06) !important;
+  overflow: hidden;
+  border-radius: 6px !important;
+}
+.react-flow__controls-button {
+  background: var(--surface) !important;
+  border-bottom: 1px solid var(--border) !important;
+  fill: var(--text) !important;
+}
+.react-flow__minimap {
+  background: var(--surface) !important;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.react-flow__background { background: var(--surface); }

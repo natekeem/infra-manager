@@ -1,0 +1,17 @@
+[
+  {
+    "id": "p1",
+    "sourceVmId": "web01",
+    "sourceName": "RPA-WEB01",
+    "sourceIp": "10.10.10.11",
+    "targetVmId": "app01",
+    "targetName": "RPA-APP01",
+    "targetIp": "10.10.20.11",
+    "protocol": "TCP",
+    "port": 8080,
+    "approvalStatus": "APPROVED",
+    "expiresAt": "2027-03-01",
+    "requestId": "FW-2026-0001",
+    "purpose": "Portal API"
+  }
+]

@@ -1,0 +1,188 @@
+{
+  "vms": [
+    {
+      "id": "web01",
+      "hostname": "RPA-WEB01",
+      "ipAddress": "10.10.10.11",
+      "environment": "PROD",
+      "role": "Web",
+      "service": "RPA Portal",
+      "zone": "WEB",
+      "criticality": "HIGH",
+      "osName": "Windows Server",
+      "osVersion": "2022",
+      "cpuCores": 8,
+      "memoryGb": 16,
+      "diskGb": 500,
+      "cpuPct": 35,
+      "memoryPct": 75,
+      "diskPct": 69,
+      "health": "healthy",
+      "owner": "RPA Platform",
+      "eoslDate": "2031-10-14",
+      "grafanaPath": "/d/vm-detail?var-host=RPA-WEB01",
+      "sourceRef": "sample/vm-inventory.xlsx",
+      "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+    },
+    {
+      "id": "web02",
+      "hostname": "RPA-WEB02",
+      "ipAddress": "10.10.10.12",
+      "environment": "PROD",
+      "role": "Web",
+      "service": "RPA Portal",
+      "zone": "WEB",
+      "criticality": "HIGH",
+      "osName": "Windows Server",
+      "osVersion": "2022",
+      "cpuCores": 8,
+      "memoryGb": 16,
+      "diskGb": 500,
+      "cpuPct": 45,
+      "memoryPct": 82,
+      "diskPct": 74,
+      "health": "healthy",
+      "owner": "RPA Platform",
+      "eoslDate": "2031-10-14",
+      "grafanaPath": "/d/vm-detail?var-host=RPA-WEB02",
+      "sourceRef": "sample/vm-inventory.xlsx",
+      "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+    }
+  ],
+  "software": [
+    {
+      "id": "sw1",
+      "vmId": "web01",
+      "name": "CrowdStrike Sensor",
+      "version": "7.15",
+      "vendor": "CrowdStrike",
+      "category": "Security",
+      "eoslDate": null,
+      "sourceRef": "sample/software-inventory.xlsx"
+    },
+    {
+      "id": "sw2",
+      "vmId": "web01",
+      "name": "Telegraf",
+      "version": "1.36",
+      "vendor": "InfluxData",
+      "category": "Monitoring",
+      "eoslDate": null,
+      "sourceRef": "sample/software-inventory.xlsx"
+    },
+    {
+      "id": "sw3",
+      "vmId": "web01",
+      "name": "IIS",
+      "version": "10",
+      "vendor": "Microsoft",
+      "category": "Web Server",
+      "eoslDate": "2031-10-14",
+      "sourceRef": "sample/software-inventory.xlsx"
+    },
+    {
+      "id": "sw4",
+      "vmId": "web02",
+      "name": "CrowdStrike Sensor",
+      "version": "7.15",
+      "vendor": "CrowdStrike",
+      "category": "Security",
+      "eoslDate": null,
+      "sourceRef": "sample/software-inventory.xlsx"
+    }
+  ],
+  "networkPolicies": [
+    {
+      "id": "p1",
+      "sourceVmId": "web01",
+      "sourceName": "RPA-WEB01",
+      "sourceIp": "10.10.10.11",
+      "targetVmId": "app01",
+      "targetName": "RPA-APP01",
+      "targetIp": "10.10.20.11",
+      "protocol": "TCP",
+      "port": 8080,
+      "approvalStatus": "APPROVED",
+      "requestedAt": "2026-01-10",
+      "approvedAt": "2026-01-12",
+      "validFrom": "2026-01-12",
+      "expiresAt": "2027-03-01",
+      "requestId": "FW-2026-0001",
+      "purpose": "Portal API",
+      "owner": "RPA Platform",
+      "sourceRef": "sample/firewall-requests.xlsx"
+    },
+    {
+      "id": "p2",
+      "sourceVmId": "web02",
+      "sourceName": "RPA-WEB02",
+      "sourceIp": "10.10.10.12",
+      "targetVmId": "app01",
+      "targetName": "RPA-APP01",
+      "targetIp": "10.10.20.11",
+      "protocol": "TCP",
+      "port": 8080,
+      "approvalStatus": "APPROVED",
+      "requestedAt": "2026-01-10",
+      "approvedAt": "2026-01-12",
+      "validFrom": "2026-01-12",
+      "expiresAt": "2027-03-01",
+      "requestId": "FW-2026-0002",
+      "purpose": "Portal API",
+      "owner": "RPA Platform",
+      "sourceRef": "sample/firewall-requests.xlsx"
+    },
+    {
+      "id": "p3",
+      "sourceVmId": "web03",
+      "sourceName": "RPA-WEB03",
+      "sourceIp": "10.10.10.13",
+      "targetVmId": "app02",
+      "targetName": "RPA-APP02",
+      "targetIp": "10.10.20.12",
+      "protocol": "TCP",
+      "port": 8080,
+      "approvalStatus": "APPROVED",
+      "requestedAt": "2026-01-10",
+      "approvedAt": "2026-01-12",
+      "validFrom": "2026-01-12",
+      "expiresAt": "2027-03-01",
+      "requestId": "FW-2026-0003",
+      "purpose": "Portal API",
+      "owner": "RPA Platform",
+      "sourceRef": "sample/firewall-requests.xlsx"
+    }
+  ],
+  "sops": [
+    {
+      "id": "sop01",
+      "title": "Control Room 접속 장애 대응",
+      "category": "Application",
+      "owner": "RPA Platform",
+      "url": "https://confluence.example.internal/sop/control-room",
+      "relatedVmIds": [
+        "app01",
+        "app02",
+        "app03",
+        "app04",
+        "app05",
+        "app06"
+      ],
+      "updatedAt": "2026-08-14"
+    },
+    {
+      "id": "sop02",
+      "title": "DB Connection / Failover 대응",
+      "category": "Database",
+      "owner": "DB Team",
+      "url": "https://confluence.example.internal/sop/db-failover",
+      "relatedVmIds": [
+        "db01",
+        "db02",
+        "db03",
+        "db04"
+      ],
+      "updatedAt": "2026-07-21"
+    }
+  ]
+}

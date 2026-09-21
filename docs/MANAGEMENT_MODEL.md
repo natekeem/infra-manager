@@ -12,7 +12,6 @@ Key principles:
    - Strictly preserves NextAdmin v2 compact styling (dense tables, 10~11px fonts, 32~36px row heights, subtle borders, no large SaaS KPI gradients).
    - In-page modal forms enable quick record creation and editing without disrupting the operator's workflow.
 3. **Data Provenance**:
-   - Retains `sourceRef` (CMDB spreadsheet batch, security request ticket, or vCenter export reference) across all entities.
 
 ---
 

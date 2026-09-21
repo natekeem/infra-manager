@@ -25,7 +25,6 @@ export function AssetManagementView({ initialAssets }: { initialAssets: InfraAss
     criticality: "HIGH",
     health: "healthy",
     owner: "",
-    sourceRef: "MANUAL_INPUT",
   });
 
   const filtered = assets.filter((a) => {
@@ -52,8 +51,7 @@ export function AssetManagementView({ initialAssets }: { initialAssets: InfraAss
       criticality: "HIGH",
       health: "healthy",
       owner: "",
-      sourceRef: "MANUAL_INPUT",
-    });
+      });
     setIsModalOpen(true);
   }
 
@@ -134,14 +132,13 @@ export function AssetManagementView({ initialAssets }: { initialAssets: InfraAss
                 <Th>Service / Role</Th>
                 <Th>Criticality</Th>
                 <Th>Owner</Th>
-                <Th>Source Ref</Th>
                 <Th className="text-right">Actions</Th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border)]">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="p-6 text-center text-[11px] text-[var(--muted)]">
+                  <td colSpan={9} className="p-6 text-center text-[11px] text-[var(--muted)]">
                     등록된 인프라 자산이 없습니다.
                   </td>
                 </tr>
@@ -187,9 +184,6 @@ export function AssetManagementView({ initialAssets }: { initialAssets: InfraAss
                       </Badge>
                     </Td>
                     <Td>{a.owner ?? "-"}</Td>
-                    <Td>
-                      <span className="font-mono text-[9px] text-[var(--muted)]">{a.sourceRef ?? "-"}</span>
-                    </Td>
                     <Td className="text-right space-x-1.5">
                       <button
                         type="button"
@@ -341,15 +335,6 @@ export function AssetManagementView({ initialAssets }: { initialAssets: InfraAss
                     onChange={(e) => setFormData({ ...formData, owner: e.target.value })}
                     placeholder="e.g. RPA Platform Team"
                     className="h-7 w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 outline-none text-[var(--foreground)]"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block font-medium text-[var(--muted)]">Source Ref</label>
-                  <input
-                    value={formData.sourceRef ?? ""}
-                    onChange={(e) => setFormData({ ...formData, sourceRef: e.target.value })}
-                    placeholder="e.g. CMDB-202609"
-                    className="h-7 w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 font-mono outline-none text-[var(--foreground)]"
                   />
                 </div>
               </div>

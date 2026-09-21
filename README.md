@@ -152,8 +152,8 @@ INFLUX_CONNECTIVITY_MEASUREMENT=net_response
 | `/infrastructure/vms` | VM inventory |
 | `/infrastructure/architecture` | grouped/live topology |
 | `/infrastructure/software` | software + EOSL |
-| `/network/policies` | declared firewall-opening registry |
-| `/network/connectivity` | actual connectivity |
+| `/network/connectivity` | policy baseline + Telegraf observed connectivity (joined view) |
+| `/network/policies` | compatibility redirect to joined network view |
 | `/operations/sop` | SOP library |
 
 ## Important files for the internal coding agent

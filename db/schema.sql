@@ -5,7 +5,6 @@ CREATE TABLE import_batch (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   source_name VARCHAR(255) NOT NULL,
   source_type VARCHAR(50) NOT NULL,
-  source_ref TEXT NULL,
   imported_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   imported_by VARCHAR(100) NULL,
   notes TEXT NULL
@@ -30,7 +29,6 @@ CREATE TABLE vm_asset (
   vm_status VARCHAR(30) NOT NULL DEFAULT 'ACTIVE',
   eosl_date DATE NULL,
   grafana_path TEXT NULL,
-  source_ref TEXT NULL,
   import_batch_id BIGINT NULL,
   last_verified_at DATETIME NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -51,15 +49,31 @@ CREATE TABLE software_catalog (
   UNIQUE KEY uq_sw_catalog (canonical_name, vendor)
 );
 
+CREATE TABLE software_release (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  software_id BIGINT NOT NULL,
+  version VARCHAR(100) NOT NULL,
+  release_date DATE NULL,
+  support_end_date DATE NULL,
+  eosl_date DATE NULL,
+  version_match_rule ENUM('exact','prefix','regex','range') NOT NULL DEFAULT 'exact',
+  match_pattern VARCHAR(255) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_sw_release (software_id, version),
+  INDEX idx_sw_release_eosl (eosl_date),
+  CONSTRAINT fk_sw_release_product FOREIGN KEY (software_id) REFERENCES software_catalog(id)
+);
+
 CREATE TABLE vm_software (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   vm_id BIGINT NOT NULL,
   software_id BIGINT NOT NULL,
   version VARCHAR(100) NULL,
+  matched_release_id BIGINT NULL,
   edition VARCHAR(100) NULL,
   installed_at DATE NULL,
   eosl_date DATE NULL,
-  source_ref TEXT NULL,
   import_batch_id BIGINT NULL,
   last_verified_at DATETIME NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -68,6 +82,7 @@ CREATE TABLE vm_software (
   INDEX idx_sw_eosl (eosl_date),
   CONSTRAINT fk_vmsw_vm FOREIGN KEY (vm_id) REFERENCES vm_asset(id),
   CONSTRAINT fk_vmsw_sw FOREIGN KEY (software_id) REFERENCES software_catalog(id),
+  CONSTRAINT fk_vmsw_release FOREIGN KEY (matched_release_id) REFERENCES software_release(id),
   CONSTRAINT fk_vmsw_import FOREIGN KEY (import_batch_id) REFERENCES import_batch(id)
 );
 
@@ -82,6 +97,7 @@ CREATE TABLE network_policy (
   target_ip VARCHAR(45) NOT NULL,
   protocol ENUM('TCP','UDP') NOT NULL DEFAULT 'TCP',
   port INT NOT NULL,
+  direction ENUM('ONE_WAY','BIDIRECTIONAL') NOT NULL DEFAULT 'ONE_WAY',
   approval_status ENUM('APPROVED','PENDING','REJECTED','UNKNOWN') NOT NULL DEFAULT 'UNKNOWN',
   requested_at DATETIME NULL,
   approved_at DATETIME NULL,
@@ -91,7 +107,6 @@ CREATE TABLE network_policy (
   purpose VARCHAR(500) NULL,
   owner VARCHAR(150) NULL,
   is_required BOOLEAN NOT NULL DEFAULT TRUE,
-  source_ref TEXT NULL,
   import_batch_id BIGINT NULL,
   last_verified_at DATETIME NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -114,7 +129,6 @@ CREATE TABLE service_dependency (
   protocol VARCHAR(20) NULL,
   port INT NULL,
   description VARCHAR(500) NULL,
-  source_ref TEXT NULL,
   import_batch_id BIGINT NULL,
   last_verified_at DATETIME NULL,
   CONSTRAINT fk_sd_import FOREIGN KEY (import_batch_id) REFERENCES import_batch(id)
@@ -128,7 +142,6 @@ CREATE TABLE sop_document (
   document_url TEXT NULL,
   content_md MEDIUMTEXT NULL,
   owner VARCHAR(150) NULL,
-  source_ref TEXT NULL,
   import_batch_id BIGINT NULL,
   last_verified_at DATETIME NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

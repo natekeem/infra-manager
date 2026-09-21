@@ -202,8 +202,8 @@ export function DashboardView({ vms, network, software, sops, trend }: Dashboard
             title="Expiring Network Policies"
             description="Approved firewall requests expiring within 30 days or overdue"
             action={
-              <Link href="/network/policies" className="text-[9px] font-medium text-[#5750f1] hover:underline">
-                Policy Registry →
+              <Link href="/network/connectivity" className="text-[9px] font-medium text-[#5750f1] hover:underline">
+                Policy & Connectivity →
               </Link>
             }
           />

@@ -11,9 +11,9 @@ This repository intentionally follows the current NextAdmin v2 project philosoph
 5. **Network truth model has exactly two primary dimensions:**
    - Declared/approved policy from MySQL or normalized source documents = SHOULD BE (supports `ONE_WAY` and `BIDIRECTIONAL`)
    - Source-side Telegraf TCP probe from InfluxDB = ACTUAL (checks forward and return probes for bidirectional policies)
-   Ping is diagnostic context only.
+   Policy is the primary row. Observations are independent facts joined by `sourceVmId + targetIp + protocol + port`; never duplicate policy IDs into Telegraf just to perform the join. Ping is diagnostic context only.
 6. A failed TCP probe must be labelled **connectivity failure**, not automatically "firewall blocked". Ping UP + TCP DOWN means check firewall implementation and target service first. If forward TCP is UP but return TCP is DOWN, label as **`RETURN_DIRECTION_FAILED`**.
-7. Never invent missing infrastructure data. Use `null`, `UNKNOWN`, or `UNMAPPED`. Preserve `sourceRef` / import batch provenance.
+7. Never invent missing infrastructure data. Use `null`, `UNKNOWN`, or `UNMAPPED`. Keep import batch metadata only when a bulk import needs audit history.
 8. Keep the app as one Next.js deployment. Do not introduce FastAPI/NestJS or a new service unless explicitly approved.
 9. Do not install new packages unless the existing stack cannot reasonably solve the problem.
 10. Internal data integration should replace adapters, not rewrite components.
@@ -25,8 +25,8 @@ This repository intentionally follows the current NextAdmin v2 project philosoph
 - `/infrastructure/vms` — compact VM inventory
 - `/infrastructure/architecture` — grouped React Flow topology with Probe Flow animation
 - `/infrastructure/software` — 3-tier software catalog & EOSL lifecycle
-- `/network/policies` — approved/declared firewall-opening registry
-- `/network/connectivity` — Telegraf observed status
+- `/network/connectivity` — unified policy baseline + Telegraf observed status (joined by directional connection identity)
+- `/network/policies` — compatibility redirect to `/network/connectivity`
 - `/operations/sop` — SOP links/content
 
 ### Management & Administration
@@ -40,7 +40,7 @@ This repository intentionally follows the current NextAdmin v2 project philosoph
 ## Data integration order inside company
 
 1. Normalize source files into `samples/normalized-import.example.json` shape.
-2. Validate IDs/IPs/ports/expiry and keep `sourceRef`.
+2. Validate IDs/IPs/ports/expiry and report missing/ambiguous values without guessing.
 3. Import MySQL using `npm run import:normalized -- <file>`.
 4. Implement MySQL reads behind `src/services/api/infrastructure/index.ts` without changing component props.
 5. Map existing Influx measurement/tags to `ConnectivityObservation`.
@@ -61,7 +61,7 @@ This repository intentionally follows the current NextAdmin v2 project philosoph
 
 ## Definition of done for internal migration
 
-- All known VMs imported with source reference.
+- All known VMs imported with stable identifiers and verified values; do not add source-reference fields unless the product owner explicitly asks for them.
 - Network policy records match the approved request records, including expiry dates and directionality.
 - Source-side TCP probes are queryable for every required policy where feasible.
 - No production page depends on manually hardcoded internal IPs.

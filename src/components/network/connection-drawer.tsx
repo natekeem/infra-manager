@@ -9,7 +9,9 @@ export function ConnectionDrawer({ status, open, onClose }: { status: NetworkSta
   if (!status) return null;
   const p = status.policy;
   const o = status.observation;
+  const reverse = status.reverseObservation;
   const isBidi = p.direction === "BIDIRECTIONAL" || status.isBidirectional;
+  const observesReverse = isBidi && Boolean(p.targetVmId);
 
   return (
     <SlideDrawer
@@ -38,7 +40,7 @@ export function ConnectionDrawer({ status, open, onClose }: { status: NetworkSta
           <KV k="Purpose" v={p.purpose ?? "-"} />
         </DrawerSection>
 
-        {isBidi ? (
+        {observesReverse ? (
           <DrawerSection title="Observed Probes (Bidirectional)">
             <div className="space-y-2.5">
               {/* Forward Probe Card */}
@@ -56,19 +58,19 @@ export function ConnectionDrawer({ status, open, onClose }: { status: NetworkSta
               </div>
 
               {/* Return Probe Card */}
-              <div className={`rounded border p-2.5 ${o?.reverseTcp === "DOWN" ? "border-[var(--danger)]/30 bg-[var(--danger-surface)]" : "border-[var(--border)] bg-[var(--surface-2)]"}`}>
+              <div className={`rounded border p-2.5 ${reverse?.tcp === "DOWN" ? "border-[var(--danger)]/30 bg-[var(--danger-surface)]" : "border-[var(--border)] bg-[var(--surface-2)]"}`}>
                 <div className="mb-2 flex items-center justify-between">
                   <span className="font-mono text-[10px] font-semibold text-[var(--foreground)]">Return: {p.targetName} → {p.sourceName}</span>
-                  <ProbeBadge value={o?.reverseTcp ?? "NO_DATA"} />
+                  <ProbeBadge value={reverse?.tcp ?? "NO_DATA"} />
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-[10px]">
-                  <div><span className="text-[var(--muted)]">Ping: </span><ProbeBadge value={o?.reversePing ?? "NO_DATA"} /></div>
-                  <div><span className="text-[var(--muted)]">Ping RTT: </span><span className="font-mono">-</span></div>
-                  <div><span className="text-[var(--muted)]">TCP: </span><ProbeBadge value={o?.reverseTcp ?? "NO_DATA"} /></div>
-                  <div><span className="text-[var(--muted)]">TCP RTT: </span><span className="font-mono">{o?.reverseTcpLatencyMs != null ? `${o.reverseTcpLatencyMs} ms` : "-"}</span></div>
+                  <div><span className="text-[var(--muted)]">Ping: </span><ProbeBadge value={reverse?.ping ?? "NO_DATA"} /></div>
+                  <div><span className="text-[var(--muted)]">Ping RTT: </span><span className="font-mono">{reverse?.pingLatencyMs != null ? `${reverse.pingLatencyMs} ms` : "-"}</span></div>
+                  <div><span className="text-[var(--muted)]">TCP: </span><ProbeBadge value={reverse?.tcp ?? "NO_DATA"} /></div>
+                  <div><span className="text-[var(--muted)]">TCP RTT: </span><span className="font-mono">{reverse?.tcpLatencyMs != null ? `${reverse.tcpLatencyMs} ms` : "-"}</span></div>
                 </div>
               </div>
-              <div className="text-[9px] text-[var(--muted)]">Checked: {o?.checkedAt?.replace("T", " ").slice(0, 19) ?? "-"}</div>
+              <div className="text-[9px] text-[var(--muted)]">Forward checked: {o?.checkedAt?.replace("T", " ").slice(0, 19) ?? "-"}<br/>Return checked: {reverse?.checkedAt?.replace("T", " ").slice(0, 19) ?? "-"}</div>
             </div>
           </DrawerSection>
         ) : (
@@ -78,6 +80,11 @@ export function ConnectionDrawer({ status, open, onClose }: { status: NetworkSta
             <KV k="TCP" v={<ProbeBadge value={o?.tcp ?? "NO_DATA"} />} />
             <KV k="TCP RTT" v={o?.tcpLatencyMs == null ? "-" : `${o.tcpLatencyMs} ms`} />
             <KV k="Checked" v={o?.checkedAt?.replace("T", " ").slice(0, 19) ?? "-"} />
+            {isBidi && !p.targetVmId && (
+              <div className="mt-2 rounded border border-[var(--border)] bg-[var(--surface-2)] p-2 text-[9px] text-[var(--muted)]">
+                정책은 양방향이지만 Target이 관리 대상 VM이 아니어서 Target→Source Telegraf probe는 자동 수집 대상이 아닙니다.
+              </div>
+            )}
           </DrawerSection>
         )}
 

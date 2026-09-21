@@ -20,7 +20,6 @@ const SAMPLE_PAYLOAD = JSON.stringify(
         criticality: "HIGH",
         health: "healthy",
         owner: "RPA Operations",
-        sourceRef: "IMPORT-BATCH-2026-09",
       },
       {
         id: "nas-backup",
@@ -34,7 +33,6 @@ const SAMPLE_PAYLOAD = JSON.stringify(
         criticality: "MEDIUM",
         health: "healthy",
         owner: "Infra Team",
-        sourceRef: "IMPORT-BATCH-2026-09",
       },
     ],
     policies: [

@@ -72,3 +72,11 @@ a { color: inherit; text-decoration: none; }
   border-radius: 6px;
 }
 .react-flow__background { background: var(--surface); }
+
+/* Custom tier nodes must not inherit React Flow's built-in `group` node chrome. */
+.react-flow__node-tier {
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}

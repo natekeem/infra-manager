@@ -18,8 +18,7 @@ const groups = [
   {
     label: "NETWORK",
     items: [
-      { href: "/network/policies", label: "Policy Registry", icon: ShieldIcon },
-      { href: "/network/connectivity", label: "Connectivity", icon: NetworkIcon },
+      { href: "/network/connectivity", label: "Policy & Connectivity", icon: NetworkIcon },
     ],
   },
   { label: "OPERATIONS", items: [{ href: "/operations/sop", label: "SOP", icon: DocIcon }] },

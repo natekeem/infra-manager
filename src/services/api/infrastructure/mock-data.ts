@@ -34,7 +34,6 @@ export const vms: VmAsset[] = [
     "owner": "RPA Platform",
     "eoslDate": "2031-10-14",
     "grafanaPath": "/d/vm-detail?var-host=RPA-WEB01",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -58,7 +57,6 @@ export const vms: VmAsset[] = [
     "owner": "RPA Platform",
     "eoslDate": "2031-10-14",
     "grafanaPath": "/d/vm-detail?var-host=RPA-WEB02",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -82,7 +80,6 @@ export const vms: VmAsset[] = [
     "owner": "RPA Platform",
     "eoslDate": "2031-10-14",
     "grafanaPath": "/d/vm-detail?var-host=RPA-WEB03",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -106,7 +103,6 @@ export const vms: VmAsset[] = [
     "owner": "RPA Platform",
     "eoslDate": "2031-10-14",
     "grafanaPath": "/d/vm-detail?var-host=RPA-WEB04",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -130,7 +126,6 @@ export const vms: VmAsset[] = [
     "owner": "RPA Platform",
     "eoslDate": "2029-01-09",
     "grafanaPath": "/d/vm-detail?var-host=RPA-APP01",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -154,7 +149,6 @@ export const vms: VmAsset[] = [
     "owner": "RPA Platform",
     "eoslDate": "2029-01-09",
     "grafanaPath": "/d/vm-detail?var-host=RPA-APP02",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -178,7 +172,6 @@ export const vms: VmAsset[] = [
     "owner": "RPA Platform",
     "eoslDate": "2029-01-09",
     "grafanaPath": "/d/vm-detail?var-host=RPA-APP03",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -202,7 +195,6 @@ export const vms: VmAsset[] = [
     "owner": "RPA Platform",
     "eoslDate": "2029-01-09",
     "grafanaPath": "/d/vm-detail?var-host=RPA-APP04",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -226,7 +218,6 @@ export const vms: VmAsset[] = [
     "owner": "RPA Platform",
     "eoslDate": "2029-01-09",
     "grafanaPath": "/d/vm-detail?var-host=RPA-APP05",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -250,7 +241,6 @@ export const vms: VmAsset[] = [
     "owner": "RPA Platform",
     "eoslDate": "2029-01-09",
     "grafanaPath": "/d/vm-detail?var-host=RPA-APP06",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -274,7 +264,6 @@ export const vms: VmAsset[] = [
     "owner": "DB Team",
     "eoslDate": "2029-01-09",
     "grafanaPath": "/d/vm-detail?var-host=RPA-DB01",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -298,7 +287,6 @@ export const vms: VmAsset[] = [
     "owner": "DB Team",
     "eoslDate": "2029-01-09",
     "grafanaPath": "/d/vm-detail?var-host=RPA-DB02",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -322,7 +310,6 @@ export const vms: VmAsset[] = [
     "owner": "DB Team",
     "eoslDate": "2026-11-15",
     "grafanaPath": "/d/vm-detail?var-host=RPA-DB03",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -346,7 +333,6 @@ export const vms: VmAsset[] = [
     "owner": "DB Team",
     "eoslDate": "2029-01-09",
     "grafanaPath": "/d/vm-detail?var-host=RPA-DB04",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -370,7 +356,6 @@ export const vms: VmAsset[] = [
     "owner": "RPA Platform",
     "eoslDate": "2031-10-14",
     "grafanaPath": "/d/vm-detail?var-host=RPA-CTRL01",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -394,7 +379,6 @@ export const vms: VmAsset[] = [
     "owner": "RPA Platform",
     "eoslDate": "2031-10-14",
     "grafanaPath": "/d/vm-detail?var-host=RPA-CTRL02",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -418,7 +402,6 @@ export const vms: VmAsset[] = [
     "owner": "RPA Platform",
     "eoslDate": "2031-10-14",
     "grafanaPath": "/d/vm-detail?var-host=RPA-BOT01",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -442,7 +425,6 @@ export const vms: VmAsset[] = [
     "owner": "RPA Platform",
     "eoslDate": "2031-10-14",
     "grafanaPath": "/d/vm-detail?var-host=RPA-BOT02",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -466,7 +448,6 @@ export const vms: VmAsset[] = [
     "owner": "RPA Platform",
     "eoslDate": "2031-10-14",
     "grafanaPath": "/d/vm-detail?var-host=RPA-BOT03",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -490,7 +471,6 @@ export const vms: VmAsset[] = [
     "owner": "RPA Platform",
     "eoslDate": "2031-10-14",
     "grafanaPath": "/d/vm-detail?var-host=RPA-BOT04",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -514,7 +494,6 @@ export const vms: VmAsset[] = [
     "owner": "RPA Platform",
     "eoslDate": "2031-10-14",
     "grafanaPath": "/d/vm-detail?var-host=RPA-BOT05",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -538,7 +517,6 @@ export const vms: VmAsset[] = [
     "owner": "RPA Platform",
     "eoslDate": "2031-10-14",
     "grafanaPath": "/d/vm-detail?var-host=RPA-BOT06",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -562,7 +540,6 @@ export const vms: VmAsset[] = [
     "owner": "RPA Platform",
     "eoslDate": "2031-10-14",
     "grafanaPath": "/d/vm-detail?var-host=RPA-BOT07",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -586,7 +563,6 @@ export const vms: VmAsset[] = [
     "owner": "RPA Platform",
     "eoslDate": "2023-10-10",
     "grafanaPath": "/d/vm-detail?var-host=RPA-BOT08",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -610,7 +586,6 @@ export const vms: VmAsset[] = [
     "owner": "VDI Team",
     "eoslDate": "2028-11-10",
     "grafanaPath": "/d/vm-detail?var-host=RPA-VDI01",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -634,7 +609,6 @@ export const vms: VmAsset[] = [
     "owner": "VDI Team",
     "eoslDate": "2028-11-10",
     "grafanaPath": "/d/vm-detail?var-host=RPA-VDI02",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -658,7 +632,6 @@ export const vms: VmAsset[] = [
     "owner": "VDI Team",
     "eoslDate": "2028-11-10",
     "grafanaPath": "/d/vm-detail?var-host=RPA-VDI03",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -682,7 +655,6 @@ export const vms: VmAsset[] = [
     "owner": "VDI Team",
     "eoslDate": "2027-01-12",
     "grafanaPath": "/d/vm-detail?var-host=RPA-VDI04",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -706,7 +678,6 @@ export const vms: VmAsset[] = [
     "owner": "Infra Team",
     "eoslDate": "2032-05-31",
     "grafanaPath": "/d/vm-detail?var-host=RPA-UTIL01",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   },
   {
@@ -730,7 +701,6 @@ export const vms: VmAsset[] = [
     "owner": "Infra Team",
     "eoslDate": "2024-06-30",
     "grafanaPath": "/d/vm-detail?var-host=RPA-UTIL02",
-    "sourceRef": "sample/vm-inventory.xlsx",
     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
   }
 ];
@@ -744,7 +714,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw2",
@@ -754,7 +723,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw3",
@@ -764,7 +732,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Microsoft",
     "category": "Web Server",
     "eoslDate": "2031-10-14",
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw4",
@@ -774,7 +741,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw5",
@@ -784,7 +750,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw6",
@@ -794,7 +759,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Microsoft",
     "category": "Web Server",
     "eoslDate": "2031-10-14",
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw7",
@@ -804,7 +768,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw8",
@@ -814,7 +777,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw9",
@@ -824,7 +786,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Microsoft",
     "category": "Web Server",
     "eoslDate": "2031-10-14",
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw10",
@@ -834,7 +795,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw11",
@@ -844,7 +804,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw12",
@@ -854,7 +813,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Microsoft",
     "category": "Web Server",
     "eoslDate": "2031-10-14",
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw13",
@@ -864,7 +822,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw14",
@@ -874,7 +831,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw15",
@@ -884,7 +840,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Automation Anywhere",
     "category": "RPA",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw16",
@@ -894,7 +849,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Eclipse Adoptium",
     "category": "Runtime",
     "eoslDate": "2029-10-31",
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw17",
@@ -904,7 +858,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw18",
@@ -914,7 +867,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw19",
@@ -924,7 +876,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Automation Anywhere",
     "category": "RPA",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw20",
@@ -934,7 +885,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Eclipse Adoptium",
     "category": "Runtime",
     "eoslDate": "2029-10-31",
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw21",
@@ -944,7 +894,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw22",
@@ -954,7 +903,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw23",
@@ -964,7 +912,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Automation Anywhere",
     "category": "RPA",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw24",
@@ -974,7 +921,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Eclipse Adoptium",
     "category": "Runtime",
     "eoslDate": "2026-10-31",
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw25",
@@ -984,7 +930,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw26",
@@ -994,7 +939,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw27",
@@ -1004,7 +948,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Automation Anywhere",
     "category": "RPA",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw28",
@@ -1014,7 +957,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Eclipse Adoptium",
     "category": "Runtime",
     "eoslDate": "2029-10-31",
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw29",
@@ -1024,7 +966,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw30",
@@ -1034,7 +975,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw31",
@@ -1044,7 +984,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Automation Anywhere",
     "category": "RPA",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw32",
@@ -1054,7 +993,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Eclipse Adoptium",
     "category": "Runtime",
     "eoslDate": "2029-10-31",
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw33",
@@ -1064,7 +1002,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw34",
@@ -1074,7 +1011,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw35",
@@ -1084,7 +1020,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Automation Anywhere",
     "category": "RPA",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw36",
@@ -1094,7 +1029,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Eclipse Adoptium",
     "category": "Runtime",
     "eoslDate": "2029-10-31",
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw37",
@@ -1104,7 +1038,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw38",
@@ -1114,7 +1047,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw39",
@@ -1124,7 +1056,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Microsoft",
     "category": "Database",
     "eoslDate": "2030-01-08",
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw40",
@@ -1134,7 +1065,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw41",
@@ -1144,7 +1074,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw42",
@@ -1154,7 +1083,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Microsoft",
     "category": "Database",
     "eoslDate": "2030-01-08",
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw43",
@@ -1164,7 +1092,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw44",
@@ -1174,7 +1101,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw45",
@@ -1184,7 +1110,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Microsoft",
     "category": "Database",
     "eoslDate": "2030-01-08",
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw46",
@@ -1194,7 +1119,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw47",
@@ -1204,7 +1128,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw48",
@@ -1214,7 +1137,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Microsoft",
     "category": "Database",
     "eoslDate": "2030-01-08",
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw49",
@@ -1224,7 +1146,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw50",
@@ -1234,7 +1155,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw51",
@@ -1244,7 +1164,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Automation Anywhere",
     "category": "RPA",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw52",
@@ -1254,7 +1173,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw53",
@@ -1264,7 +1182,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw54",
@@ -1274,7 +1191,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Automation Anywhere",
     "category": "RPA",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw55",
@@ -1284,7 +1200,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw56",
@@ -1294,7 +1209,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw57",
@@ -1304,7 +1218,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw58",
@@ -1314,7 +1227,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw59",
@@ -1324,7 +1236,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw60",
@@ -1334,7 +1245,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw61",
@@ -1344,7 +1254,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw62",
@@ -1354,7 +1263,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw63",
@@ -1364,7 +1272,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw64",
@@ -1374,7 +1281,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw65",
@@ -1384,7 +1290,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw66",
@@ -1394,7 +1299,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw67",
@@ -1404,7 +1308,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "CrowdStrike",
     "category": "Security",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw68",
@@ -1414,7 +1317,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw69",
@@ -1424,7 +1326,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Oracle",
     "category": "Runtime",
     "eoslDate": "2023-03-31",
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw70",
@@ -1434,7 +1335,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw71",
@@ -1444,7 +1344,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Automation Anywhere",
     "category": "RPA",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw72",
@@ -1454,7 +1353,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw73",
@@ -1464,7 +1362,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Automation Anywhere",
     "category": "RPA",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw74",
@@ -1474,7 +1371,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw75",
@@ -1484,7 +1380,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Automation Anywhere",
     "category": "RPA",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw76",
@@ -1494,7 +1389,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw77",
@@ -1504,7 +1398,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "Automation Anywhere",
     "category": "RPA",
     "eoslDate": "2027-01-20",
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw78",
@@ -1514,7 +1407,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw79",
@@ -1524,7 +1416,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": null,
-    "sourceRef": "sample/software-inventory.xlsx"
   },
   {
     "id": "sw80",
@@ -1534,7 +1425,6 @@ export const software: SoftwareInstall[] = [
     "vendor": "InfluxData",
     "category": "Monitoring",
     "eoslDate": "2024-06-30",
-    "sourceRef": "sample/software-inventory.xlsx"
   }
 ];
 
@@ -1556,8 +1446,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2027-03-01",
     "requestId": "FW-2026-0001",
     "purpose": "Portal API",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p2",
@@ -1576,8 +1465,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2027-03-01",
     "requestId": "FW-2026-0002",
     "purpose": "Portal API",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p3",
@@ -1596,8 +1484,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2027-03-01",
     "requestId": "FW-2026-0003",
     "purpose": "Portal API",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p4",
@@ -1616,8 +1503,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2027-03-01",
     "requestId": "FW-2026-0004",
     "purpose": "Portal API",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p5",
@@ -1636,8 +1522,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2027-01-31",
     "requestId": "FW-2026-0005",
     "purpose": "Control Room DB",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p6",
@@ -1656,8 +1541,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2027-01-31",
     "requestId": "FW-2026-0006",
     "purpose": "Control Room DB",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p7",
@@ -1677,8 +1561,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2026-10-02",
     "requestId": "FW-2026-0007",
     "purpose": "Control Room DB",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p8",
@@ -1698,7 +1581,7 @@ export const policies: NetworkPolicy[] = [
     "requestId": "FW-2026-0008",
     "purpose": "Control Room DB",
     "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "direction": "BIDIRECTIONAL"
   },
   {
     "id": "p9",
@@ -1717,8 +1600,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2027-01-31",
     "requestId": "FW-2026-0009",
     "purpose": "Control Room DB",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p10",
@@ -1737,8 +1619,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2027-01-31",
     "requestId": "FW-2026-0010",
     "purpose": "Control Room DB",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p11",
@@ -1757,8 +1638,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2026-09-18",
     "requestId": "FW-2026-0011",
     "purpose": "DB mirroring",
-    "owner": "DB Team",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "DB Team"
   },
   {
     "id": "p12",
@@ -1777,8 +1657,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2027-02-28",
     "requestId": "FW-2026-0012",
     "purpose": "Reporting DB mirroring",
-    "owner": "DB Team",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "DB Team"
   },
   {
     "id": "p13",
@@ -1798,8 +1677,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2027-06-01",
     "requestId": "FW-2026-0013",
     "purpose": "LDAPS",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p14",
@@ -1818,8 +1696,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2026-09-29",
     "requestId": "FW-2026-0014",
     "purpose": "SMTP relay",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p15",
@@ -1838,8 +1715,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2026-09-10",
     "requestId": "FW-2026-0015",
     "purpose": "ERP API",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p16",
@@ -1858,8 +1734,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2027-04-01",
     "requestId": "FW-2026-0016",
     "purpose": "Bot orchestration",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p17",
@@ -1878,8 +1753,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2027-04-01",
     "requestId": "FW-2026-0017",
     "purpose": "Bot orchestration",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p18",
@@ -1898,8 +1772,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2027-04-01",
     "requestId": "FW-2026-0018",
     "purpose": "Bot orchestration",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p19",
@@ -1918,8 +1791,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2027-04-01",
     "requestId": "FW-2026-0019",
     "purpose": "Bot orchestration",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p20",
@@ -1938,8 +1810,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2027-04-01",
     "requestId": "FW-2026-0020",
     "purpose": "Bot orchestration",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p21",
@@ -1958,8 +1829,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2027-04-01",
     "requestId": "FW-2026-0021",
     "purpose": "Bot orchestration",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p22",
@@ -1978,8 +1848,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2027-04-01",
     "requestId": "FW-2026-0022",
     "purpose": "Bot orchestration",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p23",
@@ -1998,8 +1867,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2027-04-01",
     "requestId": "FW-2026-0023",
     "purpose": "Bot orchestration",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p24",
@@ -2018,8 +1886,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2026-11-30",
     "requestId": "FW-2026-0024",
     "purpose": "VDI session control",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p25",
@@ -2038,8 +1905,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2026-11-30",
     "requestId": "FW-2026-0025",
     "purpose": "VDI session control",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p26",
@@ -2058,8 +1924,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2026-11-30",
     "requestId": "FW-2026-0026",
     "purpose": "VDI session control",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p27",
@@ -2078,8 +1943,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2026-11-30",
     "requestId": "FW-2026-0027",
     "purpose": "VDI session control",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p28",
@@ -2098,8 +1962,7 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2027-02-01",
     "requestId": "FW-2026-0028",
     "purpose": "ERP automation",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   },
   {
     "id": "p29",
@@ -2118,16 +1981,19 @@ export const policies: NetworkPolicy[] = [
     "expiresAt": "2026-09-20",
     "requestId": "FW-2026-0029",
     "purpose": "Monitoring relay",
-    "owner": "RPA Platform",
-    "sourceRef": "sample/firewall-requests.xlsx"
+    "owner": "RPA Platform"
   }
 ];
 
 export const observations: ConnectivityObservation[] = [
   {
-    "policyId": "p1",
     "sourceVmId": "web01",
+    "sourceName": "RPA-WEB01",
+    "sourceIp": "10.10.10.11",
+    "targetVmId": "app01",
+    "targetName": "RPA-APP01",
     "targetIp": "10.10.20.11",
+    "protocol": "TCP",
     "port": 8080,
     "ping": "UP",
     "tcp": "UP",
@@ -2136,9 +2002,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p2",
     "sourceVmId": "web02",
+    "sourceName": "RPA-WEB02",
+    "sourceIp": "10.10.10.12",
+    "targetVmId": "app01",
+    "targetName": "RPA-APP01",
     "targetIp": "10.10.20.11",
+    "protocol": "TCP",
     "port": 8080,
     "ping": "UP",
     "tcp": "UP",
@@ -2147,9 +2017,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p3",
     "sourceVmId": "web03",
+    "sourceName": "RPA-WEB03",
+    "sourceIp": "10.10.10.13",
+    "targetVmId": "app02",
+    "targetName": "RPA-APP02",
     "targetIp": "10.10.20.12",
+    "protocol": "TCP",
     "port": 8080,
     "ping": "UP",
     "tcp": "UP",
@@ -2158,9 +2032,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p4",
     "sourceVmId": "web04",
+    "sourceName": "RPA-WEB04",
+    "sourceIp": "10.10.10.14",
+    "targetVmId": "app02",
+    "targetName": "RPA-APP02",
     "targetIp": "10.10.20.12",
+    "protocol": "TCP",
     "port": 8080,
     "ping": "UP",
     "tcp": "UP",
@@ -2169,9 +2047,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p5",
     "sourceVmId": "app01",
+    "sourceName": "RPA-APP01",
+    "sourceIp": "10.10.20.11",
+    "targetVmId": "db01",
+    "targetName": "RPA-DB01",
     "targetIp": "10.10.30.11",
+    "protocol": "TCP",
     "port": 1433,
     "ping": "UP",
     "tcp": "UP",
@@ -2180,9 +2062,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p6",
     "sourceVmId": "app02",
+    "sourceName": "RPA-APP02",
+    "sourceIp": "10.10.20.12",
+    "targetVmId": "db01",
+    "targetName": "RPA-DB01",
     "targetIp": "10.10.30.11",
+    "protocol": "TCP",
     "port": 1433,
     "ping": "UP",
     "tcp": "UP",
@@ -2191,24 +2077,43 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p7",
     "sourceVmId": "app03",
+    "sourceName": "RPA-APP03",
+    "sourceIp": "10.10.20.13",
+    "targetVmId": "db01",
+    "targetName": "RPA-DB01",
     "targetIp": "10.10.30.11",
+    "protocol": "TCP",
     "port": 1433,
     "ping": "UP",
     "tcp": "UP",
     "pingLatencyMs": 0.7,
     "tcpLatencyMs": 5.6,
-    "reversePing": "UP",
-    "reverseTcp": "UP",
-    "reversePingLatencyMs": 0.9,
-    "reverseTcpLatencyMs": 3.1,
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p8",
+    "sourceVmId": "db01",
+    "sourceName": "RPA-DB01",
+    "sourceIp": "10.10.30.11",
+    "targetVmId": "app03",
+    "targetName": "RPA-APP03",
+    "targetIp": "10.10.20.13",
+    "protocol": "TCP",
+    "port": 1433,
+    "ping": "UP",
+    "tcp": "UP",
+    "pingLatencyMs": 0.9,
+    "tcpLatencyMs": 3.1,
+    "checkedAt": "2026-09-21T00:27:00+09:00"
+  },
+  {
     "sourceVmId": "app04",
+    "sourceName": "RPA-APP04",
+    "sourceIp": "10.10.20.14",
+    "targetVmId": "db01",
+    "targetName": "RPA-DB01",
     "targetIp": "10.10.30.11",
+    "protocol": "TCP",
     "port": 1433,
     "ping": "UP",
     "tcp": "UP",
@@ -2217,9 +2122,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p9",
     "sourceVmId": "app05",
+    "sourceName": "RPA-APP05",
+    "sourceIp": "10.10.20.15",
+    "targetVmId": "db01",
+    "targetName": "RPA-DB01",
     "targetIp": "10.10.30.11",
+    "protocol": "TCP",
     "port": 1433,
     "ping": "DOWN",
     "tcp": "DOWN",
@@ -2228,9 +2137,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p10",
     "sourceVmId": "app06",
+    "sourceName": "RPA-APP06",
+    "sourceIp": "10.10.20.16",
+    "targetVmId": "db01",
+    "targetName": "RPA-DB01",
     "targetIp": "10.10.30.11",
+    "protocol": "TCP",
     "port": 1433,
     "ping": "UP",
     "tcp": "UP",
@@ -2239,9 +2152,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p11",
     "sourceVmId": "db01",
+    "sourceName": "RPA-DB01",
+    "sourceIp": "10.10.30.11",
+    "targetVmId": "db02",
+    "targetName": "RPA-DB02",
     "targetIp": "10.10.30.12",
+    "protocol": "TCP",
     "port": 5022,
     "ping": "UP",
     "tcp": "UP",
@@ -2250,9 +2167,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p12",
     "sourceVmId": "db03",
+    "sourceName": "RPA-DB03",
+    "sourceIp": "10.10.30.13",
+    "targetVmId": "db04",
+    "targetName": "RPA-DB04",
     "targetIp": "10.10.30.14",
+    "protocol": "TCP",
     "port": 5022,
     "ping": "UP",
     "tcp": "UP",
@@ -2261,24 +2182,28 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p13",
     "sourceVmId": "app03",
+    "sourceName": "RPA-APP03",
+    "sourceIp": "10.10.20.13",
+    "targetVmId": null,
+    "targetName": "LDAP01",
     "targetIp": "10.20.40.10",
+    "protocol": "TCP",
     "port": 636,
     "ping": "UP",
     "tcp": "UP",
     "pingLatencyMs": 1.2,
     "tcpLatencyMs": 4.5,
-    "reversePing": "UP",
-    "reverseTcp": "DOWN",
-    "reversePingLatencyMs": 1.4,
-    "reverseTcpLatencyMs": null,
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p14",
     "sourceVmId": "app02",
+    "sourceName": "RPA-APP02",
+    "sourceIp": "10.10.20.12",
+    "targetVmId": null,
+    "targetName": "SMTP01",
     "targetIp": "10.20.50.25",
+    "protocol": "TCP",
     "port": 25,
     "ping": "UP",
     "tcp": "UP",
@@ -2287,9 +2212,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p15",
     "sourceVmId": "app04",
+    "sourceName": "RPA-APP04",
+    "sourceIp": "10.10.20.14",
+    "targetVmId": null,
+    "targetName": "ERP API",
     "targetIp": "172.20.10.40",
+    "protocol": "TCP",
     "port": 443,
     "ping": "UP",
     "tcp": "UP",
@@ -2298,9 +2227,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p16",
     "sourceVmId": "ctrl01",
+    "sourceName": "RPA-CTRL01",
+    "sourceIp": "10.10.40.11",
+    "targetVmId": "bot01",
+    "targetName": "RPA-BOT01",
     "targetIp": "10.10.50.11",
+    "protocol": "TCP",
     "port": 443,
     "ping": "UP",
     "tcp": "UP",
@@ -2309,9 +2242,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p17",
     "sourceVmId": "ctrl01",
+    "sourceName": "RPA-CTRL01",
+    "sourceIp": "10.10.40.11",
+    "targetVmId": "bot02",
+    "targetName": "RPA-BOT02",
     "targetIp": "10.10.50.12",
+    "protocol": "TCP",
     "port": 443,
     "ping": "UP",
     "tcp": "UP",
@@ -2320,9 +2257,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p18",
     "sourceVmId": "ctrl01",
+    "sourceName": "RPA-CTRL01",
+    "sourceIp": "10.10.40.11",
+    "targetVmId": "bot03",
+    "targetName": "RPA-BOT03",
     "targetIp": "10.10.50.13",
+    "protocol": "TCP",
     "port": 443,
     "ping": "UP",
     "tcp": "UP",
@@ -2331,9 +2272,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p19",
     "sourceVmId": "ctrl01",
+    "sourceName": "RPA-CTRL01",
+    "sourceIp": "10.10.40.11",
+    "targetVmId": "bot04",
+    "targetName": "RPA-BOT04",
     "targetIp": "10.10.50.14",
+    "protocol": "TCP",
     "port": 443,
     "ping": "UP",
     "tcp": "UP",
@@ -2342,9 +2287,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p20",
     "sourceVmId": "ctrl02",
+    "sourceName": "RPA-CTRL02",
+    "sourceIp": "10.10.40.12",
+    "targetVmId": "bot05",
+    "targetName": "RPA-BOT05",
     "targetIp": "10.10.50.15",
+    "protocol": "TCP",
     "port": 443,
     "ping": "UP",
     "tcp": "UP",
@@ -2353,9 +2302,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p21",
     "sourceVmId": "ctrl02",
+    "sourceName": "RPA-CTRL02",
+    "sourceIp": "10.10.40.12",
+    "targetVmId": "bot06",
+    "targetName": "RPA-BOT06",
     "targetIp": "10.10.50.16",
+    "protocol": "TCP",
     "port": 443,
     "ping": "UP",
     "tcp": "UP",
@@ -2364,9 +2317,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p22",
     "sourceVmId": "ctrl02",
+    "sourceName": "RPA-CTRL02",
+    "sourceIp": "10.10.40.12",
+    "targetVmId": "bot07",
+    "targetName": "RPA-BOT07",
     "targetIp": "10.10.50.17",
+    "protocol": "TCP",
     "port": 443,
     "ping": "UP",
     "tcp": "UP",
@@ -2375,9 +2332,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p23",
     "sourceVmId": "ctrl02",
+    "sourceName": "RPA-CTRL02",
+    "sourceIp": "10.10.40.12",
+    "targetVmId": "bot08",
+    "targetName": "RPA-BOT08",
     "targetIp": "10.10.50.18",
+    "protocol": "TCP",
     "port": 443,
     "ping": "UP",
     "tcp": "UP",
@@ -2386,9 +2347,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p24",
     "sourceVmId": "bot01",
+    "sourceName": "RPA-BOT01",
+    "sourceIp": "10.10.50.11",
+    "targetVmId": "vdi01",
+    "targetName": "RPA-VDI01",
     "targetIp": "10.10.60.11",
+    "protocol": "TCP",
     "port": 3389,
     "ping": "UP",
     "tcp": "UP",
@@ -2397,9 +2362,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p25",
     "sourceVmId": "bot02",
+    "sourceName": "RPA-BOT02",
+    "sourceIp": "10.10.50.12",
+    "targetVmId": "vdi02",
+    "targetName": "RPA-VDI02",
     "targetIp": "10.10.60.12",
+    "protocol": "TCP",
     "port": 3389,
     "ping": "UP",
     "tcp": "UP",
@@ -2408,9 +2377,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p26",
     "sourceVmId": "bot03",
+    "sourceName": "RPA-BOT03",
+    "sourceIp": "10.10.50.13",
+    "targetVmId": "vdi03",
+    "targetName": "RPA-VDI03",
     "targetIp": "10.10.60.13",
+    "protocol": "TCP",
     "port": 3389,
     "ping": "UP",
     "tcp": "UP",
@@ -2419,9 +2392,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p27",
     "sourceVmId": "bot04",
+    "sourceName": "RPA-BOT04",
+    "sourceIp": "10.10.50.14",
+    "targetVmId": "vdi04",
+    "targetName": "RPA-VDI04",
     "targetIp": "10.10.60.14",
+    "protocol": "TCP",
     "port": 3389,
     "ping": "UP",
     "tcp": "UP",
@@ -2430,9 +2407,13 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p28",
     "sourceVmId": "bot01",
+    "sourceName": "RPA-BOT01",
+    "sourceIp": "10.10.50.11",
+    "targetVmId": null,
+    "targetName": "ERP API",
     "targetIp": "172.20.10.40",
+    "protocol": "TCP",
     "port": 443,
     "ping": "UP",
     "tcp": "UP",
@@ -2441,13 +2422,32 @@ export const observations: ConnectivityObservation[] = [
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
-    "policyId": "p29",
     "sourceVmId": "util01",
+    "sourceName": "RPA-UTIL01",
+    "sourceIp": "10.10.70.11",
+    "targetVmId": null,
+    "targetName": "Influx Relay",
     "targetIp": "10.20.80.20",
+    "protocol": "TCP",
     "port": 443,
     "ping": "UP",
     "tcp": "DOWN",
     "pingLatencyMs": 2.8,
+    "tcpLatencyMs": null,
+    "checkedAt": "2026-09-21T00:27:00+09:00"
+  },
+  {
+    "sourceVmId": "db01",
+    "sourceName": "RPA-DB01",
+    "sourceIp": "10.10.30.11",
+    "targetVmId": "app04",
+    "targetName": "RPA-APP04",
+    "targetIp": "10.10.20.14",
+    "protocol": "TCP",
+    "port": 1433,
+    "ping": "UP",
+    "tcp": "DOWN",
+    "pingLatencyMs": 1.3,
     "tcpLatencyMs": null,
     "checkedAt": "2026-09-21T00:27:00+09:00"
   }

@@ -24,7 +24,6 @@ First create one normalized JSON file matching `samples/normalized-import.exampl
 - `hostname`, `ipAddress`: do not infer missing values.
 - `zone`: one of WEB/APP/DB/CONTROL/BOT/VDI/SUPPORT or an explicitly agreed new zone.
 - `service`: business/platform service, not OS process name.
-- `sourceRef`: filename + sheet/page/row when possible.
 
 **Network policy**
 - One row = one source → target → protocol → port declared permission.
@@ -43,13 +42,17 @@ First create one normalized JSON file matching `samples/normalized-import.exampl
 
 ## Influx mapping
 
-The app wants this shape per policy:
+Observed connectivity is an independent fact and must not depend on firewall policy IDs. The app wants this directional shape:
 
 ```ts
 {
-  policyId,
   sourceVmId,
+  sourceName,
+  sourceIp,
+  targetVmId,
+  targetName,
   targetIp,
+  protocol: "TCP" | "UDP",
   port,
   ping: "UP" | "DOWN" | "NO_DATA",
   tcp: "UP" | "DOWN" | "NO_DATA",
@@ -59,7 +62,7 @@ The app wants this shape per policy:
 }
 ```
 
-Map the company's actual measurement/tags into this contract. Keep raw time-series in InfluxDB; do not copy the full history into MySQL.
+The portal joins this observation to the policy baseline with `sourceVmId + targetIp + protocol + port`. For an internal bidirectional policy, the reverse direction is a second observation with Source/Target swapped. Keep raw time-series in InfluxDB; do not copy full history into MySQL.
 
 ## Important diagnostic rule
 

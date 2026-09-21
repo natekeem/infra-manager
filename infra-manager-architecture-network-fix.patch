@@ -1,0 +1,3966 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 913490a..5db5fed 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -11,9 +11,9 @@ This repository intentionally follows the current NextAdmin v2 project philosoph
+ 5. **Network truth model has exactly two primary dimensions:**
+    - Declared/approved policy from MySQL or normalized source documents = SHOULD BE (supports `ONE_WAY` and `BIDIRECTIONAL`)
+    - Source-side Telegraf TCP probe from InfluxDB = ACTUAL (checks forward and return probes for bidirectional policies)
+-   Ping is diagnostic context only.
++   Policy is the primary row. Observations are independent facts joined by `sourceVmId + targetIp + protocol + port`; never duplicate policy IDs into Telegraf just to perform the join. Ping is diagnostic context only.
+ 6. A failed TCP probe must be labelled **connectivity failure**, not automatically "firewall blocked". Ping UP + TCP DOWN means check firewall implementation and target service first. If forward TCP is UP but return TCP is DOWN, label as **`RETURN_DIRECTION_FAILED`**.
+-7. Never invent missing infrastructure data. Use `null`, `UNKNOWN`, or `UNMAPPED`. Preserve `sourceRef` / import batch provenance.
++7. Never invent missing infrastructure data. Use `null`, `UNKNOWN`, or `UNMAPPED`. Keep import batch metadata only when a bulk import needs audit history.
+ 8. Keep the app as one Next.js deployment. Do not introduce FastAPI/NestJS or a new service unless explicitly approved.
+ 9. Do not install new packages unless the existing stack cannot reasonably solve the problem.
+ 10. Internal data integration should replace adapters, not rewrite components.
+@@ -25,8 +25,8 @@ This repository intentionally follows the current NextAdmin v2 project philosoph
+ - `/infrastructure/vms` — compact VM inventory
+ - `/infrastructure/architecture` — grouped React Flow topology with Probe Flow animation
+ - `/infrastructure/software` — 3-tier software catalog & EOSL lifecycle
+-- `/network/policies` — approved/declared firewall-opening registry
+-- `/network/connectivity` — Telegraf observed status
++- `/network/connectivity` — unified policy baseline + Telegraf observed status (joined by directional connection identity)
++- `/network/policies` — compatibility redirect to `/network/connectivity`
+ - `/operations/sop` — SOP links/content
+ 
+ ### Management & Administration
+@@ -40,7 +40,7 @@ This repository intentionally follows the current NextAdmin v2 project philosoph
+ ## Data integration order inside company
+ 
+ 1. Normalize source files into `samples/normalized-import.example.json` shape.
+-2. Validate IDs/IPs/ports/expiry and keep `sourceRef`.
++2. Validate IDs/IPs/ports/expiry and report missing/ambiguous values without guessing.
+ 3. Import MySQL using `npm run import:normalized -- <file>`.
+ 4. Implement MySQL reads behind `src/services/api/infrastructure/index.ts` without changing component props.
+ 5. Map existing Influx measurement/tags to `ConnectivityObservation`.
+@@ -61,7 +61,7 @@ This repository intentionally follows the current NextAdmin v2 project philosoph
+ 
+ ## Definition of done for internal migration
+ 
+-- All known VMs imported with source reference.
++- All known VMs imported with stable identifiers and verified values; do not add source-reference fields unless the product owner explicitly asks for them.
+ - Network policy records match the approved request records, including expiry dates and directionality.
+ - Source-side TCP probes are queryable for every required policy where feasible.
+ - No production page depends on manually hardcoded internal IPs.
+diff --git a/README.md b/README.md
+index 927314c..ceb0394 100644
+--- a/README.md
++++ b/README.md
+@@ -152,8 +152,8 @@ INFLUX_CONNECTIVITY_MEASUREMENT=net_response
+ | `/infrastructure/vms` | VM inventory |
+ | `/infrastructure/architecture` | grouped/live topology |
+ | `/infrastructure/software` | software + EOSL |
+-| `/network/policies` | declared firewall-opening registry |
+-| `/network/connectivity` | actual connectivity |
++| `/network/connectivity` | policy baseline + Telegraf observed connectivity (joined view) |
++| `/network/policies` | compatibility redirect to joined network view |
+ | `/operations/sop` | SOP library |
+ 
+ ## Important files for the internal coding agent
+diff --git a/db/schema.sql b/db/schema.sql
+index 451f85f..b9c07ba 100644
+--- a/db/schema.sql
++++ b/db/schema.sql
+@@ -5,7 +5,6 @@ CREATE TABLE import_batch (
+   id BIGINT PRIMARY KEY AUTO_INCREMENT,
+   source_name VARCHAR(255) NOT NULL,
+   source_type VARCHAR(50) NOT NULL,
+-  source_ref TEXT NULL,
+   imported_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+   imported_by VARCHAR(100) NULL,
+   notes TEXT NULL
+@@ -30,7 +29,6 @@ CREATE TABLE vm_asset (
+   vm_status VARCHAR(30) NOT NULL DEFAULT 'ACTIVE',
+   eosl_date DATE NULL,
+   grafana_path TEXT NULL,
+-  source_ref TEXT NULL,
+   import_batch_id BIGINT NULL,
+   last_verified_at DATETIME NULL,
+   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+@@ -51,15 +49,31 @@ CREATE TABLE software_catalog (
+   UNIQUE KEY uq_sw_catalog (canonical_name, vendor)
+ );
+ 
++CREATE TABLE software_release (
++  id BIGINT PRIMARY KEY AUTO_INCREMENT,
++  software_id BIGINT NOT NULL,
++  version VARCHAR(100) NOT NULL,
++  release_date DATE NULL,
++  support_end_date DATE NULL,
++  eosl_date DATE NULL,
++  version_match_rule ENUM('exact','prefix','regex','range') NOT NULL DEFAULT 'exact',
++  match_pattern VARCHAR(255) NULL,
++  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
++  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
++  UNIQUE KEY uq_sw_release (software_id, version),
++  INDEX idx_sw_release_eosl (eosl_date),
++  CONSTRAINT fk_sw_release_product FOREIGN KEY (software_id) REFERENCES software_catalog(id)
++);
++
+ CREATE TABLE vm_software (
+   id BIGINT PRIMARY KEY AUTO_INCREMENT,
+   vm_id BIGINT NOT NULL,
+   software_id BIGINT NOT NULL,
+   version VARCHAR(100) NULL,
++  matched_release_id BIGINT NULL,
+   edition VARCHAR(100) NULL,
+   installed_at DATE NULL,
+   eosl_date DATE NULL,
+-  source_ref TEXT NULL,
+   import_batch_id BIGINT NULL,
+   last_verified_at DATETIME NULL,
+   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+@@ -68,6 +82,7 @@ CREATE TABLE vm_software (
+   INDEX idx_sw_eosl (eosl_date),
+   CONSTRAINT fk_vmsw_vm FOREIGN KEY (vm_id) REFERENCES vm_asset(id),
+   CONSTRAINT fk_vmsw_sw FOREIGN KEY (software_id) REFERENCES software_catalog(id),
++  CONSTRAINT fk_vmsw_release FOREIGN KEY (matched_release_id) REFERENCES software_release(id),
+   CONSTRAINT fk_vmsw_import FOREIGN KEY (import_batch_id) REFERENCES import_batch(id)
+ );
+ 
+@@ -82,6 +97,7 @@ CREATE TABLE network_policy (
+   target_ip VARCHAR(45) NOT NULL,
+   protocol ENUM('TCP','UDP') NOT NULL DEFAULT 'TCP',
+   port INT NOT NULL,
++  direction ENUM('ONE_WAY','BIDIRECTIONAL') NOT NULL DEFAULT 'ONE_WAY',
+   approval_status ENUM('APPROVED','PENDING','REJECTED','UNKNOWN') NOT NULL DEFAULT 'UNKNOWN',
+   requested_at DATETIME NULL,
+   approved_at DATETIME NULL,
+@@ -91,7 +107,6 @@ CREATE TABLE network_policy (
+   purpose VARCHAR(500) NULL,
+   owner VARCHAR(150) NULL,
+   is_required BOOLEAN NOT NULL DEFAULT TRUE,
+-  source_ref TEXT NULL,
+   import_batch_id BIGINT NULL,
+   last_verified_at DATETIME NULL,
+   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+@@ -114,7 +129,6 @@ CREATE TABLE service_dependency (
+   protocol VARCHAR(20) NULL,
+   port INT NULL,
+   description VARCHAR(500) NULL,
+-  source_ref TEXT NULL,
+   import_batch_id BIGINT NULL,
+   last_verified_at DATETIME NULL,
+   CONSTRAINT fk_sd_import FOREIGN KEY (import_batch_id) REFERENCES import_batch(id)
+@@ -128,7 +142,6 @@ CREATE TABLE sop_document (
+   document_url TEXT NULL,
+   content_md MEDIUMTEXT NULL,
+   owner VARCHAR(150) NULL,
+-  source_ref TEXT NULL,
+   import_batch_id BIGINT NULL,
+   last_verified_at DATETIME NULL,
+   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+diff --git a/docs/ARCHITECTURE_MODEL.md b/docs/ARCHITECTURE_MODEL.md
+index e3b48d5..5f36d9a 100644
+--- a/docs/ARCHITECTURE_MODEL.md
++++ b/docs/ARCHITECTURE_MODEL.md
+@@ -19,7 +19,6 @@ Common attributes for all physical and virtual assets:
+ - `id`: Unique asset identifier (e.g. `vm-bot01`, `nas-01`)
+ - `assetType`: `"VM" | "PHYSICAL_SERVER" | "NAS" | "NETWORK_APPLIANCE" | "OTHER"`
+ - `hostname`, `ipAddress`, `environment` (`PROD`, `STG`, `DEV`), `role`, `service`, `zone`, `criticality`, `health`
+-- `sourceRef`: Provenance tracker (e.g. CMDB spreadsheet, vCenter export batch)
+ 
+ ### 2.2. Virtual Machines: `VmAsset`
+ Extends `InfraAsset` with VM-specific compute metrics and OS details:
+diff --git a/docs/DATA_CONTRACT.md b/docs/DATA_CONTRACT.md
+index 03c60b2..464066d 100644
+--- a/docs/DATA_CONTRACT.md
++++ b/docs/DATA_CONTRACT.md
+@@ -4,7 +4,7 @@ The application deliberately separates **declared state** from **observed state*
+ 
+ ## MySQL: declared state
+ 
+-MySQL stores VM assets, software inventory/EOSL, approved network-opening policies, service dependencies and SOP mapping. Source provenance is retained via `source_ref` and `import_batch`.
++MySQL stores VM assets, software inventory/EOSL, approved network-opening policies, service dependencies and SOP mapping. Bulk import history may be retained with `import_batch`; per-record Source Ref is intentionally not part of the domain model.
+ 
+ ## InfluxDB: observed state
+ 
+diff --git a/docs/INTERNAL_AGENT_HANDOFF.md b/docs/INTERNAL_AGENT_HANDOFF.md
+index ce16a4f..1fb426b 100644
+--- a/docs/INTERNAL_AGENT_HANDOFF.md
++++ b/docs/INTERNAL_AGENT_HANDOFF.md
+@@ -24,7 +24,6 @@ First create one normalized JSON file matching `samples/normalized-import.exampl
+ - `hostname`, `ipAddress`: do not infer missing values.
+ - `zone`: one of WEB/APP/DB/CONTROL/BOT/VDI/SUPPORT or an explicitly agreed new zone.
+ - `service`: business/platform service, not OS process name.
+-- `sourceRef`: filename + sheet/page/row when possible.
+ 
+ **Network policy**
+ - One row = one source → target → protocol → port declared permission.
+@@ -43,13 +42,17 @@ First create one normalized JSON file matching `samples/normalized-import.exampl
+ 
+ ## Influx mapping
+ 
+-The app wants this shape per policy:
++Observed connectivity is an independent fact and must not depend on firewall policy IDs. The app wants this directional shape:
+ 
+ ```ts
+ {
+-  policyId,
+   sourceVmId,
++  sourceName,
++  sourceIp,
++  targetVmId,
++  targetName,
+   targetIp,
++  protocol: "TCP" | "UDP",
+   port,
+   ping: "UP" | "DOWN" | "NO_DATA",
+   tcp: "UP" | "DOWN" | "NO_DATA",
+@@ -59,7 +62,7 @@ The app wants this shape per policy:
+ }
+ ```
+ 
+-Map the company's actual measurement/tags into this contract. Keep raw time-series in InfluxDB; do not copy the full history into MySQL.
++The portal joins this observation to the policy baseline with `sourceVmId + targetIp + protocol + port`. For an internal bidirectional policy, the reverse direction is a second observation with Source/Target swapped. Keep raw time-series in InfluxDB; do not copy full history into MySQL.
+ 
+ ## Important diagnostic rule
+ 
+diff --git a/docs/INTERNAL_AGENT_PROMPT.md b/docs/INTERNAL_AGENT_PROMPT.md
+index 60fabd5..52c6a2c 100644
+--- a/docs/INTERNAL_AGENT_PROMPT.md
++++ b/docs/INTERNAL_AGENT_PROMPT.md
+@@ -18,7 +18,6 @@ NON-NEGOTIABLE:
+ - Do not change sidebar/header/layout/typography/density/Drawer UX.
+ - Do not rewrite architecture components unless required for a real-data field mapping bug.
+ - Do not invent missing VM, IP, port, approval, expiry, SW or EOSL values.
+-- Keep source provenance (`sourceRef`) for every record where possible.
+ 
+ TASK 1 — DATA NORMALIZATION
+ Inspect all supplied VM inventories, firewall-opening/approval files, SOP lists/documents and software inventories. Produce `data/internal-normalized.json` matching `samples/normalized-import.example.json` exactly.
+@@ -43,7 +42,6 @@ Validate:
+ - protocol TCP/UDP
+ - expiry date format
+ - request IDs preserved
+-- sourceRef present when source is known
+ 
+ TASK 3 — MYSQL
+ Apply `db/schema.sql` if needed and run:
+@@ -68,8 +66,7 @@ Verify these screens using real data:
+ - Dashboard
+ - Virtual Machines
+ - Architecture Overview / Service / VM drill-down
+-- Policy Registry
+-- Connectivity
++- Policy & Connectivity (policy baseline joined with Telegraf actual state)
+ - Software & EOSL
+ - SOP
+ 
+diff --git a/docs/MANAGEMENT_MODEL.md b/docs/MANAGEMENT_MODEL.md
+index 1632f3c..1f9b7a3 100644
+--- a/docs/MANAGEMENT_MODEL.md
++++ b/docs/MANAGEMENT_MODEL.md
+@@ -12,7 +12,6 @@ Key principles:
+    - Strictly preserves NextAdmin v2 compact styling (dense tables, 10~11px fonts, 32~36px row heights, subtle borders, no large SaaS KPI gradients).
+    - In-page modal forms enable quick record creation and editing without disrupting the operator's workflow.
+ 3. **Data Provenance**:
+-   - Retains `sourceRef` (CMDB spreadsheet batch, security request ticket, or vCenter export reference) across all entities.
+ 
+ ---
+ 
+diff --git a/docs/NETWORK_MODEL.md b/docs/NETWORK_MODEL.md
+index d3721d7..729d6d3 100644
+--- a/docs/NETWORK_MODEL.md
++++ b/docs/NETWORK_MODEL.md
+@@ -29,11 +29,12 @@ The `evaluateNetworkStatus` domain function evaluates combinations of approval,
+ | `POLICY_VALID_BUT_UNREACHABLE` | POLICY VALID / TCP DOWN | 1 (Critical) | Policy is active but TCP failed. Check firewall or target service. |
+ | `RETURN_DIRECTION_FAILED` | RETURN FAILED | 2 (Critical) | Forward TCP succeeded, but return probe failed on bidirectional policy. |
+ | `POLICY_NOT_APPROVED_BUT_REACHABLE` | POLICY PENDING / TCP UP | 3 (Warning) | Port reachable without approved security ticket (compliance breach). |
+-| `POLICY_EXPIRED_BUT_REACHABLE` | POLICY EXPIRED / TCP UP | 4 (Warning) | Policy expired but port remains open on firewall. Revocation required. |
++| `POLICY_EXPIRED_BUT_REACHABLE` | POLICY EXPIRED / TCP UP | 4 (Warning) | Policy expired but the declared connection is still observed as reachable. Reconcile policy renewal/decommission state. |
+ | `UNREACHABLE` | UNREACHABLE | 5 (Warning) | TCP probe failed with unapproved policy. |
+-| `EXPIRING` | EXPIRING (D-30) | 6 (Attention) | TCP is healthy, but policy expires within 30 days. Renewal ticket required. |
+-| `UNKNOWN` | UNKNOWN | 7 (Neutral) | Insufficient telemetry or policy metadata. Never guess values. |
+-| `NORMAL` | NORMAL | 8 (Healthy) | Policy is approved and active; all forward (and return) probes are UP. |
++| `BIDIRECTIONAL_PARTIAL` | BIDI / NO RETURN DATA | 6 (Attention) | Forward is healthy but the required reverse probe has no current data. |
++| `EXPIRING` | EXPIRING (D-30) | 7 (Attention) | TCP is healthy, but policy expires within 30 days. Renewal ticket required. |
++| `UNKNOWN` | UNKNOWN | 8 (Neutral) | Insufficient telemetry or policy metadata. Never guess values. |
++| `NORMAL` | NORMAL | 9 (Healthy) | Policy is approved and active; all required forward/return probes are UP. |
+ 
+ ---
+ 
+@@ -43,8 +44,8 @@ Enterprise applications often declare two-way communication (e.g. database clien
+ - In `NetworkPolicy`, `direction` is set to `"BIDIRECTIONAL"`.
+ - The evaluation engine checks:
+   1. `observation.tcp === "UP"` (Forward `A → B` reachability)
+-  2. `observation.reverseTcp === "UP"` (Return `B → A` reachability)
+-- If `tcp === "UP"` but `reverseTcp === "DOWN"`, the state is flagged as **`RETURN_DIRECTION_FAILED`**.
++  2. `reverseObservation.tcp === "UP"` (Return `B → A` reachability)
++- If forward `tcp === "UP"` but `reverseObservation.tcp === "DOWN"`, the state is flagged as **`RETURN_DIRECTION_FAILED`**.
+ - Diagnosis message:
+   `"Return direction failed (출발→대상 연결은 성공했으나 대상→출발 회신 방향 TCP 연결 실패. 방화벽 회신 정책 확인 필요)"`
+ - In `ConnectionDrawer`, two distinct cards are rendered side-by-side:
+@@ -57,9 +58,11 @@ Enterprise applications often declare two-way communication (e.g. database clien
+ 
+ ```influx
+ # Forward measurement
+-net_response,source_host=RPA-APP03,target_host=RPA-DB01,port=1433,direction=forward result_code=0,response_time_ms=2.1
++net_response,source_vm_id=app03,source_name=RPA-APP03,target_vm_id=db01,target_name=RPA-DB01,target_ip=10.10.30.11,target_port=1433,probe_protocol=TCP result_code=0,response_time=0.0021
+ 
+-# Return measurement (from target side)
+-net_response,source_host=RPA-DB01,target_host=RPA-APP03,port=1433,direction=return result_code=1,response_time_ms=0
++# Return measurement (independent directional observation from the target VM)
++net_response,source_vm_id=db01,source_name=RPA-DB01,target_vm_id=app03,target_name=RPA-APP03,target_ip=10.10.20.13,target_port=1433,probe_protocol=TCP result_code=1,response_time=0
+ ```
++
++No policy ID is required in Influx. The application joins declared policy and observed state by directional connection identity: Source VM + Target IP + Protocol + Port.
+ Missing observations are marked as `NO_DATA` rather than assumed healthy or blocked.
+diff --git a/samples/normalized-import.example.json b/samples/normalized-import.example.json
+index fbb6ea1..37c32f4 100644
+--- a/samples/normalized-import.example.json
++++ b/samples/normalized-import.example.json
+@@ -21,7 +21,6 @@
+       "owner": "RPA Platform",
+       "eoslDate": "2031-10-14",
+       "grafanaPath": "/d/vm-detail?var-host=RPA-WEB01",
+-      "sourceRef": "sample/vm-inventory.xlsx",
+       "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+     },
+     {
+@@ -45,7 +44,6 @@
+       "owner": "RPA Platform",
+       "eoslDate": "2031-10-14",
+       "grafanaPath": "/d/vm-detail?var-host=RPA-WEB02",
+-      "sourceRef": "sample/vm-inventory.xlsx",
+       "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+     }
+   ],
+@@ -57,8 +55,7 @@
+       "version": "7.15",
+       "vendor": "CrowdStrike",
+       "category": "Security",
+-      "eoslDate": null,
+-      "sourceRef": "sample/software-inventory.xlsx"
++      "eoslDate": null
+     },
+     {
+       "id": "sw2",
+@@ -67,8 +64,7 @@
+       "version": "1.36",
+       "vendor": "InfluxData",
+       "category": "Monitoring",
+-      "eoslDate": null,
+-      "sourceRef": "sample/software-inventory.xlsx"
++      "eoslDate": null
+     },
+     {
+       "id": "sw3",
+@@ -77,8 +73,7 @@
+       "version": "10",
+       "vendor": "Microsoft",
+       "category": "Web Server",
+-      "eoslDate": "2031-10-14",
+-      "sourceRef": "sample/software-inventory.xlsx"
++      "eoslDate": "2031-10-14"
+     },
+     {
+       "id": "sw4",
+@@ -87,8 +82,7 @@
+       "version": "7.15",
+       "vendor": "CrowdStrike",
+       "category": "Security",
+-      "eoslDate": null,
+-      "sourceRef": "sample/software-inventory.xlsx"
++      "eoslDate": null
+     }
+   ],
+   "networkPolicies": [
+@@ -109,8 +103,7 @@
+       "expiresAt": "2027-03-01",
+       "requestId": "FW-2026-0001",
+       "purpose": "Portal API",
+-      "owner": "RPA Platform",
+-      "sourceRef": "sample/firewall-requests.xlsx"
++      "owner": "RPA Platform"
+     },
+     {
+       "id": "p2",
+@@ -129,8 +122,7 @@
+       "expiresAt": "2027-03-01",
+       "requestId": "FW-2026-0002",
+       "purpose": "Portal API",
+-      "owner": "RPA Platform",
+-      "sourceRef": "sample/firewall-requests.xlsx"
++      "owner": "RPA Platform"
+     },
+     {
+       "id": "p3",
+@@ -149,8 +141,7 @@
+       "expiresAt": "2027-03-01",
+       "requestId": "FW-2026-0003",
+       "purpose": "Portal API",
+-      "owner": "RPA Platform",
+-      "sourceRef": "sample/firewall-requests.xlsx"
++      "owner": "RPA Platform"
+     }
+   ],
+   "sops": [
+@@ -185,4 +176,4 @@
+       "updatedAt": "2026-07-21"
+     }
+   ]
+-}
+\ No newline at end of file
++}
+diff --git a/scripts/generate-telegraf-probes.ts b/scripts/generate-telegraf-probes.ts
+index 3e6d9d4..0a2458e 100644
+--- a/scripts/generate-telegraf-probes.ts
++++ b/scripts/generate-telegraf-probes.ts
+@@ -6,21 +6,72 @@ type Policy = {
+   sourceVmId: string;
+   sourceName: string;
+   sourceIp: string;
++  targetVmId?: string | null;
+   targetName: string;
+   targetIp: string;
+   protocol: "TCP" | "UDP";
+   port: number;
++  direction?: "ONE_WAY" | "BIDIRECTIONAL";
+   approvalStatus: string;
+ };
+ 
+ type ImportFile = { networkPolicies?: Policy[] };
+ 
++type ProbeTarget = {
++  sourceVmId: string;
++  sourceName: string;
++  sourceIp: string;
++  targetVmId?: string | null;
++  targetName: string;
++  targetIp: string;
++  protocol: "TCP" | "UDP";
++  port: number;
++};
++
+ const arg = process.argv[2] ?? "samples/normalized-import.example.json";
+ const inputPath = path.resolve(arg);
+ const raw = JSON.parse(fs.readFileSync(inputPath, "utf8")) as ImportFile;
+ const policies = (raw.networkPolicies ?? []).filter((p) => p.approvalStatus === "APPROVED");
+-const grouped = new Map<string, Policy[]>();
+-for (const p of policies) grouped.set(p.sourceVmId, [...(grouped.get(p.sourceVmId) ?? []), p]);
++
++// Policy is the probe-definition baseline, but Telegraf output is intentionally policy-ID independent.
++// A bidirectional internal policy produces two directional probes.
++const probes: ProbeTarget[] = [];
++for (const policy of policies) {
++  probes.push({
++    sourceVmId: policy.sourceVmId,
++    sourceName: policy.sourceName,
++    sourceIp: policy.sourceIp,
++    targetVmId: policy.targetVmId,
++    targetName: policy.targetName,
++    targetIp: policy.targetIp,
++    protocol: policy.protocol,
++    port: policy.port,
++  });
++
++  if (policy.direction === "BIDIRECTIONAL" && policy.targetVmId) {
++    probes.push({
++      sourceVmId: policy.targetVmId,
++      sourceName: policy.targetName,
++      sourceIp: policy.targetIp,
++      targetVmId: policy.sourceVmId,
++      targetName: policy.sourceName,
++      targetIp: policy.sourceIp,
++      protocol: policy.protocol,
++      port: policy.port,
++    });
++  }
++}
++
++const deduped = new Map<string, ProbeTarget>();
++for (const probe of probes) {
++  const key = `${probe.sourceVmId}|${probe.targetIp}|${probe.protocol}|${probe.port}`.toLowerCase();
++  deduped.set(key, probe);
++}
++
++const grouped = new Map<string, ProbeTarget[]>();
++for (const probe of deduped.values()) {
++  grouped.set(probe.sourceVmId, [...(grouped.get(probe.sourceVmId) ?? []), probe]);
++}
+ 
+ const outDir = path.resolve("generated-telegraf");
+ fs.mkdirSync(outDir, { recursive: true });
+@@ -31,6 +82,7 @@ for (const [sourceVmId, rows] of grouped) {
+     `# generated for ${rows[0]?.sourceName ?? sourceVmId}`,
+     `# Copy this file only to the source VM represented by this file.`,
+     `# Ping is diagnostic context. TCP probe is the primary actual-connectivity signal.`,
++    `# Observations are joined to policy by source + target + protocol + port (not by policy ID).`,
+     "",
+   ];
+ 
+@@ -41,9 +93,10 @@ for (const [sourceVmId, rows] of grouped) {
+     lines.push("  count = 2");
+     lines.push('  deadline = "3s"');
+     lines.push('  interval = "60s"');
+-    lines.push('  [inputs.ping.tags]');
++    lines.push("  [inputs.ping.tags]");
+     lines.push(`    source_vm_id = "${sourceVmId}"`);
+     lines.push(`    source_name = "${rows[0]?.sourceName ?? sourceVmId}"`);
++    lines.push(`    source_ip = "${rows[0]?.sourceIp ?? ""}"`);
+     lines.push("");
+   }
+ 
+@@ -53,15 +106,19 @@ for (const [sourceVmId, rows] of grouped) {
+     lines.push(`  address = "${p.targetIp}:${p.port}"`);
+     lines.push('  timeout = "3s"');
+     lines.push('  interval = "60s"');
+-    lines.push(`  [inputs.net_response.tags]`);
+-    lines.push(`    policy_id = "${p.id}"`);
++    lines.push("  [inputs.net_response.tags]");
+     lines.push(`    source_vm_id = "${p.sourceVmId}"`);
+     lines.push(`    source_name = "${p.sourceName}"`);
++    lines.push(`    source_ip = "${p.sourceIp}"`);
++    if (p.targetVmId) lines.push(`    target_vm_id = "${p.targetVmId}"`);
+     lines.push(`    target_name = "${p.targetName}"`);
+     lines.push(`    target_ip = "${p.targetIp}"`);
+     lines.push(`    target_port = "${p.port}"`);
++    lines.push(`    probe_protocol = "${p.protocol}"`);
++    lines.push(`    connection_key = "${p.sourceVmId}|${p.targetIp}|${p.protocol}|${p.port}"`);
+     lines.push("");
+   }
++
+   fs.writeFileSync(path.join(outDir, `${sourceVmId}.conf`), lines.join("\n"));
+ }
+ 
+diff --git a/scripts/import-normalized-json.ts b/scripts/import-normalized-json.ts
+index cba84ab..f1d348d 100644
+--- a/scripts/import-normalized-json.ts
++++ b/scripts/import-normalized-json.ts
+@@ -16,18 +16,18 @@ const db = await mysql.createConnection({
+ await db.beginTransaction();
+ try {
+   const [batchResult] = await db.execute<mysql.ResultSetHeader>(
+-    "INSERT INTO import_batch(source_name, source_type, source_ref, imported_by, notes) VALUES(?,?,?,?,?)",
+-    [file, "NORMALIZED_JSON", file, process.env.USER ?? "agent", "Normalized import contract"],
++    "INSERT INTO import_batch(source_name, source_type, imported_by, notes) VALUES(?,?,?,?)",
++    [file, "NORMALIZED_JSON", process.env.USER ?? "agent", "Normalized import contract"],
+   );
+   const batchId = batchResult.insertId;
+   const vmIdByKey = new Map<string, number>();
+ 
+   for (const v of data.vms ?? []) {
+     await db.execute(
+-      `INSERT INTO vm_asset(asset_key,hostname,ip_address,environment,role,service_name,zone_name,criticality,os_name,os_version,cpu_cores,memory_gb,disk_gb,owner,eosl_date,grafana_path,source_ref,import_batch_id,last_verified_at)
+-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+-       ON DUPLICATE KEY UPDATE hostname=VALUES(hostname),ip_address=VALUES(ip_address),environment=VALUES(environment),role=VALUES(role),service_name=VALUES(service_name),zone_name=VALUES(zone_name),criticality=VALUES(criticality),os_name=VALUES(os_name),os_version=VALUES(os_version),cpu_cores=VALUES(cpu_cores),memory_gb=VALUES(memory_gb),disk_gb=VALUES(disk_gb),owner=VALUES(owner),eosl_date=VALUES(eosl_date),grafana_path=VALUES(grafana_path),source_ref=VALUES(source_ref),import_batch_id=VALUES(import_batch_id),last_verified_at=VALUES(last_verified_at)`,
+-      [v.id,v.hostname,v.ipAddress,v.environment,v.role,v.service,v.zone,v.criticality,v.osName,v.osVersion??null,v.cpuCores??null,v.memoryGb??null,v.diskGb??null,v.owner??null,v.eoslDate??null,v.grafanaPath??null,v.sourceRef??file,batchId,v.lastVerifiedAt??null],
++      `INSERT INTO vm_asset(asset_key,hostname,ip_address,environment,role,service_name,zone_name,criticality,os_name,os_version,cpu_cores,memory_gb,disk_gb,owner,eosl_date,grafana_path,import_batch_id,last_verified_at)
++       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
++       ON DUPLICATE KEY UPDATE hostname=VALUES(hostname),ip_address=VALUES(ip_address),environment=VALUES(environment),role=VALUES(role),service_name=VALUES(service_name),zone_name=VALUES(zone_name),criticality=VALUES(criticality),os_name=VALUES(os_name),os_version=VALUES(os_version),cpu_cores=VALUES(cpu_cores),memory_gb=VALUES(memory_gb),disk_gb=VALUES(disk_gb),owner=VALUES(owner),eosl_date=VALUES(eosl_date),grafana_path=VALUES(grafana_path),import_batch_id=VALUES(import_batch_id),last_verified_at=VALUES(last_verified_at)`,
++      [v.id,v.hostname,v.ipAddress,v.environment,v.role,v.service,v.zone,v.criticality,v.osName,v.osVersion??null,v.cpuCores??null,v.memoryGb??null,v.diskGb??null,v.owner??null,v.eoslDate??null,v.grafanaPath??null,batchId,v.lastVerifiedAt??null],
+     );
+     const [rows] = await db.execute<mysql.RowDataPacket[]>("SELECT id FROM vm_asset WHERE asset_key=?", [v.id]);
+     vmIdByKey.set(v.id, Number(rows[0].id));
+@@ -42,20 +42,20 @@ try {
+       softwareIdByKey.set(key,Number(rows[0].id));
+     }
+     const vmId=vmIdByKey.get(sw.vmId); if(!vmId) continue;
+-    await db.execute("INSERT INTO vm_software(vm_id,software_id,version,eosl_date,source_ref,import_batch_id) VALUES(?,?,?,?,?,?) ON DUPLICATE KEY UPDATE eosl_date=VALUES(eosl_date),source_ref=VALUES(source_ref),import_batch_id=VALUES(import_batch_id)",[vmId,softwareIdByKey.get(key),sw.version??null,sw.eoslDate??null,sw.sourceRef??file,batchId]);
++    await db.execute("INSERT INTO vm_software(vm_id,software_id,version,eosl_date,import_batch_id) VALUES(?,?,?,?,?) ON DUPLICATE KEY UPDATE eosl_date=VALUES(eosl_date),import_batch_id=VALUES(import_batch_id)",[vmId,softwareIdByKey.get(key),sw.version??null,sw.eoslDate??null,batchId]);
+   }
+ 
+   for (const p of data.networkPolicies ?? []) {
+     await db.execute(
+-      `INSERT INTO network_policy(policy_key,source_vm_id,source_name,source_ip,target_vm_id,target_name,target_ip,protocol,port,approval_status,requested_at,approved_at,valid_from,expires_at,request_id,purpose,owner,source_ref,import_batch_id)
++      `INSERT INTO network_policy(policy_key,source_vm_id,source_name,source_ip,target_vm_id,target_name,target_ip,protocol,port,direction,approval_status,requested_at,approved_at,valid_from,expires_at,request_id,purpose,owner,import_batch_id)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+-       ON DUPLICATE KEY UPDATE source_vm_id=VALUES(source_vm_id),source_name=VALUES(source_name),source_ip=VALUES(source_ip),target_vm_id=VALUES(target_vm_id),target_name=VALUES(target_name),target_ip=VALUES(target_ip),protocol=VALUES(protocol),port=VALUES(port),approval_status=VALUES(approval_status),expires_at=VALUES(expires_at),request_id=VALUES(request_id),purpose=VALUES(purpose),owner=VALUES(owner),source_ref=VALUES(source_ref),import_batch_id=VALUES(import_batch_id)`,
+-      [p.id,vmIdByKey.get(p.sourceVmId)??null,p.sourceName,p.sourceIp,p.targetVmId?vmIdByKey.get(p.targetVmId)??null:null,p.targetName,p.targetIp,p.protocol,p.port,p.approvalStatus,p.requestedAt??null,p.approvedAt??null,p.validFrom??null,p.expiresAt??null,p.requestId??null,p.purpose??null,p.owner??null,p.sourceRef??file,batchId],
++       ON DUPLICATE KEY UPDATE source_vm_id=VALUES(source_vm_id),source_name=VALUES(source_name),source_ip=VALUES(source_ip),target_vm_id=VALUES(target_vm_id),target_name=VALUES(target_name),target_ip=VALUES(target_ip),protocol=VALUES(protocol),port=VALUES(port),direction=VALUES(direction),approval_status=VALUES(approval_status),expires_at=VALUES(expires_at),request_id=VALUES(request_id),purpose=VALUES(purpose),owner=VALUES(owner),import_batch_id=VALUES(import_batch_id)`,
++      [p.id,vmIdByKey.get(p.sourceVmId)??null,p.sourceName,p.sourceIp,p.targetVmId?vmIdByKey.get(p.targetVmId)??null:null,p.targetName,p.targetIp,p.protocol,p.port,p.direction??"ONE_WAY",p.approvalStatus,p.requestedAt??null,p.approvedAt??null,p.validFrom??null,p.expiresAt??null,p.requestId??null,p.purpose??null,p.owner??null,batchId],
+     );
+   }
+ 
+   for (const s of data.sops ?? []) {
+-    await db.execute("INSERT INTO sop_document(sop_key,title,category,document_url,owner,source_ref,import_batch_id,last_verified_at) VALUES(?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE title=VALUES(title),category=VALUES(category),document_url=VALUES(document_url),owner=VALUES(owner),source_ref=VALUES(source_ref),import_batch_id=VALUES(import_batch_id),last_verified_at=VALUES(last_verified_at)",[s.id,s.title,s.category??null,s.url??null,s.owner??null,s.sourceRef??file,batchId,s.updatedAt??null]);
++    await db.execute("INSERT INTO sop_document(sop_key,title,category,document_url,owner,import_batch_id,last_verified_at) VALUES(?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE title=VALUES(title),category=VALUES(category),document_url=VALUES(document_url),owner=VALUES(owner),import_batch_id=VALUES(import_batch_id),last_verified_at=VALUES(last_verified_at)",[s.id,s.title,s.category??null,s.url??null,s.owner??null,batchId,s.updatedAt??null]);
+     const [rows]=await db.execute<mysql.RowDataPacket[]>("SELECT id FROM sop_document WHERE sop_key=?",[s.id]); const sopId=Number(rows[0].id);
+     for(const vmKey of s.relatedVmIds??[]){const vmId=vmIdByKey.get(vmKey);if(vmId) await db.execute("INSERT IGNORE INTO vm_sop_map(vm_id,sop_id) VALUES(?,?)",[vmId,sopId]);}
+   }
+diff --git a/src/app/(with-layouts)/network/connectivity/page.tsx b/src/app/(with-layouts)/network/connectivity/page.tsx
+index 3698462..abc4d69 100644
+--- a/src/app/(with-layouts)/network/connectivity/page.tsx
++++ b/src/app/(with-layouts)/network/connectivity/page.tsx
+@@ -1,4 +1,16 @@
+ import { PageHeader } from "@/components/common/page-header";
+ import { NetworkTable } from "@/components/network/network-table";
+ import { getNetworkStatuses } from "@/services/api/infrastructure";
+-export default async function Page(){const statuses=await getNetworkStatuses();return <><PageHeader title="Connectivity" description="Observed state from source-side Telegraf Ping + TCP probes. TCP is the primary reachability signal."/><NetworkTable statuses={statuses} mode="connectivity"/></>}
++
++export default async function Page() {
++  const statuses = await getNetworkStatuses();
++  return (
++    <>
++      <PageHeader
++        title="Policy & Connectivity"
++        description="Firewall policy is the baseline (Should Be). Source-side Telegraf Ping/TCP probes are joined as the observed state (Actual)."
++      />
++      <NetworkTable statuses={statuses} />
++    </>
++  );
++}
+diff --git a/src/app/(with-layouts)/network/policies/page.tsx b/src/app/(with-layouts)/network/policies/page.tsx
+index 7c4f933..e1843f4 100644
+--- a/src/app/(with-layouts)/network/policies/page.tsx
++++ b/src/app/(with-layouts)/network/policies/page.tsx
+@@ -1,4 +1,5 @@
+-import { PageHeader } from "@/components/common/page-header";
+-import { NetworkTable } from "@/components/network/network-table";
+-import { getNetworkStatuses } from "@/services/api/infrastructure";
+-export default async function Page(){const statuses=await getNetworkStatuses();return <><PageHeader title="Policy Registry" description="Approved firewall-opening requests are the declared state (Should Be)."/><NetworkTable statuses={statuses} mode="policy"/></>}
++import { redirect } from "next/navigation";
++
++export default function Page() {
++  redirect("/network/connectivity");
++}
+diff --git a/src/app/globals.css b/src/app/globals.css
+index da6ab8a..b55849a 100644
+--- a/src/app/globals.css
++++ b/src/app/globals.css
+@@ -72,3 +72,11 @@ a { color: inherit; text-decoration: none; }
+   border-radius: 6px;
+ }
+ .react-flow__background { background: var(--surface); }
++
++/* Custom tier nodes must not inherit React Flow's built-in `group` node chrome. */
++.react-flow__node-tier {
++  padding: 0 !important;
++  border: 0 !important;
++  background: transparent !important;
++  box-shadow: none !important;
++}
+diff --git a/src/components/cluster/cluster-drawer.tsx b/src/components/cluster/cluster-drawer.tsx
+index 587e0dc..9c19b0f 100644
+--- a/src/components/cluster/cluster-drawer.tsx
++++ b/src/components/cluster/cluster-drawer.tsx
+@@ -37,9 +37,7 @@ export function ClusterDrawer({
+           >
+             {cluster.status}
+           </Badge>
+-          <span className="font-mono text-[9px] text-[var(--muted)]">
+-            {cluster.sourceRef ?? "CLUSTER REGISTRY"}
+-          </span>
++          <span className="font-mono text-[9px] text-[var(--muted)]">{cluster.type}</span>
+         </div>
+ 
+         {/* Cluster Information */}
+diff --git a/src/components/common/sidebar.tsx b/src/components/common/sidebar.tsx
+index 4635a0e..4c3897a 100644
+--- a/src/components/common/sidebar.tsx
++++ b/src/components/common/sidebar.tsx
+@@ -18,8 +18,7 @@ const groups = [
+   {
+     label: "NETWORK",
+     items: [
+-      { href: "/network/policies", label: "Policy Registry", icon: ShieldIcon },
+-      { href: "/network/connectivity", label: "Connectivity", icon: NetworkIcon },
++      { href: "/network/connectivity", label: "Policy & Connectivity", icon: NetworkIcon },
+     ],
+   },
+   { label: "OPERATIONS", items: [{ href: "/operations/sop", label: "SOP", icon: DocIcon }] },
+diff --git a/src/components/dashboard/dashboard-view.tsx b/src/components/dashboard/dashboard-view.tsx
+index 86d0fc5..91b408a 100644
+--- a/src/components/dashboard/dashboard-view.tsx
++++ b/src/components/dashboard/dashboard-view.tsx
+@@ -202,8 +202,8 @@ export function DashboardView({ vms, network, software, sops, trend }: Dashboard
+             title="Expiring Network Policies"
+             description="Approved firewall requests expiring within 30 days or overdue"
+             action={
+-              <Link href="/network/policies" className="text-[9px] font-medium text-[#5750f1] hover:underline">
+-                Policy Registry →
++              <Link href="/network/connectivity" className="text-[9px] font-medium text-[#5750f1] hover:underline">
++                Policy & Connectivity →
+               </Link>
+             }
+           />
+diff --git a/src/components/management/asset-management-view.tsx b/src/components/management/asset-management-view.tsx
+index 15e4bc6..60c8853 100644
+--- a/src/components/management/asset-management-view.tsx
++++ b/src/components/management/asset-management-view.tsx
+@@ -25,7 +25,6 @@ export function AssetManagementView({ initialAssets }: { initialAssets: InfraAss
+     criticality: "HIGH",
+     health: "healthy",
+     owner: "",
+-    sourceRef: "MANUAL_INPUT",
+   });
+ 
+   const filtered = assets.filter((a) => {
+@@ -52,8 +51,7 @@ export function AssetManagementView({ initialAssets }: { initialAssets: InfraAss
+       criticality: "HIGH",
+       health: "healthy",
+       owner: "",
+-      sourceRef: "MANUAL_INPUT",
+-    });
++      });
+     setIsModalOpen(true);
+   }
+ 
+@@ -134,14 +132,13 @@ export function AssetManagementView({ initialAssets }: { initialAssets: InfraAss
+                 <Th>Service / Role</Th>
+                 <Th>Criticality</Th>
+                 <Th>Owner</Th>
+-                <Th>Source Ref</Th>
+                 <Th className="text-right">Actions</Th>
+               </tr>
+             </thead>
+             <tbody className="divide-y divide-[var(--border)]">
+               {filtered.length === 0 ? (
+                 <tr>
+-                  <td colSpan={10} className="p-6 text-center text-[11px] text-[var(--muted)]">
++                  <td colSpan={9} className="p-6 text-center text-[11px] text-[var(--muted)]">
+                     등록된 인프라 자산이 없습니다.
+                   </td>
+                 </tr>
+@@ -187,9 +184,6 @@ export function AssetManagementView({ initialAssets }: { initialAssets: InfraAss
+                       </Badge>
+                     </Td>
+                     <Td>{a.owner ?? "-"}</Td>
+-                    <Td>
+-                      <span className="font-mono text-[9px] text-[var(--muted)]">{a.sourceRef ?? "-"}</span>
+-                    </Td>
+                     <Td className="text-right space-x-1.5">
+                       <button
+                         type="button"
+@@ -343,15 +337,6 @@ export function AssetManagementView({ initialAssets }: { initialAssets: InfraAss
+                     className="h-7 w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 outline-none text-[var(--foreground)]"
+                   />
+                 </div>
+-                <div>
+-                  <label className="mb-1 block font-medium text-[var(--muted)]">Source Ref</label>
+-                  <input
+-                    value={formData.sourceRef ?? ""}
+-                    onChange={(e) => setFormData({ ...formData, sourceRef: e.target.value })}
+-                    placeholder="e.g. CMDB-202609"
+-                    className="h-7 w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 font-mono outline-none text-[var(--foreground)]"
+-                  />
+-                </div>
+               </div>
+ 
+               <div className="mt-4 flex justify-end gap-2 border-t border-[var(--border)] pt-3">
+diff --git a/src/components/management/batch-import-view.tsx b/src/components/management/batch-import-view.tsx
+index f571fca..0e547a4 100644
+--- a/src/components/management/batch-import-view.tsx
++++ b/src/components/management/batch-import-view.tsx
+@@ -20,7 +20,6 @@ const SAMPLE_PAYLOAD = JSON.stringify(
+         criticality: "HIGH",
+         health: "healthy",
+         owner: "RPA Operations",
+-        sourceRef: "IMPORT-BATCH-2026-09",
+       },
+       {
+         id: "nas-backup",
+@@ -34,7 +33,6 @@ const SAMPLE_PAYLOAD = JSON.stringify(
+         criticality: "MEDIUM",
+         health: "healthy",
+         owner: "Infra Team",
+-        sourceRef: "IMPORT-BATCH-2026-09",
+       },
+     ],
+     policies: [
+diff --git a/src/components/network/connection-drawer.tsx b/src/components/network/connection-drawer.tsx
+index 11f3455..bce03b4 100644
+--- a/src/components/network/connection-drawer.tsx
++++ b/src/components/network/connection-drawer.tsx
+@@ -9,7 +9,9 @@ export function ConnectionDrawer({ status, open, onClose }: { status: NetworkSta
+   if (!status) return null;
+   const p = status.policy;
+   const o = status.observation;
++  const reverse = status.reverseObservation;
+   const isBidi = p.direction === "BIDIRECTIONAL" || status.isBidirectional;
++  const observesReverse = isBidi && Boolean(p.targetVmId);
+ 
+   return (
+     <SlideDrawer
+@@ -38,7 +40,7 @@ export function ConnectionDrawer({ status, open, onClose }: { status: NetworkSta
+           <KV k="Purpose" v={p.purpose ?? "-"} />
+         </DrawerSection>
+ 
+-        {isBidi ? (
++        {observesReverse ? (
+           <DrawerSection title="Observed Probes (Bidirectional)">
+             <div className="space-y-2.5">
+               {/* Forward Probe Card */}
+@@ -56,19 +58,19 @@ export function ConnectionDrawer({ status, open, onClose }: { status: NetworkSta
+               </div>
+ 
+               {/* Return Probe Card */}
+-              <div className={`rounded border p-2.5 ${o?.reverseTcp === "DOWN" ? "border-[var(--danger)]/30 bg-[var(--danger-surface)]" : "border-[var(--border)] bg-[var(--surface-2)]"}`}>
++              <div className={`rounded border p-2.5 ${reverse?.tcp === "DOWN" ? "border-[var(--danger)]/30 bg-[var(--danger-surface)]" : "border-[var(--border)] bg-[var(--surface-2)]"}`}>
+                 <div className="mb-2 flex items-center justify-between">
+                   <span className="font-mono text-[10px] font-semibold text-[var(--foreground)]">Return: {p.targetName} → {p.sourceName}</span>
+-                  <ProbeBadge value={o?.reverseTcp ?? "NO_DATA"} />
++                  <ProbeBadge value={reverse?.tcp ?? "NO_DATA"} />
+                 </div>
+                 <div className="grid grid-cols-2 gap-2 text-[10px]">
+-                  <div><span className="text-[var(--muted)]">Ping: </span><ProbeBadge value={o?.reversePing ?? "NO_DATA"} /></div>
+-                  <div><span className="text-[var(--muted)]">Ping RTT: </span><span className="font-mono">-</span></div>
+-                  <div><span className="text-[var(--muted)]">TCP: </span><ProbeBadge value={o?.reverseTcp ?? "NO_DATA"} /></div>
+-                  <div><span className="text-[var(--muted)]">TCP RTT: </span><span className="font-mono">{o?.reverseTcpLatencyMs != null ? `${o.reverseTcpLatencyMs} ms` : "-"}</span></div>
++                  <div><span className="text-[var(--muted)]">Ping: </span><ProbeBadge value={reverse?.ping ?? "NO_DATA"} /></div>
++                  <div><span className="text-[var(--muted)]">Ping RTT: </span><span className="font-mono">{reverse?.pingLatencyMs != null ? `${reverse.pingLatencyMs} ms` : "-"}</span></div>
++                  <div><span className="text-[var(--muted)]">TCP: </span><ProbeBadge value={reverse?.tcp ?? "NO_DATA"} /></div>
++                  <div><span className="text-[var(--muted)]">TCP RTT: </span><span className="font-mono">{reverse?.tcpLatencyMs != null ? `${reverse.tcpLatencyMs} ms` : "-"}</span></div>
+                 </div>
+               </div>
+-              <div className="text-[9px] text-[var(--muted)]">Checked: {o?.checkedAt?.replace("T", " ").slice(0, 19) ?? "-"}</div>
++              <div className="text-[9px] text-[var(--muted)]">Forward checked: {o?.checkedAt?.replace("T", " ").slice(0, 19) ?? "-"}<br/>Return checked: {reverse?.checkedAt?.replace("T", " ").slice(0, 19) ?? "-"}</div>
+             </div>
+           </DrawerSection>
+         ) : (
+@@ -78,6 +80,11 @@ export function ConnectionDrawer({ status, open, onClose }: { status: NetworkSta
+             <KV k="TCP" v={<ProbeBadge value={o?.tcp ?? "NO_DATA"} />} />
+             <KV k="TCP RTT" v={o?.tcpLatencyMs == null ? "-" : `${o.tcpLatencyMs} ms`} />
+             <KV k="Checked" v={o?.checkedAt?.replace("T", " ").slice(0, 19) ?? "-"} />
++            {isBidi && !p.targetVmId && (
++              <div className="mt-2 rounded border border-[var(--border)] bg-[var(--surface-2)] p-2 text-[9px] text-[var(--muted)]">
++                정책은 양방향이지만 Target이 관리 대상 VM이 아니어서 Target→Source Telegraf probe는 자동 수집 대상이 아닙니다.
++              </div>
++            )}
+           </DrawerSection>
+         )}
+ 
+diff --git a/src/components/network/network-table.tsx b/src/components/network/network-table.tsx
+index e0453f9..54c34e3 100644
+--- a/src/components/network/network-table.tsx
++++ b/src/components/network/network-table.tsx
+@@ -1,19 +1,13 @@
+ "use client";
+ 
+ import { useMemo, useState } from "react";
+-import type { NetworkStatus } from "@/domain/models";
++import type { NetworkStatus, ProbeState } from "@/domain/models";
+ import { ConnectionDrawer } from "./connection-drawer";
+ import { StatusBadge } from "./status-badge";
+ import { Badge } from "@/components/tailgrids/core/badge";
+ import { SearchIcon } from "@/components/common/icons";
+ 
+-export function NetworkTable({
+-  statuses,
+-  mode,
+-}: {
+-  statuses: NetworkStatus[];
+-  mode?: "policy" | "connectivity" | "all";
+-}) {
++export function NetworkTable({ statuses }: { statuses: NetworkStatus[] }) {
+   const [query, setQuery] = useState("");
+   const [filter, setFilter] = useState("ALL");
+   const [selected, setSelected] = useState<NetworkStatus | null>(null);
+@@ -36,11 +30,12 @@ export function NetworkTable({
+         const isPending =
+           s.policy.approvalStatus === "PENDING" ||
+           s.overall === "POLICY_NOT_APPROVED_BUT_REACHABLE";
++        const hasTcpFailure = s.observation?.tcp === "DOWN" || s.reverseObservation?.tcp === "DOWN";
+ 
+         const f =
+           filter === "ALL" ||
+           (filter === "ISSUES" && s.overall !== "NORMAL") ||
+-          (filter === "TCP_FAILED" && s.observation?.tcp === "DOWN") ||
++          (filter === "TCP_FAILED" && hasTcpFailure) ||
+           (filter === "EXPIRING" && isExpiring) ||
+           (filter === "EXPIRED" && isExpired) ||
+           (filter === "PENDING" && isPending);
+@@ -50,12 +45,15 @@ export function NetworkTable({
+     [statuses, query, filter]
+   );
+ 
++  const tcpFailures = statuses.filter(
++    (s) => s.observation?.tcp === "DOWN" || s.reverseObservation?.tcp === "DOWN"
++  ).length;
++
+   return (
+     <>
+-      {/* Search and Filter Controls */}
+-      <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2">
+-        <div className="flex flex-1 items-center gap-2">
+-          <div className="flex h-8 min-w-[280px] max-w-[420px] flex-1 items-center gap-2 rounded-md border border-[var(--border)] px-2.5">
++      <div className="mb-2.5 grid gap-2 lg:grid-cols-[1fr_auto]">
++        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2">
++          <div className="flex h-8 min-w-[280px] max-w-[430px] flex-1 items-center gap-2 rounded-md border border-[var(--border)] px-2.5">
+             <SearchIcon className="h-3.5 w-3.5 text-[var(--muted)]" />
+             <input
+               value={query}
+@@ -65,50 +63,56 @@ export function NetworkTable({
+             />
+           </div>
+ 
+-          <div className="flex items-center gap-1.5 text-[10px] text-[var(--muted)]">
+-            <span>Filter:</span>
+-            <select
+-              value={filter}
+-              onChange={(e) => setFilter(e.target.value)}
+-              className="h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2.5 text-[10px] outline-none"
+-            >
+-              <option value="ALL">All Flows ({statuses.length})</option>
+-              <option value="ISSUES">
+-                All Issues ({statuses.filter((s) => s.overall !== "NORMAL").length})
+-              </option>
+-              <option value="TCP_FAILED">
+-                TCP Failed ({statuses.filter((s) => s.observation?.tcp === "DOWN").length})
+-              </option>
+-              <option value="EXPIRING">Expiring Soon (≤30d)</option>
+-              <option value="EXPIRED">Policy Expired</option>
+-              <option value="PENDING">Pending / Unapproved</option>
+-            </select>
+-          </div>
++          <select
++            value={filter}
++            onChange={(e) => setFilter(e.target.value)}
++            className="h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2.5 text-[10px] outline-none"
++          >
++            <option value="ALL">All ({statuses.length})</option>
++            <option value="ISSUES">Issues ({statuses.filter((s) => s.overall !== "NORMAL").length})</option>
++            <option value="TCP_FAILED">TCP Failed ({tcpFailures})</option>
++            <option value="EXPIRING">Expiring Soon (≤30d)</option>
++            <option value="EXPIRED">Policy Expired</option>
++            <option value="PENDING">Pending / Unapproved</option>
++          </select>
++
++          <span className="ml-auto text-[10px] tabular-nums text-[var(--muted)]">
++            <b>{filtered.length}</b> / {statuses.length} policy connections
++          </span>
+         </div>
+ 
+-        <div className="flex items-center gap-2 text-[10px] text-[var(--muted)]">
+-          <span className="tabular-nums">
+-            Showing <b>{filtered.length}</b> of {statuses.length} connections
+-          </span>
++        <div className="flex min-w-[310px] items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-[9px] text-[var(--muted)]">
++          <span><b className="text-[var(--foreground)]">Policy</b> = 기준</span>
++          <span className="text-[var(--border-strong)]">→</span>
++          <span><b className="text-[var(--foreground)]">Actual</b> = Telegraf 실측</span>
++          <span className="text-[var(--border-strong)]">·</span>
++          <span>Source + Target + Protocol + Port로 조인</span>
+         </div>
+       </div>
+ 
+-      {/* Dense 11-Column Network Table */}
+       <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+         <div className="overflow-x-auto">
+-          <table className="w-full min-w-[1180px] text-left text-[11px]">
++          <table className="w-full min-w-[1320px] text-left text-[11px]">
+             <thead>
+-              <tr className="h-9 border-b border-[var(--border)] bg-[var(--surface-2)] text-[9px] uppercase tracking-[0.04em] text-[var(--muted)]">
+-                <th className="px-3 py-1.5 font-medium">Source</th>
+-                <th className="px-3 py-1.5 font-medium">Target</th>
+-                <th className="px-3 py-1.5 font-medium">Protocol</th>
+-                <th className="px-3 py-1.5 font-medium">Port</th>
+-                <th className="px-3 py-1.5 font-medium">Policy</th>
+-                <th className="px-3 py-1.5 font-medium">Expiry</th>
++              <tr className="border-b border-[var(--border)] bg-[var(--surface-2)] text-[9px] uppercase tracking-[0.04em] text-[var(--muted)]">
++                <th colSpan={5} className="border-r border-[var(--border)] px-3 py-1.5 font-semibold text-[var(--foreground)]">
++                  Connection / Policy baseline
++                </th>
++                <th colSpan={4} className="border-r border-[var(--border)] px-3 py-1.5 font-semibold text-[var(--foreground)]">
++                  Actual / Telegraf probe
++                </th>
++                <th className="px-3 py-1.5 font-semibold text-[var(--foreground)]">Evaluation</th>
++              </tr>
++              <tr className="h-8 border-b border-[var(--border)] bg-[var(--surface-2)] text-[9px] uppercase tracking-[0.04em] text-[var(--muted)]">
++                <th className="px-3 py-1.5 font-medium">Source → Target</th>
++                <th className="px-3 py-1.5 font-medium">Direction</th>
++                <th className="px-3 py-1.5 font-medium">Protocol / Port</th>
++                <th className="px-3 py-1.5 font-medium">Approval</th>
++                <th className="border-r border-[var(--border)] px-3 py-1.5 font-medium">Expiry</th>
+                 <th className="px-3 py-1.5 font-medium">Ping</th>
+                 <th className="px-3 py-1.5 font-medium">TCP</th>
+                 <th className="px-3 py-1.5 font-medium">RTT</th>
+-                <th className="px-3 py-1.5 font-medium">Last Check</th>
++                <th className="border-r border-[var(--border)] px-3 py-1.5 font-medium">Last Check</th>
+                 <th className="px-3 py-1.5 font-medium">Status</th>
+               </tr>
+             </thead>
+@@ -116,58 +120,55 @@ export function NetworkTable({
+               {filtered.map((s) => {
+                 const p = s.policy;
+                 const o = s.observation;
+-                const isTcpDown = o?.tcp === "DOWN";
+-                const isPingUp = o?.ping === "UP";
++                const reverse = s.reverseObservation;
++                const isBidi = p.direction === "BIDIRECTIONAL" || s.isBidirectional;
++                const observesReverse = isBidi && Boolean(p.targetVmId);
+ 
+                 return (
+                   <tr
+                     key={p.id}
+                     onClick={() => setSelected(s)}
+-                    className="h-[34px] cursor-pointer border-b border-[var(--border)] last:border-0 hover:bg-[var(--surface-2)] transition-colors"
++                    className="min-h-[38px] cursor-pointer border-b border-[var(--border)] last:border-0 hover:bg-[var(--surface-2)] transition-colors"
+                   >
+-                    {/* 1. Source */}
+-                    <td className="px-3 py-1">
+-                      <div className="font-medium text-[11px] leading-tight">{p.sourceName}</div>
+-                      <div className="font-mono text-[9px] text-[var(--muted)]">{p.sourceIp}</div>
+-                    </td>
+-
+-                    {/* 2. Target */}
+-                    <td className="px-3 py-1">
+-                      <div className="font-medium text-[11px] leading-tight">{p.targetName}</div>
+-                      <div className="font-mono text-[9px] text-[var(--muted)]">{p.targetIp}</div>
++                    <td className="px-3 py-1.5">
++                      <div className="flex items-center gap-1.5 font-medium text-[10.5px] leading-tight">
++                        <span>{p.sourceName}</span>
++                        <span className="text-[var(--muted-2)]">{isBidi ? "⇄" : "→"}</span>
++                        <span>{p.targetName}</span>
++                      </div>
++                      <div className="mt-0.5 font-mono text-[8.5px] text-[var(--muted)]">
++                        {p.sourceIp} → {p.targetIp}
++                      </div>
+                     </td>
+ 
+-                    {/* 3. Protocol */}
+-                    <td className="px-3 py-1 font-mono text-[10px] text-[var(--muted)]">
+-                      {p.protocol}
++                    <td className="px-3 py-1.5">
++                      <Badge tone={isBidi ? "info" : "neutral"}>{isBidi ? "BIDIRECTIONAL" : "ONE_WAY"}</Badge>
+                     </td>
+ 
+-                    {/* 4. Port */}
+-                    <td className="px-3 py-1 font-mono text-[11px] font-semibold tabular-nums">
+-                      {p.port}
++                    <td className="px-3 py-1.5 font-mono text-[10px] font-semibold tabular-nums">
++                      {p.protocol}/{p.port}
+                     </td>
+ 
+-                    {/* 5. Policy (Approval Status) */}
+-                    <td className="px-3 py-1">
+-                      <Badge
+-                        tone={
+-                          p.approvalStatus === "APPROVED"
+-                            ? "success"
+-                            : p.approvalStatus === "PENDING"
+-                              ? "warning"
+-                              : "danger"
+-                        }
+-                      >
+-                        {p.approvalStatus}
+-                      </Badge>
++                    <td className="px-3 py-1.5">
++                      <div className="flex items-center gap-1.5">
++                        <Badge
++                          tone={
++                            p.approvalStatus === "APPROVED"
++                              ? "success"
++                              : p.approvalStatus === "PENDING"
++                                ? "warning"
++                                : "danger"
++                          }
++                        >
++                          {p.approvalStatus}
++                        </Badge>
++                        {p.requestId && <span className="font-mono text-[8px] text-[var(--muted)]">{p.requestId}</span>}
++                      </div>
+                     </td>
+ 
+-                    {/* 6. Expiry */}
+-                    <td className="px-3 py-1">
+-                      <div className="font-mono text-[10px] leading-tight">
+-                        {p.expiresAt ?? "-"}
+-                      </div>
+-                      <div className="text-[9px] text-[var(--muted)]">
++                    <td className="border-r border-[var(--border)] px-3 py-1.5">
++                      <div className="font-mono text-[9.5px] leading-tight">{p.expiresAt ?? "-"}</div>
++                      <div className="text-[8.5px] text-[var(--muted)]">
+                         {s.daysToExpiry == null
+                           ? "-"
+                           : s.daysToExpiry >= 0
+@@ -176,32 +177,25 @@ export function NetworkTable({
+                       </div>
+                     </td>
+ 
+-                    {/* 7. Ping */}
+-                    <td className="px-3 py-1">
+-                      <ProbeBadge value={o?.ping} />
++                    <td className="px-3 py-1.5">
++                      <DirectionalProbeCell forward={o?.ping} reverse={observesReverse ? reverse?.ping : undefined} bidirectional={observesReverse} />
+                     </td>
+ 
+-                    {/* 8. TCP */}
+-                    <td className="px-3 py-1 font-semibold">
+-                      <ProbeBadge value={o?.tcp} />
++                    <td className="px-3 py-1.5">
++                      <DirectionalProbeCell forward={o?.tcp} reverse={observesReverse ? reverse?.tcp : undefined} bidirectional={observesReverse} />
+                     </td>
+ 
+-                    {/* 9. RTT */}
+-                    <td className="px-3 py-1 font-mono text-[10px] tabular-nums text-[var(--muted)]">
+-                      {o?.tcpLatencyMs != null
+-                        ? `${o.tcpLatencyMs} ms`
+-                        : o?.pingLatencyMs != null
+-                          ? `${o.pingLatencyMs} ms (P)`
+-                          : "-"}
++                    <td className="px-3 py-1.5 font-mono text-[9px] tabular-nums text-[var(--muted)]">
++                      <div>→ {formatRtt(o?.tcpLatencyMs, o?.pingLatencyMs)}</div>
++                      {observesReverse && <div>← {formatRtt(reverse?.tcpLatencyMs, reverse?.pingLatencyMs)}</div>}
+                     </td>
+ 
+-                    {/* 10. Last Check */}
+-                    <td className="px-3 py-1 font-mono text-[9px] text-[var(--muted)]">
+-                      {o?.checkedAt ? o.checkedAt.replace("T", " ").slice(11, 19) : "-"}
++                    <td className="border-r border-[var(--border)] px-3 py-1.5 font-mono text-[8.5px] text-[var(--muted)]">
++                      <div>→ {formatCheck(o?.checkedAt)}</div>
++                      {observesReverse && <div>← {formatCheck(reverse?.checkedAt)}</div>}
+                     </td>
+ 
+-                    {/* 11. Status */}
+-                    <td className="px-3 py-1">
++                    <td className="px-3 py-1.5">
+                       <StatusBadge state={s.overall} />
+                     </td>
+                   </tr>
+@@ -212,20 +206,45 @@ export function NetworkTable({
+         </div>
+       </div>
+ 
+-      {/* Detail Slide Drawer */}
+       <ConnectionDrawer status={selected} open={!!selected} onClose={() => setSelected(null)} />
+     </>
+   );
+ }
+ 
+-function ProbeBadge({ value }: { value?: "UP" | "DOWN" | "NO_DATA" }) {
++function DirectionalProbeCell({
++  forward,
++  reverse,
++  bidirectional,
++}: {
++  forward?: ProbeState;
++  reverse?: ProbeState;
++  bidirectional: boolean;
++}) {
++  if (!bidirectional) return <ProbeBadge value={forward} />;
++  return (
++    <div className="space-y-1">
++      <div className="flex items-center gap-1"><span className="w-3 text-[8px] text-[var(--muted)]">→</span><ProbeBadge value={forward} /></div>
++      <div className="flex items-center gap-1"><span className="w-3 text-[8px] text-[var(--muted)]">←</span><ProbeBadge value={reverse} /></div>
++    </div>
++  );
++}
++
++function ProbeBadge({ value }: { value?: ProbeState }) {
+   const v = value ?? "NO_DATA";
+   return (
+-    <Badge
+-      tone={v === "UP" ? "success" : v === "DOWN" ? "danger" : "neutral"}
+-      dot
+-    >
++    <Badge tone={v === "UP" ? "success" : v === "DOWN" ? "danger" : "neutral"} dot>
+       {v}
+     </Badge>
+   );
+ }
++
++function formatRtt(tcp?: number | null, ping?: number | null) {
++  if (tcp != null) return `${tcp} ms`;
++  if (ping != null) return `${ping} ms P`;
++  return "-";
++}
++
++function formatCheck(value?: string | null) {
++  if (!value) return "-";
++  return value.replace("T", " ").slice(11, 19);
++}
+diff --git a/src/components/network/status-badge.tsx b/src/components/network/status-badge.tsx
+index bd0b2d3..5a80dae 100644
+--- a/src/components/network/status-badge.tsx
++++ b/src/components/network/status-badge.tsx
+@@ -10,6 +10,7 @@ export function StatusBadge({ state }: { state: NetworkOverallState }) {
+     POLICY_VALID_BUT_UNREACHABLE: { label: "POLICY VALID / TCP DOWN", tone: "danger" },
+     POLICY_NOT_APPROVED_BUT_REACHABLE: { label: "POLICY PENDING / TCP UP", tone: "danger" },
+     RETURN_DIRECTION_FAILED: { label: "RETURN FAILED", tone: "danger" },
++    BIDIRECTIONAL_PARTIAL: { label: "BIDI / NO RETURN DATA", tone: "warning" },
+     UNREACHABLE: { label: "UNREACHABLE", tone: "danger" },
+     UNKNOWN: { label: "UNKNOWN", tone: "neutral" },
+   };
+diff --git a/src/components/software/software-view.tsx b/src/components/software/software-view.tsx
+index b8efb23..ad39c36 100644
+--- a/src/components/software/software-view.tsx
++++ b/src/components/software/software-view.tsx
+@@ -68,7 +68,6 @@ export function SoftwareView({
+         lifecycleStatus,
+         vendor: s.vendor,
+         category: s.category,
+-        sourceRef: s.sourceRef,
+       } as AssetSoftwareInstallation;
+     });
+   }, [installations, software]);
+@@ -244,13 +243,12 @@ export function SoftwareView({
+                   <Th>Category</Th>
+                   <Th>Lifecycle Status</Th>
+                   <Th>EOSL Date</Th>
+-                  <Th>Source Ref</Th>
+                 </tr>
+               </thead>
+               <tbody className="divide-y divide-[var(--border)]">
+                 {filteredInstallations.length === 0 ? (
+                   <tr>
+-                    <td colSpan={8} className="p-6 text-center text-[11px] text-[var(--muted)]">
++                    <td colSpan={7} className="p-6 text-center text-[11px] text-[var(--muted)]">
+                       일치하는 소프트웨어 설치 내역이 없습니다.
+                     </td>
+                   </tr>
+@@ -311,11 +309,6 @@ export function SoftwareView({
+                             </div>
+                           )}
+                         </Td>
+-                        <Td>
+-                          <span className="font-mono text-[9px] text-[var(--muted)]">
+-                            {inst.sourceRef ?? "-"}
+-                          </span>
+-                        </Td>
+                       </tr>
+                     );
+                   })
+diff --git a/src/components/storage/nas-drawer.tsx b/src/components/storage/nas-drawer.tsx
+index ed08eda..e62fe76 100644
+--- a/src/components/storage/nas-drawer.tsx
++++ b/src/components/storage/nas-drawer.tsx
+@@ -86,7 +86,6 @@ export function NasDrawer({
+             <KV k="Zone" v={nas.zone} />
+             <KV k="Criticality" v={<Badge tone={nas.criticality === "CRITICAL" ? "danger" : "neutral"}>{nas.criticality}</Badge>} />
+             <KV k="Owner" v={nas.owner ?? "-"} />
+-            <KV k="Source Ref" v={<span className="font-mono text-[9px]">{nas.sourceRef ?? "-"}</span>} />
+           </div>
+         </section>
+ 
+diff --git a/src/components/topology/architecture-canvas.tsx b/src/components/topology/architecture-canvas.tsx
+index a350d43..93ea8a4 100644
+--- a/src/components/topology/architecture-canvas.tsx
++++ b/src/components/topology/architecture-canvas.tsx
+@@ -1,6 +1,6 @@
+ "use client";
+ 
+-import { useMemo, useRef, useState } from "react";
++import { useEffect, useMemo, useRef, useState } from "react";
+ import {
+   Background,
+   BaseEdge,
+@@ -8,6 +8,7 @@ import {
+   EdgeLabelRenderer,
+   Handle,
+   MiniMap,
++  MarkerType,
+   Position,
+   ReactFlow,
+   getSmoothStepPath,
+@@ -32,7 +33,7 @@ import { ClusterDrawer } from "@/components/cluster/cluster-drawer";
+ import { NasDrawer } from "@/components/storage/nas-drawer";
+ import { SoftwareDetailDrawer } from "@/components/software/software-detail-drawer";
+ import { MaximizeIcon, SearchIcon } from "@/components/common/icons";
+-import { Badge } from "@/components/tailgrids/core/badge";
++import { matchLegacySoftwareRelease } from "@/domain/software-lifecycle";
+ 
+ type ViewMode = "overview" | "service" | "vm";
+ type OverlayMode = "policy" | "live";
+@@ -59,6 +60,7 @@ export type TopologyEdgeData = {
+   issueCount: number;
+   status?: NetworkStatus;
+   flowActive?: boolean;
++  showLabel?: boolean;
+   onSelect?: () => void;
+ };
+ 
+@@ -85,7 +87,7 @@ function GroupNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
+   const isExternal = data.kind === "external";
+   return (
+     <div
+-      className={`w-[200px] rounded-md border bg-[var(--surface)] p-2.5 shadow-sm transition ${
++      className={`h-[116px] w-[200px] rounded-md border bg-[var(--surface)] p-2.5 shadow-sm transition ${
+         selected ? "border-[#5750f1] ring-1 ring-[#5750f1]/20" : "border-[var(--border-strong)]"
+       }`}
+     >
+@@ -341,13 +343,16 @@ function FlowEdge(props: EdgeProps<Edge<TopologyEdgeData>>) {
+   const color = statusColor(data.issueCount, data.status);
+   const isTcpUp = data.status?.observation?.tcp === "UP";
+   const isBidi = data.status?.isBidirectional;
+-  const isReverseUp = isBidi && data.status?.observation?.reverseTcp === "UP";
++  const isReverseUp = isBidi && data.status?.reverseObservation?.tcp === "UP";
+   const flowActive = data.flowActive ?? true;
+ 
+   return (
+     <>
+       <BaseEdge
+         path={path}
++        markerStart={props.markerStart}
++        markerEnd={props.markerEnd}
++        interactionWidth={18}
+         style={{
+           stroke: color,
+           strokeWidth: data.issueCount ? 1.8 : 1.2,
+@@ -367,22 +372,24 @@ function FlowEdge(props: EdgeProps<Edge<TopologyEdgeData>>) {
+         </circle>
+       )}
+ 
+-      <EdgeLabelRenderer>
+-        <button
+-          onClick={() => data.onSelect?.()}
+-          style={{ transform: `translate(-50%,-50%) translate(${x}px,${y}px)` }}
+-          className="nodrag nopan absolute rounded border border-[var(--border)] bg-[var(--surface)] px-1.5 py-0.5 text-left shadow-sm transition hover:border-[#5750f1]"
+-        >
+-          <div className="whitespace-nowrap text-[8px] font-semibold">{data.label}</div>
+-          <div className="whitespace-nowrap text-[7px] text-[var(--muted)]">{data.secondary}</div>
+-        </button>
+-      </EdgeLabelRenderer>
++      {data.showLabel && (
++        <EdgeLabelRenderer>
++          <button
++            onClick={() => data.onSelect?.()}
++            style={{ transform: `translate(-50%,-50%) translate(${x}px,${y}px)` }}
++            className="nodrag nopan absolute z-10 rounded border border-[var(--border)] bg-[var(--surface)]/95 px-1.5 py-0.5 text-left shadow-sm backdrop-blur-[1px] transition hover:border-[#5750f1]"
++          >
++            <div className="whitespace-nowrap text-[8px] font-semibold">{data.label}</div>
++            <div className="whitespace-nowrap text-[7px] text-[var(--muted)]">{data.secondary}</div>
++          </button>
++        </EdgeLabelRenderer>
++      )}
+     </>
+   );
+ }
+ 
+ const nodeTypes = {
+-  group: GroupNode,
++  tier: GroupNode,
+   vm: VmNode,
+   cluster: ClusterNode,
+   nas: NasNode,
+@@ -414,7 +421,11 @@ export function ArchitectureCanvas({
+   const [zone, setZone] = useState("ALL");
+   const [overlay, setOverlay] = useState<OverlayMode>("live");
+   const [issuesOnly, setIssuesOnly] = useState(false);
+-  const [flowAnimation, setFlowAnimation] = useState(true);
++  const [flowAnimation, setFlowAnimation] = useState(false);
++  const [showEdgeLabels, setShowEdgeLabels] = useState(false);
++  const [layoutEditMode, setLayoutEditMode] = useState(false);
++  const [positionOverrides, setPositionOverrides] = useState<Record<string, { x: number; y: number }>>({});
++  const [canvasRevision, setCanvasRevision] = useState(0);
+   const [query, setQuery] = useState("");
+ 
+   // Drawers
+@@ -463,11 +474,43 @@ export function ArchitectureCanvas({
+       overlay,
+       query,
+       flowAnimation,
++      showEdgeLabels,
+       clusters,
+       nasAssets,
+       setSelectedConnection
+     );
+-  }, [mode, envVms, envStatuses, zone, issuesOnly, issueVmIds, overlay, query, flowAnimation, clusters, nasAssets]);
++  }, [mode, envVms, envStatuses, zone, issuesOnly, issueVmIds, overlay, query, flowAnimation, showEdgeLabels, clusters, nasAssets]);
++
++  const layoutStorageKey = `rpa-topology-layout:v2:${mode}:${envFilter}:${zone}`;
++
++  useEffect(() => {
++    try {
++      const saved = window.localStorage.getItem(layoutStorageKey);
++      setPositionOverrides(saved ? JSON.parse(saved) : {});
++    } catch {
++      setPositionOverrides({});
++    }
++  }, [layoutStorageKey]);
++
++  const renderedNodes = useMemo(
++    () => nodes.map((node) => ({ ...node, position: positionOverrides[node.id] ?? node.position })),
++    [nodes, positionOverrides]
++  );
++
++  function saveNodePosition(nodeId: string, position: { x: number; y: number }) {
++    const snapped = { x: Math.round(position.x / 20) * 20, y: Math.round(position.y / 20) * 20 };
++    setPositionOverrides((current) => {
++      const next = { ...current, [nodeId]: snapped };
++      window.localStorage.setItem(layoutStorageKey, JSON.stringify(next));
++      return next;
++    });
++  }
++
++  function resetLayout() {
++    window.localStorage.removeItem(layoutStorageKey);
++    setPositionOverrides({});
++    setCanvasRevision((value) => value + 1);
++  }
+ 
+   function handleSearch(val: string) {
+     setQuery(val);
+@@ -572,6 +615,38 @@ export function ArchitectureCanvas({
+             <span>Flow</span>
+           </button>
+ 
++          <button
++            onClick={() => setShowEdgeLabels((value) => !value)}
++            title="Show connection labels. Off by default on VM view to prevent label/node collisions."
++            className={`flex h-7 items-center gap-1 rounded-md border px-2 text-[9px] font-medium transition ${
++              showEdgeLabels
++                ? "border-[#5750f1] bg-[#5750f1]/10 text-[#5750f1]"
++                : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]"
++            }`}
++          >
++            Labels
++          </button>
++
++          <button
++            onClick={() => setLayoutEditMode((value) => !value)}
++            title="Allow manual node movement. Dragging snaps to a 20px grid."
++            className={`flex h-7 items-center gap-1 rounded-md border px-2 text-[9px] font-medium transition ${
++              layoutEditMode
++                ? "border-[#5750f1] bg-[#5750f1]/10 text-[#5750f1]"
++                : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]"
++            }`}
++          >
++            {layoutEditMode ? "Editing layout" : "Edit layout"}
++          </button>
++
++          <button
++            onClick={resetLayout}
++            title="Discard manual positions and restore the automatic hierarchical layout."
++            className="flex h-7 items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[9px] text-[var(--muted)] transition hover:text-[var(--foreground)]"
++          >
++            Auto layout
++          </button>
++
+           {/* Search: hostname / IP / port */}
+           <div className="flex h-7 w-[200px] items-center gap-1.5 rounded-md border border-[var(--border)] px-2">
+             <SearchIcon className="h-3.5 w-3.5 shrink-0 text-[var(--muted)]" />
+@@ -609,7 +684,8 @@ export function ArchitectureCanvas({
+       {/* React Flow Canvas */}
+       <div className="relative h-[calc(100vh-170px)] min-h-[640px]">
+         <ReactFlow
+-          nodes={nodes}
++          key={`${mode}-${envFilter}-${zone}-${canvasRevision}`}
++          nodes={renderedNodes}
+           edges={edges}
+           nodeTypes={nodeTypes}
+           edgeTypes={edgeTypes}
+@@ -617,6 +693,12 @@ export function ArchitectureCanvas({
+           fitViewOptions={{ padding: 0.16 }}
+           minZoom={0.25}
+           maxZoom={1.8}
++          nodesDraggable={layoutEditMode}
++          nodesConnectable={false}
++          snapToGrid
++          snapGrid={[20, 20]}
++          elevateEdgesOnSelect
++          onNodeDragStop={(_, node) => saveNodePosition(node.id, node.position)}
+           onNodeClick={(_, node) => {
+             const d = node.data as TopologyNodeData;
+             if (d.vm) setSelectedVm(d.vm);
+@@ -642,7 +724,7 @@ export function ArchitectureCanvas({
+             if (d?.status) setSelectedConnection(d.status);
+           }}
+         >
+-          <Background gap={24} size={1} color="var(--border)" />
++          <Background gap={20} size={1} color="var(--border)" />
+           <Controls showInteractive={false} />
+           <MiniMap pannable zoomable nodeColor="#c7cbd1" maskColor="rgba(17,24,39,.08)" />
+         </ReactFlow>
+@@ -654,7 +736,7 @@ export function ArchitectureCanvas({
+             <b className="text-[var(--foreground)]">Actual</b>: Source→Target Telegraf TCP probe (양방향 지원)
+           </div>
+           <div className="mt-0.5">
+-            더블클릭 → 티어 드릴다운 · 노드/연결 클릭 → 우측 슬라이드 서랍 상세
++            더블클릭 → 티어 드릴다운 · 노드/연결 클릭 → 우측 슬라이드 서랍 상세 · Labels → 포트 라벨 표시 · Edit layout → 20px 격자 스냅
+           </div>
+         </div>
+       </div>
+@@ -668,7 +750,7 @@ export function ArchitectureCanvas({
+         open={!!selectedVm}
+         onClose={() => setSelectedVm(null)}
+         onSelectSoftware={(sw) => {
+-          const matched = softwareReleases.find((r) => r.productName === sw.name);
++          const matched = matchLegacySoftwareRelease(sw, softwareProducts, softwareReleases);
+           if (matched) setSelectedRelease(matched);
+         }}
+       />
+@@ -770,8 +852,9 @@ function buildOverview(
+   const nodes: Node<TopologyNodeData>[] = [
+     ...groups.map((g) => ({
+       id: `zone-${g.z}`,
+-      type: "group",
++      type: "tier",
+       position: zonePos[g.z] ?? { x: 0, y: 0 },
++      style: { width: 200, height: 116 },
+       data: {
+         kind: "group" as const,
+         key: g.z,
+@@ -788,8 +871,9 @@ function buildOverview(
+       ? [
+           {
+             id: "zone-EXTERNAL",
+-            type: "group",
++            type: "tier",
+             position: zonePos.EXTERNAL,
++            style: { width: 200, height: 116 },
+             data: {
+               kind: "external" as const,
+               key: "EXTERNAL",
+@@ -836,12 +920,14 @@ function buildOverview(
+       type: "flow",
+       source: `zone-${a.source}`,
+       target: `zone-${a.target}`,
++      markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
+       data: {
+         label,
+         secondary,
+         issueCount: a.issues,
+         status: a.sample,
+         flowActive,
++        showLabel: true,
+         onSelect: () => a.sample && onSelectConnection(a.sample),
+       },
+     };
+@@ -878,8 +964,9 @@ function buildServices(
+     const sVms = vms.filter((v) => v.service === service);
+     return {
+       id: `svc-${service}`,
+-      type: "group",
++      type: "tier",
+       position: { x: (i % 3) * 280 + 80, y: Math.floor(i / 3) * 170 + 90 },
++      style: { width: 200, height: 116 },
+       data: {
+         kind: "group" as const,
+         key: service,
+@@ -904,8 +991,9 @@ function buildServices(
+   externals.forEach((name, i) =>
+     nodes.push({
+       id: `ext-${name}`,
+-      type: "group",
++      type: "tier",
+       position: { x: 940, y: 90 + i * 150 },
++      style: { width: 200, height: 116 },
+       data: {
+         kind: "external" as const,
+         key: name,
+@@ -937,12 +1025,14 @@ function buildServices(
+     type: "flow",
+     source: `svc-${a.src}`,
+     target: services.includes(a.tgt) ? `svc-${a.tgt}` : `ext-${a.tgt}`,
++    markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
+     data: {
+       label: overlay === "policy" ? `${a.count} Policies` : `${a.count} Flows`,
+       secondary: a.issues ? `${a.issues} Issues` : overlay === "policy" ? "Approved" : "Reachable",
+       issueCount: a.issues,
+       status: a.sample,
+       flowActive,
++      showLabel: true,
+       onSelect: () => a.sample && onSelectConnection(a.sample),
+     },
+   }));
+@@ -959,6 +1049,7 @@ function buildVms(
+   overlay: OverlayMode,
+   query: string,
+   flowActive: boolean,
++  showEdgeLabels: boolean,
+   clusters: ClusterEntity[],
+   nasAssets: NasAsset[],
+   onSelectConnection: (status: NetworkStatus) => void
+@@ -972,47 +1063,95 @@ function buildVms(
+   );
+   const visibleIds = new Set(visible.map((v) => v.id));
+ 
+-  // Node spacing matching card dimensions (w: 230, h: 125) with safe clearance
+-  const COLS = 4;
+-  const X_GAP = 270;
+-  const Y_GAP = 160;
++  // Automatic hierarchical/swim-lane layout.
++  // The default layout favors readable service flow; users can make small final adjustments in Edit layout mode.
++  const VM_W = 230;
++  const VM_H = 125;
++  const X_STEP = 270;
++  const Y_STEP = 165;
++
++  const zoneSpec: Record<string, { x: number; y: number; cols: number }> = {
++    WEB: { x: 520, y: 40, cols: 4 },
++    APP: { x: 260, y: 300, cols: 6 },
++    DB: { x: 520, y: 590, cols: 4 },
++    CONTROL: { x: -620, y: 300, cols: 2 },
++    BOT: { x: -880, y: 590, cols: 4 },
++    VDI: { x: -880, y: 930, cols: 4 },
++    SUPPORT: { x: 2240, y: 590, cols: 2 },
++  };
++
++  function positionForVm(vm: VmAsset, indexWithinZone: number, zoneCount: number) {
++    if (zone !== "ALL") {
++      const cols = Math.min(4, Math.max(1, zoneCount));
++      return {
++        x: (indexWithinZone % cols) * X_STEP + 80,
++        y: Math.floor(indexWithinZone / cols) * Y_STEP + 80,
++      };
++    }
+ 
+-  const nodes: Node<TopologyNodeData>[] = visible.map((vm, i) => ({
+-    id: vm.id,
+-    type: "vm",
+-    position: { x: (i % COLS) * X_GAP + 60, y: Math.floor(i / COLS) * Y_GAP + 70 },
+-    data: { kind: "vm" as const, key: vm.id, label: vm.hostname, vm },
+-  }));
++    const spec = zoneSpec[vm.zone] ?? { x: 520, y: 1180, cols: 4 };
++    return {
++      x: spec.x + (indexWithinZone % spec.cols) * X_STEP,
++      y: spec.y + Math.floor(indexWithinZone / spec.cols) * Y_STEP,
++    };
++  }
+ 
+-  // Append Cluster Nodes if relevant
++  const zoneIndexes = new Map<string, number>();
++  const zoneCounts = new Map<string, number>();
++  for (const vm of visible) zoneCounts.set(vm.zone, (zoneCounts.get(vm.zone) ?? 0) + 1);
++
++  const nodes: Node<TopologyNodeData>[] = visible.map((vm) => {
++    const indexWithinZone = zoneIndexes.get(vm.zone) ?? 0;
++    zoneIndexes.set(vm.zone, indexWithinZone + 1);
++    return {
++      id: vm.id,
++      type: "vm",
++      position: positionForVm(vm, indexWithinZone, zoneCounts.get(vm.zone) ?? 1),
++      style: { width: VM_W, height: VM_H },
++      data: { kind: "vm" as const, key: vm.id, label: vm.hostname, vm },
++    };
++  });
++
++  // Append logical cluster nodes close to the DB lane (or below a filtered tier).
+   const relevantClusters = clusters.filter(
+     (c) => (zone === "ALL" || c.zone === zone) && (!issuesOnly || c.status !== "HEALTHY")
+   );
+-  relevantClusters.forEach((c, idx) => {
+-    const rowOffset = Math.ceil(visible.length / COLS);
++  relevantClusters.forEach((cluster, index) => {
++    const position =
++      zone === "ALL"
++        ? { x: 760 + index * X_STEP, y: 805 }
++        : { x: (index % 4) * X_STEP + 80, y: Math.ceil(visible.length / 4) * Y_STEP + 110 };
+     nodes.push({
+-      id: `cluster-${c.id}`,
++      id: `cluster-${cluster.id}`,
+       type: "cluster",
+-      position: { x: (idx % COLS) * X_GAP + 60, y: (rowOffset + Math.floor(idx / COLS)) * Y_GAP + 70 },
++      position,
++      style: { width: 230, height: 135 },
+       data: {
+         kind: "cluster" as const,
+-        key: c.id,
+-        label: c.name,
+-        cluster: c,
++        key: cluster.id,
++        label: cluster.name,
++        cluster,
+       },
+     });
+   });
+ 
+-  // Append NAS Assets if relevant
++  // Append NAS assets near the support/data lane.
+   const relevantNas = nasAssets.filter(
+     (n) => (zone === "ALL" || n.zone === zone) && (!issuesOnly || n.status !== "ONLINE")
+   );
+-  relevantNas.forEach((nas, idx) => {
+-    const rowOffset = Math.ceil(visible.length / COLS) + Math.ceil(relevantClusters.length / COLS);
++  relevantNas.forEach((nas, index) => {
++    const position =
++      zone === "ALL"
++        ? { x: 2240 + (index % 2) * X_STEP, y: 940 + Math.floor(index / 2) * Y_STEP }
++        : {
++            x: (index % 4) * X_STEP + 80,
++            y: (Math.ceil(visible.length / 4) + Math.ceil(relevantClusters.length / 4)) * Y_STEP + 110,
++          };
+     nodes.push({
+       id: `nas-${nas.id}`,
+       type: "nas",
+-      position: { x: (idx % COLS) * X_GAP + 60, y: (rowOffset + Math.floor(idx / COLS)) * Y_GAP + 70 },
++      position,
++      style: { width: 230, height: 135 },
+       data: {
+         kind: "nas" as const,
+         key: nas.id,
+@@ -1022,7 +1161,7 @@ function buildVms(
+     });
+   });
+ 
+-  // External Targets
++  // External targets are kept in a dedicated lane to prevent them from cutting across VM cards.
+   const extMap = new Map<string, number>();
+   for (const s of statuses) {
+     if (visibleIds.has(s.policy.sourceVmId) && !s.policy.targetVmId && (!issuesOnly || s.overall !== "NORMAL")) {
+@@ -1030,12 +1169,15 @@ function buildVms(
+     }
+   }
+ 
+-  let ei = 0;
++  let externalIndex = 0;
+   for (const [name, issues] of extMap) {
+     nodes.push({
+       id: `ext-${name}`,
+-      type: "group",
+-      position: { x: COLS * X_GAP + 80, y: 70 + ei++ * 150 },
++      type: "tier",
++      position: zone === "ALL"
++        ? { x: 2240, y: 120 + externalIndex++ * 150 }
++        : { x: 1180, y: 80 + externalIndex++ * 150 },
++      style: { width: 200, height: 116 },
+       data: {
+         kind: "external" as const,
+         key: name,
+@@ -1070,17 +1212,31 @@ function buildVms(
+                 s.observation?.tcpLatencyMs != null ? ` (${s.observation.tcpLatencyMs}ms)` : ""
+               }`;
+ 
++      const sourceId = s.policy.sourceVmId;
++      const targetId = s.policy.targetVmId ?? `ext-${s.policy.targetName}`;
++      const sourceNode = nodes.find((node) => node.id === sourceId);
++      const targetNode = nodes.find((node) => node.id === targetId);
++      const horizontalForward =
++        Boolean(sourceNode && targetNode) &&
++        (targetNode!.position.x - sourceNode!.position.x) > Math.abs(targetNode!.position.y - sourceNode!.position.y);
++
+       return {
+         id: s.policy.id,
+         type: "flow",
+-        source: s.policy.sourceVmId,
+-        target: s.policy.targetVmId ?? `ext-${s.policy.targetName}`,
++        source: sourceId,
++        target: targetId,
++        sourceHandle: horizontalForward ? "r" : undefined,
++        targetHandle: horizontalForward ? "l" : undefined,
++        markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
++        markerStart: isBidi ? { type: MarkerType.ArrowClosed, width: 12, height: 12 } : undefined,
+         data: {
+           label,
+           secondary,
+           issueCount: s.overall === "NORMAL" ? 0 : 1,
+           status: s,
+           flowActive,
++          // On a 30+ VM canvas, edge labels are opt-in. Status is conveyed by line color/dash; click opens full detail.
++          showLabel: showEdgeLabels,
+           onSelect: () => onSelectConnection(s),
+         },
+       };
+diff --git a/src/domain/models.ts b/src/domain/models.ts
+index cb3c65e..3e30fbd 100644
+--- a/src/domain/models.ts
++++ b/src/domain/models.ts
+@@ -10,6 +10,7 @@ export type NetworkOverallState =
+   | "POLICY_VALID_BUT_UNREACHABLE"
+   | "POLICY_NOT_APPROVED_BUT_REACHABLE"
+   | "RETURN_DIRECTION_FAILED"
++  | "BIDIRECTIONAL_PARTIAL"
+   | "UNREACHABLE"
+   | "UNKNOWN";
+ 
+@@ -28,7 +29,6 @@ export interface InfraAsset {
+   criticality: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+   health: VmHealth;
+   owner?: string;
+-  sourceRef?: string | null;
+   lastVerifiedAt?: string | null;
+ }
+ 
+@@ -97,7 +97,6 @@ export interface ClusterEntity {
+   members: ClusterMember[];
+   services: ClusterServiceInstance[];
+   owner?: string;
+-  sourceRef?: string | null;
+ }
+ 
+ // 3-Tier Software Lifecycle Model
+@@ -137,7 +136,6 @@ export interface AssetSoftwareInstallation {
+   category?: string;
+   installedAt?: string;
+   lastVerifiedAt?: string;
+-  sourceRef?: string | null;
+ }
+ 
+ // Legacy SoftwareInstall (kept for backward compatibility)
+@@ -149,7 +147,6 @@ export interface SoftwareInstall {
+   vendor?: string;
+   category?: string;
+   eoslDate?: string | null;
+-  sourceRef?: string | null;
+ }
+ 
+ export interface NetworkPolicy {
+@@ -171,30 +168,35 @@ export interface NetworkPolicy {
+   requestId?: string | null;
+   purpose?: string | null;
+   owner?: string | null;
+-  sourceRef?: string | null;
+ }
+ 
+ export interface ConnectivityObservation {
+-  policyId: string;
++  /**
++   * Observed connectivity is independent from a firewall policy.
++   * It is joined to the policy by source + target + protocol + port.
++   */
+   sourceVmId: string;
++  sourceName?: string;
++  sourceIp?: string | null;
++  targetVmId?: string | null;
++  targetName?: string;
+   targetIp: string;
++  protocol: "TCP" | "UDP";
+   port: number;
+   ping: ProbeState;
+   tcp: ProbeState;
+   pingLatencyMs?: number | null;
+   tcpLatencyMs?: number | null;
+   checkedAt: string;
+-  // Reverse probe for BIDIRECTIONAL policies
+-  reversePing?: ProbeState;
+-  reverseTcp?: ProbeState;
+-  reversePingLatencyMs?: number | null;
+-  reverseTcpLatencyMs?: number | null;
+-  reverseCheckedAt?: string;
+ }
+ 
+ export interface NetworkStatus {
++  /** Policy is the primary/declared row. */
+   policy: NetworkPolicy;
++  /** Source -> Target Telegraf observation joined by connection identity. */
+   observation?: ConnectivityObservation;
++  /** Target -> Source observation for an internal BIDIRECTIONAL policy. */
++  reverseObservation?: ConnectivityObservation;
+   overall: NetworkOverallState;
+   daysToExpiry?: number | null;
+   diagnostic: string;
+diff --git a/src/domain/network-status.ts b/src/domain/network-status.ts
+index ad2862b..5c49f48 100644
+--- a/src/domain/network-status.ts
++++ b/src/domain/network-status.ts
+@@ -1,6 +1,7 @@
+ import type { ConnectivityObservation, NetworkOverallState, NetworkPolicy, NetworkStatus } from "./models";
+ 
+ const DAY_MS = 86_400_000;
++
+ export function daysUntil(date?: string | null, now = new Date()): number | null {
+   if (!date) return null;
+   const target = new Date(date);
+@@ -8,9 +9,42 @@ export function daysUntil(date?: string | null, now = new Date()): number | null
+   return Math.ceil((target.getTime() - now.getTime()) / DAY_MS);
+ }
+ 
++/**
++ * Canonical identity used to join declared firewall policy with observed Telegraf connectivity.
++ * Policy IDs are intentionally not part of this key because the observed probe is an independent fact.
++ */
++export function connectivityKey(input: {
++  sourceVmId: string;
++  targetIp: string;
++  protocol: "TCP" | "UDP";
++  port: number;
++}): string {
++  return `${input.sourceVmId.trim().toLowerCase()}|${input.targetIp.trim().toLowerCase()}|${input.protocol}|${input.port}`;
++}
++
++export function policyForwardKey(policy: NetworkPolicy): string {
++  return connectivityKey({
++    sourceVmId: policy.sourceVmId,
++    targetIp: policy.targetIp,
++    protocol: policy.protocol,
++    port: policy.port,
++  });
++}
++
++export function policyReverseKey(policy: NetworkPolicy): string | null {
++  if (policy.direction !== "BIDIRECTIONAL" || !policy.targetVmId) return null;
++  return connectivityKey({
++    sourceVmId: policy.targetVmId,
++    targetIp: policy.sourceIp,
++    protocol: policy.protocol,
++    port: policy.port,
++  });
++}
++
+ export function evaluateNetworkStatus(
+   policy: NetworkPolicy,
+   observation?: ConnectivityObservation,
++  reverseObservation?: ConnectivityObservation,
+   now = new Date()
+ ): NetworkStatus {
+   const daysToExpiry = daysUntil(policy.expiresAt, now);
+@@ -20,6 +54,8 @@ export function evaluateNetworkStatus(
+   const tcp = observation?.tcp ?? "NO_DATA";
+   const ping = observation?.ping ?? "NO_DATA";
+   const isBidirectional = policy.direction === "BIDIRECTIONAL";
++  const expectsReverseProbe = isBidirectional && Boolean(policy.targetVmId);
++  const reverseTcp = reverseObservation?.tcp ?? "NO_DATA";
+ 
+   let overall: NetworkOverallState = "UNKNOWN";
+   let diagnostic = "정책 또는 실측 데이터가 충분하지 않습니다.";
+@@ -42,16 +78,18 @@ export function evaluateNetworkStatus(
+           ? "Ping과 TCP 모두 실패합니다. 대상 VM/경로/네트워크 가용성을 우선 확인하세요."
+           : "정책은 유효하지만 TCP 통신이 실패합니다.";
+   } else if (approved && !expired && tcp === "UP") {
+-    // Check return probe if policy is bidirectional
+-    if (isBidirectional && observation?.reverseTcp === "DOWN") {
++    if (expectsReverseProbe && reverseTcp === "DOWN") {
+       overall = "RETURN_DIRECTION_FAILED";
+-      diagnostic = "Return direction failed (출발→대상 연결은 성공했으나 대상→출발 회신 방향 TCP 연결 실패. 방화벽 회신 정책 확인 필요)";
++      diagnostic = "양방향 정책이지만 Target→Source 방향 TCP probe가 실패했습니다. 반대 방향 방화벽 반영 또는 대상 서비스를 확인하세요.";
++    } else if (expectsReverseProbe && reverseTcp === "NO_DATA") {
++      overall = "BIDIRECTIONAL_PARTIAL";
++      diagnostic = "양방향 정책의 Source→Target 통신은 정상이나 Target→Source 실측 데이터가 없습니다. 반대 방향 Telegraf probe 구성을 확인하세요.";
+     } else {
+       overall = expiring ? "EXPIRING" : "NORMAL";
+       diagnostic = expiring
+         ? `실제 통신은 정상이며 정책 만료가 ${daysToExpiry}일 남았습니다.`
+-        : isBidirectional
+-          ? "양방향 정책 및 실제 양방향 TCP 통신이 모두 정상입니다."
++        : isBidirectional && reverseTcp === "UP"
++          ? "양방향 정책과 실제 양방향 TCP 통신이 모두 정상입니다."
+           : "정책과 실제 통신 상태가 일치합니다.";
+     }
+   } else if (tcp === "DOWN") {
+@@ -62,6 +100,7 @@ export function evaluateNetworkStatus(
+   return {
+     policy,
+     observation,
++    reverseObservation,
+     overall,
+     daysToExpiry,
+     diagnostic,
+@@ -76,7 +115,8 @@ export const severityRank: Record<NetworkOverallState, number> = {
+   POLICY_NOT_APPROVED_BUT_REACHABLE: 3,
+   POLICY_EXPIRED_BUT_REACHABLE: 4,
+   UNREACHABLE: 5,
+-  EXPIRING: 6,
+-  UNKNOWN: 7,
+-  NORMAL: 8,
++  BIDIRECTIONAL_PARTIAL: 6,
++  EXPIRING: 7,
++  UNKNOWN: 8,
++  NORMAL: 9,
+ };
+diff --git a/src/services/api/infrastructure/index.ts b/src/services/api/infrastructure/index.ts
+index dbf028d..d819a45 100644
+--- a/src/services/api/infrastructure/index.ts
++++ b/src/services/api/infrastructure/index.ts
+@@ -1,4 +1,4 @@
+-import { evaluateNetworkStatus, severityRank } from "@/domain/network-status";
++import { evaluateNetworkStatus, policyForwardKey, policyReverseKey, severityRank, connectivityKey } from "@/domain/network-status";
+ import type {
+   AssetSoftwareInstallation,
+   ClusterEntity,
+@@ -27,6 +27,7 @@ import {
+ import { loadPoliciesFromMysql, loadSoftwareFromMysql, loadSopsFromMysql, loadVmsFromMysql } from "@/services/server/repository";
+ import { loadConnectivityFromInflux } from "@/services/server/influx-observations";
+ import { healthFromResource, loadVmResourceSnapshotFromInflux } from "@/services/server/influx-resources";
++import { enrichInstallations, enrichLegacySoftware } from "@/domain/software-lifecycle";
+ 
+ const useMysql = () => process.env.DATA_SOURCE === "mysql";
+ 
+@@ -56,7 +57,8 @@ export async function getClusters(): Promise<ClusterEntity[]> {
+ }
+ 
+ export async function getSoftware(): Promise<SoftwareInstall[]> {
+-  return useMysql() ? loadSoftwareFromMysql() : mockSoftware;
++  const software = useMysql() ? await loadSoftwareFromMysql() : mockSoftware;
++  return enrichLegacySoftware(software, mockSoftwareProducts, mockSoftwareReleases);
+ }
+ 
+ export async function getSoftwareProducts(): Promise<SoftwareProduct[]> {
+@@ -68,7 +70,7 @@ export async function getSoftwareReleases(): Promise<SoftwareRelease[]> {
+ }
+ 
+ export async function getAssetSoftwareInstallations(): Promise<AssetSoftwareInstallation[]> {
+-  return mockAssetSoftwareInstallations;
++  return enrichInstallations(mockAssetSoftwareInstallations, mockSoftwareReleases);
+ }
+ 
+ export async function getSops(): Promise<SopDocument[]> {
+@@ -79,17 +81,35 @@ export async function getPolicies(): Promise<NetworkPolicy[]> {
+   return useMysql() ? loadPoliciesFromMysql() : mockPolicies;
+ }
+ 
+-async function getObservations(policies: NetworkPolicy[]): Promise<ConnectivityObservation[]> {
++async function getObservations(): Promise<ConnectivityObservation[]> {
+   if (!useMysql()) return mockObservations;
+-  return loadConnectivityFromInflux(policies);
++  return loadConnectivityFromInflux();
++}
++
++function latestByConnection(observations: ConnectivityObservation[]) {
++  const byKey = new Map<string, ConnectivityObservation>();
++  for (const observation of observations) {
++    const key = connectivityKey(observation);
++    const current = byKey.get(key);
++    if (!current || new Date(observation.checkedAt).getTime() >= new Date(current.checkedAt).getTime()) {
++      byKey.set(key, observation);
++    }
++  }
++  return byKey;
+ }
+ 
+ export async function getNetworkStatuses(): Promise<NetworkStatus[]> {
+   const policies = await getPolicies();
+-  const observations = await getObservations(policies);
+-  const byPolicy = new Map(observations.map((o) => [o.policyId, o]));
++  const observations = await getObservations();
++  const byConnection = latestByConnection(observations);
++
+   return policies
+-    .map((p) => evaluateNetworkStatus(p, byPolicy.get(p.id)))
++    .map((policy) => {
++      const forward = byConnection.get(policyForwardKey(policy));
++      const reverseKey = policyReverseKey(policy);
++      const reverse = reverseKey ? byConnection.get(reverseKey) : undefined;
++      return evaluateNetworkStatus(policy, forward, reverse);
++    })
+     .sort((a, b) => severityRank[a.overall] - severityRank[b.overall]);
+ }
+ 
+diff --git a/src/services/api/infrastructure/mock-data.ts b/src/services/api/infrastructure/mock-data.ts
+index 3f6237d..f5f1591 100644
+--- a/src/services/api/infrastructure/mock-data.ts
++++ b/src/services/api/infrastructure/mock-data.ts
+@@ -34,7 +34,6 @@ export const vms: VmAsset[] = [
+     "owner": "RPA Platform",
+     "eoslDate": "2031-10-14",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-WEB01",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -58,7 +57,6 @@ export const vms: VmAsset[] = [
+     "owner": "RPA Platform",
+     "eoslDate": "2031-10-14",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-WEB02",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -82,7 +80,6 @@ export const vms: VmAsset[] = [
+     "owner": "RPA Platform",
+     "eoslDate": "2031-10-14",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-WEB03",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -106,7 +103,6 @@ export const vms: VmAsset[] = [
+     "owner": "RPA Platform",
+     "eoslDate": "2031-10-14",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-WEB04",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -130,7 +126,6 @@ export const vms: VmAsset[] = [
+     "owner": "RPA Platform",
+     "eoslDate": "2029-01-09",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-APP01",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -154,7 +149,6 @@ export const vms: VmAsset[] = [
+     "owner": "RPA Platform",
+     "eoslDate": "2029-01-09",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-APP02",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -178,7 +172,6 @@ export const vms: VmAsset[] = [
+     "owner": "RPA Platform",
+     "eoslDate": "2029-01-09",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-APP03",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -202,7 +195,6 @@ export const vms: VmAsset[] = [
+     "owner": "RPA Platform",
+     "eoslDate": "2029-01-09",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-APP04",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -226,7 +218,6 @@ export const vms: VmAsset[] = [
+     "owner": "RPA Platform",
+     "eoslDate": "2029-01-09",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-APP05",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -250,7 +241,6 @@ export const vms: VmAsset[] = [
+     "owner": "RPA Platform",
+     "eoslDate": "2029-01-09",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-APP06",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -274,7 +264,6 @@ export const vms: VmAsset[] = [
+     "owner": "DB Team",
+     "eoslDate": "2029-01-09",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-DB01",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -298,7 +287,6 @@ export const vms: VmAsset[] = [
+     "owner": "DB Team",
+     "eoslDate": "2029-01-09",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-DB02",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -322,7 +310,6 @@ export const vms: VmAsset[] = [
+     "owner": "DB Team",
+     "eoslDate": "2026-11-15",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-DB03",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -346,7 +333,6 @@ export const vms: VmAsset[] = [
+     "owner": "DB Team",
+     "eoslDate": "2029-01-09",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-DB04",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -370,7 +356,6 @@ export const vms: VmAsset[] = [
+     "owner": "RPA Platform",
+     "eoslDate": "2031-10-14",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-CTRL01",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -394,7 +379,6 @@ export const vms: VmAsset[] = [
+     "owner": "RPA Platform",
+     "eoslDate": "2031-10-14",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-CTRL02",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -418,7 +402,6 @@ export const vms: VmAsset[] = [
+     "owner": "RPA Platform",
+     "eoslDate": "2031-10-14",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-BOT01",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -442,7 +425,6 @@ export const vms: VmAsset[] = [
+     "owner": "RPA Platform",
+     "eoslDate": "2031-10-14",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-BOT02",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -466,7 +448,6 @@ export const vms: VmAsset[] = [
+     "owner": "RPA Platform",
+     "eoslDate": "2031-10-14",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-BOT03",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -490,7 +471,6 @@ export const vms: VmAsset[] = [
+     "owner": "RPA Platform",
+     "eoslDate": "2031-10-14",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-BOT04",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -514,7 +494,6 @@ export const vms: VmAsset[] = [
+     "owner": "RPA Platform",
+     "eoslDate": "2031-10-14",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-BOT05",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -538,7 +517,6 @@ export const vms: VmAsset[] = [
+     "owner": "RPA Platform",
+     "eoslDate": "2031-10-14",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-BOT06",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -562,7 +540,6 @@ export const vms: VmAsset[] = [
+     "owner": "RPA Platform",
+     "eoslDate": "2031-10-14",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-BOT07",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -586,7 +563,6 @@ export const vms: VmAsset[] = [
+     "owner": "RPA Platform",
+     "eoslDate": "2023-10-10",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-BOT08",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -610,7 +586,6 @@ export const vms: VmAsset[] = [
+     "owner": "VDI Team",
+     "eoslDate": "2028-11-10",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-VDI01",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -634,7 +609,6 @@ export const vms: VmAsset[] = [
+     "owner": "VDI Team",
+     "eoslDate": "2028-11-10",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-VDI02",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -658,7 +632,6 @@ export const vms: VmAsset[] = [
+     "owner": "VDI Team",
+     "eoslDate": "2028-11-10",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-VDI03",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -682,7 +655,6 @@ export const vms: VmAsset[] = [
+     "owner": "VDI Team",
+     "eoslDate": "2027-01-12",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-VDI04",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -706,7 +678,6 @@ export const vms: VmAsset[] = [
+     "owner": "Infra Team",
+     "eoslDate": "2032-05-31",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-UTIL01",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   },
+   {
+@@ -730,7 +701,6 @@ export const vms: VmAsset[] = [
+     "owner": "Infra Team",
+     "eoslDate": "2024-06-30",
+     "grafanaPath": "/d/vm-detail?var-host=RPA-UTIL02",
+-    "sourceRef": "sample/vm-inventory.xlsx",
+     "lastVerifiedAt": "2026-09-20T18:00:00+09:00"
+   }
+ ];
+@@ -744,7 +714,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw2",
+@@ -754,7 +723,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw3",
+@@ -764,7 +732,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Microsoft",
+     "category": "Web Server",
+     "eoslDate": "2031-10-14",
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw4",
+@@ -774,7 +741,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw5",
+@@ -784,7 +750,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw6",
+@@ -794,7 +759,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Microsoft",
+     "category": "Web Server",
+     "eoslDate": "2031-10-14",
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw7",
+@@ -804,7 +768,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw8",
+@@ -814,7 +777,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw9",
+@@ -824,7 +786,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Microsoft",
+     "category": "Web Server",
+     "eoslDate": "2031-10-14",
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw10",
+@@ -834,7 +795,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw11",
+@@ -844,7 +804,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw12",
+@@ -854,7 +813,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Microsoft",
+     "category": "Web Server",
+     "eoslDate": "2031-10-14",
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw13",
+@@ -864,7 +822,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw14",
+@@ -874,7 +831,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw15",
+@@ -884,7 +840,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Automation Anywhere",
+     "category": "RPA",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw16",
+@@ -894,7 +849,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Eclipse Adoptium",
+     "category": "Runtime",
+     "eoslDate": "2029-10-31",
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw17",
+@@ -904,7 +858,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw18",
+@@ -914,7 +867,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw19",
+@@ -924,7 +876,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Automation Anywhere",
+     "category": "RPA",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw20",
+@@ -934,7 +885,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Eclipse Adoptium",
+     "category": "Runtime",
+     "eoslDate": "2029-10-31",
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw21",
+@@ -944,7 +894,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw22",
+@@ -954,7 +903,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw23",
+@@ -964,7 +912,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Automation Anywhere",
+     "category": "RPA",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw24",
+@@ -974,7 +921,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Eclipse Adoptium",
+     "category": "Runtime",
+     "eoslDate": "2026-10-31",
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw25",
+@@ -984,7 +930,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw26",
+@@ -994,7 +939,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw27",
+@@ -1004,7 +948,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Automation Anywhere",
+     "category": "RPA",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw28",
+@@ -1014,7 +957,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Eclipse Adoptium",
+     "category": "Runtime",
+     "eoslDate": "2029-10-31",
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw29",
+@@ -1024,7 +966,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw30",
+@@ -1034,7 +975,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw31",
+@@ -1044,7 +984,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Automation Anywhere",
+     "category": "RPA",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw32",
+@@ -1054,7 +993,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Eclipse Adoptium",
+     "category": "Runtime",
+     "eoslDate": "2029-10-31",
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw33",
+@@ -1064,7 +1002,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw34",
+@@ -1074,7 +1011,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw35",
+@@ -1084,7 +1020,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Automation Anywhere",
+     "category": "RPA",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw36",
+@@ -1094,7 +1029,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Eclipse Adoptium",
+     "category": "Runtime",
+     "eoslDate": "2029-10-31",
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw37",
+@@ -1104,7 +1038,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw38",
+@@ -1114,7 +1047,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw39",
+@@ -1124,7 +1056,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Microsoft",
+     "category": "Database",
+     "eoslDate": "2030-01-08",
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw40",
+@@ -1134,7 +1065,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw41",
+@@ -1144,7 +1074,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw42",
+@@ -1154,7 +1083,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Microsoft",
+     "category": "Database",
+     "eoslDate": "2030-01-08",
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw43",
+@@ -1164,7 +1092,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw44",
+@@ -1174,7 +1101,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw45",
+@@ -1184,7 +1110,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Microsoft",
+     "category": "Database",
+     "eoslDate": "2030-01-08",
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw46",
+@@ -1194,7 +1119,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw47",
+@@ -1204,7 +1128,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw48",
+@@ -1214,7 +1137,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Microsoft",
+     "category": "Database",
+     "eoslDate": "2030-01-08",
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw49",
+@@ -1224,7 +1146,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw50",
+@@ -1234,7 +1155,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw51",
+@@ -1244,7 +1164,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Automation Anywhere",
+     "category": "RPA",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw52",
+@@ -1254,7 +1173,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw53",
+@@ -1264,7 +1182,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw54",
+@@ -1274,7 +1191,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Automation Anywhere",
+     "category": "RPA",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw55",
+@@ -1284,7 +1200,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw56",
+@@ -1294,7 +1209,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw57",
+@@ -1304,7 +1218,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw58",
+@@ -1314,7 +1227,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw59",
+@@ -1324,7 +1236,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw60",
+@@ -1334,7 +1245,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw61",
+@@ -1344,7 +1254,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw62",
+@@ -1354,7 +1263,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw63",
+@@ -1364,7 +1272,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw64",
+@@ -1374,7 +1281,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw65",
+@@ -1384,7 +1290,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw66",
+@@ -1394,7 +1299,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw67",
+@@ -1404,7 +1308,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "CrowdStrike",
+     "category": "Security",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw68",
+@@ -1414,7 +1317,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw69",
+@@ -1424,7 +1326,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Oracle",
+     "category": "Runtime",
+     "eoslDate": "2023-03-31",
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw70",
+@@ -1434,7 +1335,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw71",
+@@ -1444,7 +1344,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Automation Anywhere",
+     "category": "RPA",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw72",
+@@ -1454,7 +1353,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw73",
+@@ -1464,7 +1362,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Automation Anywhere",
+     "category": "RPA",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw74",
+@@ -1474,7 +1371,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw75",
+@@ -1484,7 +1380,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Automation Anywhere",
+     "category": "RPA",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw76",
+@@ -1494,7 +1389,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw77",
+@@ -1504,7 +1398,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "Automation Anywhere",
+     "category": "RPA",
+     "eoslDate": "2027-01-20",
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw78",
+@@ -1514,7 +1407,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw79",
+@@ -1524,7 +1416,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": null,
+-    "sourceRef": "sample/software-inventory.xlsx"
+   },
+   {
+     "id": "sw80",
+@@ -1534,7 +1425,6 @@ export const software: SoftwareInstall[] = [
+     "vendor": "InfluxData",
+     "category": "Monitoring",
+     "eoslDate": "2024-06-30",
+-    "sourceRef": "sample/software-inventory.xlsx"
+   }
+ ];
+ 
+@@ -1556,8 +1446,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2027-03-01",
+     "requestId": "FW-2026-0001",
+     "purpose": "Portal API",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p2",
+@@ -1576,8 +1465,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2027-03-01",
+     "requestId": "FW-2026-0002",
+     "purpose": "Portal API",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p3",
+@@ -1596,8 +1484,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2027-03-01",
+     "requestId": "FW-2026-0003",
+     "purpose": "Portal API",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p4",
+@@ -1616,8 +1503,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2027-03-01",
+     "requestId": "FW-2026-0004",
+     "purpose": "Portal API",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p5",
+@@ -1636,8 +1522,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2027-01-31",
+     "requestId": "FW-2026-0005",
+     "purpose": "Control Room DB",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p6",
+@@ -1656,8 +1541,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2027-01-31",
+     "requestId": "FW-2026-0006",
+     "purpose": "Control Room DB",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p7",
+@@ -1677,8 +1561,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2026-10-02",
+     "requestId": "FW-2026-0007",
+     "purpose": "Control Room DB",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p8",
+@@ -1698,7 +1581,7 @@ export const policies: NetworkPolicy[] = [
+     "requestId": "FW-2026-0008",
+     "purpose": "Control Room DB",
+     "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "direction": "BIDIRECTIONAL"
+   },
+   {
+     "id": "p9",
+@@ -1717,8 +1600,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2027-01-31",
+     "requestId": "FW-2026-0009",
+     "purpose": "Control Room DB",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p10",
+@@ -1737,8 +1619,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2027-01-31",
+     "requestId": "FW-2026-0010",
+     "purpose": "Control Room DB",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p11",
+@@ -1757,8 +1638,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2026-09-18",
+     "requestId": "FW-2026-0011",
+     "purpose": "DB mirroring",
+-    "owner": "DB Team",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "DB Team"
+   },
+   {
+     "id": "p12",
+@@ -1777,8 +1657,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2027-02-28",
+     "requestId": "FW-2026-0012",
+     "purpose": "Reporting DB mirroring",
+-    "owner": "DB Team",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "DB Team"
+   },
+   {
+     "id": "p13",
+@@ -1798,8 +1677,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2027-06-01",
+     "requestId": "FW-2026-0013",
+     "purpose": "LDAPS",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p14",
+@@ -1818,8 +1696,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2026-09-29",
+     "requestId": "FW-2026-0014",
+     "purpose": "SMTP relay",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p15",
+@@ -1838,8 +1715,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2026-09-10",
+     "requestId": "FW-2026-0015",
+     "purpose": "ERP API",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p16",
+@@ -1858,8 +1734,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2027-04-01",
+     "requestId": "FW-2026-0016",
+     "purpose": "Bot orchestration",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p17",
+@@ -1878,8 +1753,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2027-04-01",
+     "requestId": "FW-2026-0017",
+     "purpose": "Bot orchestration",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p18",
+@@ -1898,8 +1772,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2027-04-01",
+     "requestId": "FW-2026-0018",
+     "purpose": "Bot orchestration",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p19",
+@@ -1918,8 +1791,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2027-04-01",
+     "requestId": "FW-2026-0019",
+     "purpose": "Bot orchestration",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p20",
+@@ -1938,8 +1810,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2027-04-01",
+     "requestId": "FW-2026-0020",
+     "purpose": "Bot orchestration",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p21",
+@@ -1958,8 +1829,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2027-04-01",
+     "requestId": "FW-2026-0021",
+     "purpose": "Bot orchestration",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p22",
+@@ -1978,8 +1848,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2027-04-01",
+     "requestId": "FW-2026-0022",
+     "purpose": "Bot orchestration",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p23",
+@@ -1998,8 +1867,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2027-04-01",
+     "requestId": "FW-2026-0023",
+     "purpose": "Bot orchestration",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p24",
+@@ -2018,8 +1886,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2026-11-30",
+     "requestId": "FW-2026-0024",
+     "purpose": "VDI session control",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p25",
+@@ -2038,8 +1905,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2026-11-30",
+     "requestId": "FW-2026-0025",
+     "purpose": "VDI session control",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p26",
+@@ -2058,8 +1924,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2026-11-30",
+     "requestId": "FW-2026-0026",
+     "purpose": "VDI session control",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p27",
+@@ -2078,8 +1943,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2026-11-30",
+     "requestId": "FW-2026-0027",
+     "purpose": "VDI session control",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p28",
+@@ -2098,8 +1962,7 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2027-02-01",
+     "requestId": "FW-2026-0028",
+     "purpose": "ERP automation",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   },
+   {
+     "id": "p29",
+@@ -2118,16 +1981,19 @@ export const policies: NetworkPolicy[] = [
+     "expiresAt": "2026-09-20",
+     "requestId": "FW-2026-0029",
+     "purpose": "Monitoring relay",
+-    "owner": "RPA Platform",
+-    "sourceRef": "sample/firewall-requests.xlsx"
++    "owner": "RPA Platform"
+   }
+ ];
+ 
+ export const observations: ConnectivityObservation[] = [
+   {
+-    "policyId": "p1",
+     "sourceVmId": "web01",
++    "sourceName": "RPA-WEB01",
++    "sourceIp": "10.10.10.11",
++    "targetVmId": "app01",
++    "targetName": "RPA-APP01",
+     "targetIp": "10.10.20.11",
++    "protocol": "TCP",
+     "port": 8080,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2136,9 +2002,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p2",
+     "sourceVmId": "web02",
++    "sourceName": "RPA-WEB02",
++    "sourceIp": "10.10.10.12",
++    "targetVmId": "app01",
++    "targetName": "RPA-APP01",
+     "targetIp": "10.10.20.11",
++    "protocol": "TCP",
+     "port": 8080,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2147,9 +2017,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p3",
+     "sourceVmId": "web03",
++    "sourceName": "RPA-WEB03",
++    "sourceIp": "10.10.10.13",
++    "targetVmId": "app02",
++    "targetName": "RPA-APP02",
+     "targetIp": "10.10.20.12",
++    "protocol": "TCP",
+     "port": 8080,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2158,9 +2032,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p4",
+     "sourceVmId": "web04",
++    "sourceName": "RPA-WEB04",
++    "sourceIp": "10.10.10.14",
++    "targetVmId": "app02",
++    "targetName": "RPA-APP02",
+     "targetIp": "10.10.20.12",
++    "protocol": "TCP",
+     "port": 8080,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2169,9 +2047,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p5",
+     "sourceVmId": "app01",
++    "sourceName": "RPA-APP01",
++    "sourceIp": "10.10.20.11",
++    "targetVmId": "db01",
++    "targetName": "RPA-DB01",
+     "targetIp": "10.10.30.11",
++    "protocol": "TCP",
+     "port": 1433,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2180,9 +2062,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p6",
+     "sourceVmId": "app02",
++    "sourceName": "RPA-APP02",
++    "sourceIp": "10.10.20.12",
++    "targetVmId": "db01",
++    "targetName": "RPA-DB01",
+     "targetIp": "10.10.30.11",
++    "protocol": "TCP",
+     "port": 1433,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2191,24 +2077,43 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p7",
+     "sourceVmId": "app03",
++    "sourceName": "RPA-APP03",
++    "sourceIp": "10.10.20.13",
++    "targetVmId": "db01",
++    "targetName": "RPA-DB01",
+     "targetIp": "10.10.30.11",
++    "protocol": "TCP",
+     "port": 1433,
+     "ping": "UP",
+     "tcp": "UP",
+     "pingLatencyMs": 0.7,
+     "tcpLatencyMs": 5.6,
+-    "reversePing": "UP",
+-    "reverseTcp": "UP",
+-    "reversePingLatencyMs": 0.9,
+-    "reverseTcpLatencyMs": 3.1,
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p8",
++    "sourceVmId": "db01",
++    "sourceName": "RPA-DB01",
++    "sourceIp": "10.10.30.11",
++    "targetVmId": "app03",
++    "targetName": "RPA-APP03",
++    "targetIp": "10.10.20.13",
++    "protocol": "TCP",
++    "port": 1433,
++    "ping": "UP",
++    "tcp": "UP",
++    "pingLatencyMs": 0.9,
++    "tcpLatencyMs": 3.1,
++    "checkedAt": "2026-09-21T00:27:00+09:00"
++  },
++  {
+     "sourceVmId": "app04",
++    "sourceName": "RPA-APP04",
++    "sourceIp": "10.10.20.14",
++    "targetVmId": "db01",
++    "targetName": "RPA-DB01",
+     "targetIp": "10.10.30.11",
++    "protocol": "TCP",
+     "port": 1433,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2217,9 +2122,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p9",
+     "sourceVmId": "app05",
++    "sourceName": "RPA-APP05",
++    "sourceIp": "10.10.20.15",
++    "targetVmId": "db01",
++    "targetName": "RPA-DB01",
+     "targetIp": "10.10.30.11",
++    "protocol": "TCP",
+     "port": 1433,
+     "ping": "DOWN",
+     "tcp": "DOWN",
+@@ -2228,9 +2137,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p10",
+     "sourceVmId": "app06",
++    "sourceName": "RPA-APP06",
++    "sourceIp": "10.10.20.16",
++    "targetVmId": "db01",
++    "targetName": "RPA-DB01",
+     "targetIp": "10.10.30.11",
++    "protocol": "TCP",
+     "port": 1433,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2239,9 +2152,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p11",
+     "sourceVmId": "db01",
++    "sourceName": "RPA-DB01",
++    "sourceIp": "10.10.30.11",
++    "targetVmId": "db02",
++    "targetName": "RPA-DB02",
+     "targetIp": "10.10.30.12",
++    "protocol": "TCP",
+     "port": 5022,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2250,9 +2167,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p12",
+     "sourceVmId": "db03",
++    "sourceName": "RPA-DB03",
++    "sourceIp": "10.10.30.13",
++    "targetVmId": "db04",
++    "targetName": "RPA-DB04",
+     "targetIp": "10.10.30.14",
++    "protocol": "TCP",
+     "port": 5022,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2261,24 +2182,28 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p13",
+     "sourceVmId": "app03",
++    "sourceName": "RPA-APP03",
++    "sourceIp": "10.10.20.13",
++    "targetVmId": null,
++    "targetName": "LDAP01",
+     "targetIp": "10.20.40.10",
++    "protocol": "TCP",
+     "port": 636,
+     "ping": "UP",
+     "tcp": "UP",
+     "pingLatencyMs": 1.2,
+     "tcpLatencyMs": 4.5,
+-    "reversePing": "UP",
+-    "reverseTcp": "DOWN",
+-    "reversePingLatencyMs": 1.4,
+-    "reverseTcpLatencyMs": null,
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p14",
+     "sourceVmId": "app02",
++    "sourceName": "RPA-APP02",
++    "sourceIp": "10.10.20.12",
++    "targetVmId": null,
++    "targetName": "SMTP01",
+     "targetIp": "10.20.50.25",
++    "protocol": "TCP",
+     "port": 25,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2287,9 +2212,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p15",
+     "sourceVmId": "app04",
++    "sourceName": "RPA-APP04",
++    "sourceIp": "10.10.20.14",
++    "targetVmId": null,
++    "targetName": "ERP API",
+     "targetIp": "172.20.10.40",
++    "protocol": "TCP",
+     "port": 443,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2298,9 +2227,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p16",
+     "sourceVmId": "ctrl01",
++    "sourceName": "RPA-CTRL01",
++    "sourceIp": "10.10.40.11",
++    "targetVmId": "bot01",
++    "targetName": "RPA-BOT01",
+     "targetIp": "10.10.50.11",
++    "protocol": "TCP",
+     "port": 443,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2309,9 +2242,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p17",
+     "sourceVmId": "ctrl01",
++    "sourceName": "RPA-CTRL01",
++    "sourceIp": "10.10.40.11",
++    "targetVmId": "bot02",
++    "targetName": "RPA-BOT02",
+     "targetIp": "10.10.50.12",
++    "protocol": "TCP",
+     "port": 443,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2320,9 +2257,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p18",
+     "sourceVmId": "ctrl01",
++    "sourceName": "RPA-CTRL01",
++    "sourceIp": "10.10.40.11",
++    "targetVmId": "bot03",
++    "targetName": "RPA-BOT03",
+     "targetIp": "10.10.50.13",
++    "protocol": "TCP",
+     "port": 443,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2331,9 +2272,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p19",
+     "sourceVmId": "ctrl01",
++    "sourceName": "RPA-CTRL01",
++    "sourceIp": "10.10.40.11",
++    "targetVmId": "bot04",
++    "targetName": "RPA-BOT04",
+     "targetIp": "10.10.50.14",
++    "protocol": "TCP",
+     "port": 443,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2342,9 +2287,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p20",
+     "sourceVmId": "ctrl02",
++    "sourceName": "RPA-CTRL02",
++    "sourceIp": "10.10.40.12",
++    "targetVmId": "bot05",
++    "targetName": "RPA-BOT05",
+     "targetIp": "10.10.50.15",
++    "protocol": "TCP",
+     "port": 443,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2353,9 +2302,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p21",
+     "sourceVmId": "ctrl02",
++    "sourceName": "RPA-CTRL02",
++    "sourceIp": "10.10.40.12",
++    "targetVmId": "bot06",
++    "targetName": "RPA-BOT06",
+     "targetIp": "10.10.50.16",
++    "protocol": "TCP",
+     "port": 443,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2364,9 +2317,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p22",
+     "sourceVmId": "ctrl02",
++    "sourceName": "RPA-CTRL02",
++    "sourceIp": "10.10.40.12",
++    "targetVmId": "bot07",
++    "targetName": "RPA-BOT07",
+     "targetIp": "10.10.50.17",
++    "protocol": "TCP",
+     "port": 443,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2375,9 +2332,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p23",
+     "sourceVmId": "ctrl02",
++    "sourceName": "RPA-CTRL02",
++    "sourceIp": "10.10.40.12",
++    "targetVmId": "bot08",
++    "targetName": "RPA-BOT08",
+     "targetIp": "10.10.50.18",
++    "protocol": "TCP",
+     "port": 443,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2386,9 +2347,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p24",
+     "sourceVmId": "bot01",
++    "sourceName": "RPA-BOT01",
++    "sourceIp": "10.10.50.11",
++    "targetVmId": "vdi01",
++    "targetName": "RPA-VDI01",
+     "targetIp": "10.10.60.11",
++    "protocol": "TCP",
+     "port": 3389,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2397,9 +2362,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p25",
+     "sourceVmId": "bot02",
++    "sourceName": "RPA-BOT02",
++    "sourceIp": "10.10.50.12",
++    "targetVmId": "vdi02",
++    "targetName": "RPA-VDI02",
+     "targetIp": "10.10.60.12",
++    "protocol": "TCP",
+     "port": 3389,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2408,9 +2377,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p26",
+     "sourceVmId": "bot03",
++    "sourceName": "RPA-BOT03",
++    "sourceIp": "10.10.50.13",
++    "targetVmId": "vdi03",
++    "targetName": "RPA-VDI03",
+     "targetIp": "10.10.60.13",
++    "protocol": "TCP",
+     "port": 3389,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2419,9 +2392,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p27",
+     "sourceVmId": "bot04",
++    "sourceName": "RPA-BOT04",
++    "sourceIp": "10.10.50.14",
++    "targetVmId": "vdi04",
++    "targetName": "RPA-VDI04",
+     "targetIp": "10.10.60.14",
++    "protocol": "TCP",
+     "port": 3389,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2430,9 +2407,13 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p28",
+     "sourceVmId": "bot01",
++    "sourceName": "RPA-BOT01",
++    "sourceIp": "10.10.50.11",
++    "targetVmId": null,
++    "targetName": "ERP API",
+     "targetIp": "172.20.10.40",
++    "protocol": "TCP",
+     "port": 443,
+     "ping": "UP",
+     "tcp": "UP",
+@@ -2441,15 +2422,34 @@ export const observations: ConnectivityObservation[] = [
+     "checkedAt": "2026-09-21T00:27:00+09:00"
+   },
+   {
+-    "policyId": "p29",
+     "sourceVmId": "util01",
++    "sourceName": "RPA-UTIL01",
++    "sourceIp": "10.10.70.11",
++    "targetVmId": null,
++    "targetName": "Influx Relay",
+     "targetIp": "10.20.80.20",
++    "protocol": "TCP",
+     "port": 443,
+     "ping": "UP",
+     "tcp": "DOWN",
+     "pingLatencyMs": 2.8,
+     "tcpLatencyMs": null,
+     "checkedAt": "2026-09-21T00:27:00+09:00"
++  },
++  {
++    "sourceVmId": "db01",
++    "sourceName": "RPA-DB01",
++    "sourceIp": "10.10.30.11",
++    "targetVmId": "app04",
++    "targetName": "RPA-APP04",
++    "targetIp": "10.10.20.14",
++    "protocol": "TCP",
++    "port": 1433,
++    "ping": "UP",
++    "tcp": "DOWN",
++    "pingLatencyMs": 1.3,
++    "tcpLatencyMs": null,
++    "checkedAt": "2026-09-21T00:27:00+09:00"
+   }
+ ];
+ 
+diff --git a/src/services/server/influx-observations.ts b/src/services/server/influx-observations.ts
+index 3d8c910..bb545c6 100644
+--- a/src/services/server/influx-observations.ts
++++ b/src/services/server/influx-observations.ts
+@@ -1,34 +1,149 @@
+ import "server-only";
+-import type { ConnectivityObservation, NetworkPolicy } from "@/domain/models";
++import type { ConnectivityObservation } from "@/domain/models";
+ import { queryFlux } from "./influx";
+ 
+ function parseCsvLine(line: string): string[] {
+-  const out:string[]=[]; let cur=""; let quote=false;
+-  for(let i=0;i<line.length;i++){const ch=line[i];if(ch==='"'){if(quote&&line[i+1]==='"'){cur+='"';i++;}else quote=!quote;}else if(ch===','&&!quote){out.push(cur);cur="";}else cur+=ch;}out.push(cur);return out;
++  const out: string[] = [];
++  let cur = "";
++  let quote = false;
++  for (let i = 0; i < line.length; i++) {
++    const ch = line[i];
++    if (quote) {
++      if (ch === '"' && line[i + 1] === '"') {
++        cur += '"';
++        i++;
++      } else if (ch === '"') {
++        quote = false;
++      } else {
++        cur += ch;
++      }
++    } else if (ch === '"') {
++      quote = true;
++    } else if (ch === ",") {
++      out.push(cur);
++      cur = "";
++    } else {
++      cur += ch;
++    }
++  }
++  out.push(cur);
++  return out;
+ }
+-function rowsFromAnnotatedCsv(csv:string):Record<string,string>[] {
+-  const lines=csv.split(/\r?\n/).filter(l=>l&& !l.startsWith('#'));
+-  const result:Record<string,string>[]=[];let headers:string[]|null=null;
+-  for(const line of lines){const cells=parseCsvLine(line);if(!headers||cells.includes('_time')&&cells.includes('_value')){headers=cells;continue;}if(!headers)continue;const row:Record<string,string>={};headers.forEach((h,i)=>row[h]=cells[i]??"");result.push(row)}return result;
++
++function rowsFromAnnotatedCsv(csv: string): Record<string, string>[] {
++  const lines = csv.split(/\r?\n/).filter((line) => line && !line.startsWith("#"));
++  const result: Record<string, string>[] = [];
++  let headers: string[] | null = null;
++
++  for (const line of lines) {
++    const cells = parseCsvLine(line);
++    if (!headers || (cells.includes("_time") && cells.includes("_value"))) {
++      headers = cells;
++      continue;
++    }
++    if (!headers) continue;
++    const row: Record<string, string> = {};
++    headers.forEach((header, i) => (row[header] = cells[i] ?? ""));
++    result.push(row);
++  }
++  return result;
+ }
+ 
+-export async function loadConnectivityFromInflux(policies: NetworkPolicy[]): Promise<ConnectivityObservation[]> {
+-  const bucket=process.env.INFLUX_BUCKET;
+-  if(!process.env.INFLUX_URL||!process.env.INFLUX_TOKEN||!process.env.INFLUX_ORG||!bucket) return [];
+-  const netMeasurement=process.env.INFLUX_CONNECTIVITY_MEASUREMENT??"net_response";
+-  const netCsv=await queryFlux(`from(bucket: "${bucket}")
++/**
++ * Reads observed connectivity as an independent dataset.
++ * No firewall policy ID is required. The application joins this with policy rows later by:
++ * source_vm_id + target_ip + protocol + port.
++ */
++export async function loadConnectivityFromInflux(): Promise<ConnectivityObservation[]> {
++  const bucket = process.env.INFLUX_BUCKET;
++  if (!process.env.INFLUX_URL || !process.env.INFLUX_TOKEN || !process.env.INFLUX_ORG || !bucket) return [];
++
++  const netMeasurement = process.env.INFLUX_CONNECTIVITY_MEASUREMENT ?? "net_response";
++  const pingMeasurement = process.env.INFLUX_PING_MEASUREMENT ?? "ping";
++
++  const netCsv = await queryFlux(`from(bucket: "${bucket}")
+   |> range(start: -10m)
+   |> filter(fn:(r)=>r._measurement == "${netMeasurement}" and (r._field == "result_code" or r._field == "response_time"))
+-  |> group(columns:["policy_id","_field"])
++  |> group(columns:["source_vm_id","source_name","source_ip","target_vm_id","target_name","target_ip","target_port","probe_protocol","_field"])
+   |> last()`);
+-  const pingCsv=await queryFlux(`from(bucket: "${bucket}")
++
++  const pingCsv = await queryFlux(`from(bucket: "${bucket}")
+   |> range(start: -10m)
+-  |> filter(fn:(r)=>r._measurement == "ping" and (r._field == "percent_packet_loss" or r._field == "average_response_ms"))
++  |> filter(fn:(r)=>r._measurement == "${pingMeasurement}" and (r._field == "percent_packet_loss" or r._field == "average_response_ms"))
+   |> group(columns:["source_vm_id","url","_field"])
+   |> last()`);
+-  const net=new Map<string,{code?:number;latencyMs?:number;time?:string}>();
+-  for(const r of rowsFromAnnotatedCsv(netCsv)){const id=r.policy_id;if(!id)continue;const x=net.get(id)??{};if(r._field==='result_code')x.code=Number(r._value);if(r._field==='response_time'){const value=Number(r._value);x.latencyMs=Number.isFinite(value)?value*1000:undefined;}if(r._time)x.time=r._time;net.set(id,x)}
+-  const ping=new Map<string,{loss?:number;latencyMs?:number;time?:string}>();
+-  for(const r of rowsFromAnnotatedCsv(pingCsv)){const key=`${r.source_vm_id}|${r.url}`;const x=ping.get(key)??{};if(r._field==='percent_packet_loss')x.loss=Number(r._value);if(r._field==='average_response_ms')x.latencyMs=Number(r._value);if(r._time)x.time=r._time;ping.set(key,x)}
+-  return policies.map(p=>{const n=net.get(p.id);const pg=ping.get(`${p.sourceVmId}|${p.targetIp}`);return {policyId:p.id,sourceVmId:p.sourceVmId,targetIp:p.targetIp,port:p.port,ping:pg?.loss==null?'NO_DATA':pg.loss<100?'UP':'DOWN',tcp:n?.code==null?'NO_DATA':n.code===0?'UP':'DOWN',pingLatencyMs:pg?.latencyMs??null,tcpLatencyMs:n?.latencyMs??null,checkedAt:n?.time??pg?.time??new Date().toISOString()}});
++
++  const ping = new Map<string, { loss?: number; latencyMs?: number; time?: string }>();
++  for (const row of rowsFromAnnotatedCsv(pingCsv)) {
++    const key = `${row.source_vm_id}|${row.url}`;
++    const value = ping.get(key) ?? {};
++    if (row._field === "percent_packet_loss") value.loss = Number(row._value);
++    if (row._field === "average_response_ms") value.latencyMs = Number(row._value);
++    if (row._time) value.time = row._time;
++    ping.set(key, value);
++  }
++
++  type NetValue = {
++    sourceVmId: string;
++    sourceName?: string;
++    sourceIp?: string;
++    targetVmId?: string;
++    targetName?: string;
++    targetIp: string;
++    protocol: "TCP" | "UDP";
++    port: number;
++    code?: number;
++    latencyMs?: number;
++    time?: string;
++  };
++
++  const net = new Map<string, NetValue>();
++  for (const row of rowsFromAnnotatedCsv(netCsv)) {
++    const sourceVmId = row.source_vm_id;
++    const targetIp = row.target_ip || row.server;
++    const port = Number(row.target_port || row.port);
++    const protocol = (row.probe_protocol || row.protocol || "TCP").toUpperCase() as "TCP" | "UDP";
++    if (!sourceVmId || !targetIp || !Number.isFinite(port)) continue;
++
++    const key = `${sourceVmId}|${targetIp}|${protocol}|${port}`.toLowerCase();
++    const value =
++      net.get(key) ??
++      ({
++        sourceVmId,
++        sourceName: row.source_name || undefined,
++        sourceIp: row.source_ip || undefined,
++        targetVmId: row.target_vm_id || undefined,
++        targetName: row.target_name || undefined,
++        targetIp,
++        protocol,
++        port,
++      } satisfies NetValue);
++
++    if (row._field === "result_code") value.code = Number(row._value);
++    if (row._field === "response_time") {
++      const seconds = Number(row._value);
++      value.latencyMs = Number.isFinite(seconds) ? seconds * 1000 : undefined;
++    }
++    if (row._time) value.time = row._time;
++    net.set(key, value);
++  }
++
++  return [...net.values()].map((value) => {
++    const pingValue = ping.get(`${value.sourceVmId}|${value.targetIp}`);
++    return {
++      sourceVmId: value.sourceVmId,
++      sourceName: value.sourceName,
++      sourceIp: value.sourceIp,
++      targetVmId: value.targetVmId,
++      targetName: value.targetName,
++      targetIp: value.targetIp,
++      protocol: value.protocol,
++      port: value.port,
++      ping: pingValue?.loss == null ? "NO_DATA" : pingValue.loss < 100 ? "UP" : "DOWN",
++      tcp: value.code == null ? "NO_DATA" : value.code === 0 ? "UP" : "DOWN",
++      pingLatencyMs: pingValue?.latencyMs ?? null,
++      tcpLatencyMs: value.latencyMs ?? null,
++      checkedAt: value.time ?? pingValue?.time ?? new Date().toISOString(),
++    };
++  });
+ }
+diff --git a/src/services/server/repository.ts b/src/services/server/repository.ts
+index f9d8cfe..7cfe4d7 100644
+--- a/src/services/server/repository.ts
++++ b/src/services/server/repository.ts
+@@ -4,26 +4,115 @@ import { getMysqlPool } from "./mysql";
+ import type { RowDataPacket } from "mysql2";
+ 
+ export async function loadVmsFromMysql(): Promise<VmAsset[]> {
+-  const [rows] = await getMysqlPool().query<RowDataPacket[]>(`SELECT asset_key,hostname,ip_address,environment,role,service_name,zone_name,criticality,os_name,os_version,cpu_cores,memory_gb,disk_gb,owner,eosl_date,grafana_path,source_ref,last_verified_at FROM vm_asset WHERE vm_status='ACTIVE' ORDER BY hostname`);
+-  return rows.map(r=>({
+-    id:String(r.asset_key),hostname:String(r.hostname),ipAddress:String(r.ip_address),environment:String(r.environment),role:String(r.role??"Unknown"),service:String(r.service_name??"Unknown"),zone:String(r.zone_name??"SUPPORT"),criticality:(r.criticality??"MEDIUM"),osName:String(r.os_name??"Unknown"),osVersion:r.os_version?String(r.os_version):undefined,cpuCores:r.cpu_cores==null?undefined:Number(r.cpu_cores),memoryGb:r.memory_gb==null?undefined:Number(r.memory_gb),diskGb:r.disk_gb==null?undefined:Number(r.disk_gb),health:"unknown",owner:r.owner?String(r.owner):undefined,eoslDate:r.eosl_date?new Date(r.eosl_date).toISOString().slice(0,10):null,grafanaPath:r.grafana_path?String(r.grafana_path):null,sourceRef:r.source_ref?String(r.source_ref):null,lastVerifiedAt:r.last_verified_at?new Date(r.last_verified_at).toISOString():null,
++  const [rows] = await getMysqlPool().query<RowDataPacket[]>(`
++    SELECT asset_key,hostname,ip_address,environment,role,service_name,zone_name,criticality,
++           os_name,os_version,cpu_cores,memory_gb,disk_gb,owner,eosl_date,grafana_path,last_verified_at
++    FROM vm_asset
++    WHERE vm_status='ACTIVE'
++    ORDER BY hostname
++  `);
++
++  return rows.map((r) => ({
++    id: String(r.asset_key),
++    hostname: String(r.hostname),
++    ipAddress: String(r.ip_address),
++    environment: String(r.environment),
++    role: String(r.role ?? "Unknown"),
++    service: String(r.service_name ?? "Unknown"),
++    zone: String(r.zone_name ?? "SUPPORT"),
++    criticality: r.criticality ?? "MEDIUM",
++    osName: String(r.os_name ?? "Unknown"),
++    osVersion: r.os_version ? String(r.os_version) : undefined,
++    cpuCores: r.cpu_cores == null ? undefined : Number(r.cpu_cores),
++    memoryGb: r.memory_gb == null ? undefined : Number(r.memory_gb),
++    diskGb: r.disk_gb == null ? undefined : Number(r.disk_gb),
++    health: "unknown",
++    owner: r.owner ? String(r.owner) : undefined,
++    eoslDate: r.eosl_date ? new Date(r.eosl_date).toISOString().slice(0, 10) : null,
++    grafanaPath: r.grafana_path ? String(r.grafana_path) : null,
++    lastVerifiedAt: r.last_verified_at ? new Date(r.last_verified_at).toISOString() : null,
+   }));
+ }
+ 
+ export async function loadSoftwareFromMysql(): Promise<SoftwareInstall[]> {
+-  const [rows] = await getMysqlPool().query<RowDataPacket[]>(`SELECT vs.id,va.asset_key vm_key,sc.canonical_name,vs.version,sc.vendor,sc.category,vs.eosl_date,vs.source_ref FROM vm_software vs JOIN vm_asset va ON va.id=vs.vm_id JOIN software_catalog sc ON sc.id=vs.software_id ORDER BY va.hostname,sc.canonical_name`);
+-  return rows.map(r=>({id:String(r.id),vmId:String(r.vm_key),name:String(r.canonical_name),version:r.version?String(r.version):undefined,vendor:r.vendor?String(r.vendor):undefined,category:r.category?String(r.category):undefined,eoslDate:r.eosl_date?new Date(r.eosl_date).toISOString().slice(0,10):null,sourceRef:r.source_ref?String(r.source_ref):null}));
++  const [rows] = await getMysqlPool().query<RowDataPacket[]>(`
++    SELECT vs.id,va.asset_key vm_key,sc.canonical_name,vs.version,sc.vendor,sc.category,vs.eosl_date
++    FROM vm_software vs
++    JOIN vm_asset va ON va.id=vs.vm_id
++    JOIN software_catalog sc ON sc.id=vs.software_id
++    ORDER BY va.hostname,sc.canonical_name
++  `);
++
++  return rows.map((r) => ({
++    id: String(r.id),
++    vmId: String(r.vm_key),
++    name: String(r.canonical_name),
++    version: r.version ? String(r.version) : undefined,
++    vendor: r.vendor ? String(r.vendor) : undefined,
++    category: r.category ? String(r.category) : undefined,
++    eoslDate: r.eosl_date ? new Date(r.eosl_date).toISOString().slice(0, 10) : null,
++  }));
+ }
+ 
+ export async function loadPoliciesFromMysql(): Promise<NetworkPolicy[]> {
+-  const [rows] = await getMysqlPool().query<RowDataPacket[]>(`SELECT np.policy_key,sv.asset_key source_vm_key,np.source_name,np.source_ip,tv.asset_key target_vm_key,np.target_name,np.target_ip,np.protocol,np.port,np.approval_status,np.requested_at,np.approved_at,np.valid_from,np.expires_at,np.request_id,np.purpose,np.owner,np.source_ref FROM network_policy np LEFT JOIN vm_asset sv ON sv.id=np.source_vm_id LEFT JOIN vm_asset tv ON tv.id=np.target_vm_id WHERE np.is_required=1 ORDER BY np.source_name,np.target_name,np.port`);
+-  const date=(v:any)=>v?new Date(v).toISOString().slice(0,10):null;
+-  return rows.map(r=>({id:String(r.policy_key),sourceVmId:String(r.source_vm_key??r.source_name),sourceName:String(r.source_name),sourceIp:String(r.source_ip),targetVmId:r.target_vm_key?String(r.target_vm_key):null,targetName:String(r.target_name),targetIp:String(r.target_ip),protocol:r.protocol,port:Number(r.port),approvalStatus:r.approval_status,requestedAt:date(r.requested_at),approvedAt:date(r.approved_at),validFrom:date(r.valid_from),expiresAt:date(r.expires_at),requestId:r.request_id?String(r.request_id):null,purpose:r.purpose?String(r.purpose):null,owner:r.owner?String(r.owner):null,sourceRef:r.source_ref?String(r.source_ref):null}));
++  const [rows] = await getMysqlPool().query<RowDataPacket[]>(`
++    SELECT np.policy_key,sv.asset_key source_vm_key,np.source_name,np.source_ip,
++           tv.asset_key target_vm_key,np.target_name,np.target_ip,np.protocol,np.port,np.direction,
++           np.approval_status,np.requested_at,np.approved_at,np.valid_from,np.expires_at,
++           np.request_id,np.purpose,np.owner
++    FROM network_policy np
++    LEFT JOIN vm_asset sv ON sv.id=np.source_vm_id
++    LEFT JOIN vm_asset tv ON tv.id=np.target_vm_id
++    WHERE np.is_required=1
++    ORDER BY np.source_name,np.target_name,np.port
++  `);
++
++  const date = (value: unknown) => value ? new Date(value as string | number | Date).toISOString().slice(0, 10) : null;
++  return rows.map((r) => ({
++    id: String(r.policy_key),
++    sourceVmId: String(r.source_vm_key ?? r.source_name),
++    sourceName: String(r.source_name),
++    sourceIp: String(r.source_ip),
++    targetVmId: r.target_vm_key ? String(r.target_vm_key) : null,
++    targetName: String(r.target_name),
++    targetIp: String(r.target_ip),
++    protocol: r.protocol,
++    port: Number(r.port),
++    direction: r.direction ?? "ONE_WAY",
++    approvalStatus: r.approval_status,
++    requestedAt: date(r.requested_at),
++    approvedAt: date(r.approved_at),
++    validFrom: date(r.valid_from),
++    expiresAt: date(r.expires_at),
++    requestId: r.request_id ? String(r.request_id) : null,
++    purpose: r.purpose ? String(r.purpose) : null,
++    owner: r.owner ? String(r.owner) : null,
++  }));
+ }
+ 
+ export async function loadSopsFromMysql(): Promise<SopDocument[]> {
+-  const [rows] = await getMysqlPool().query<RowDataPacket[]>(`SELECT sd.id,sd.sop_key,sd.title,sd.category,sd.document_url,sd.owner,sd.updated_at,va.asset_key vm_key FROM sop_document sd LEFT JOIN vm_sop_map m ON m.sop_id=sd.id LEFT JOIN vm_asset va ON va.id=m.vm_id ORDER BY sd.title`);
+-  const map=new Map<string,SopDocument>();
+-  for(const r of rows){const key=String(r.sop_key);const item=map.get(key)??{id:key,title:String(r.title),category:String(r.category??"General"),owner:String(r.owner??"Unknown"),url:r.document_url?String(r.document_url):null,relatedVmIds:[],updatedAt:r.updated_at?new Date(r.updated_at).toISOString().slice(0,10):""};if(r.vm_key&&!item.relatedVmIds.includes(String(r.vm_key))) item.relatedVmIds.push(String(r.vm_key));map.set(key,item)}
++  const [rows] = await getMysqlPool().query<RowDataPacket[]>(`
++    SELECT sd.id,sd.sop_key,sd.title,sd.category,sd.document_url,sd.owner,sd.updated_at,va.asset_key vm_key
++    FROM sop_document sd
++    LEFT JOIN vm_sop_map m ON m.sop_id=sd.id
++    LEFT JOIN vm_asset va ON va.id=m.vm_id
++    ORDER BY sd.title
++  `);
++
++  const map = new Map<string, SopDocument>();
++  for (const r of rows) {
++    const key = String(r.sop_key);
++    const item = map.get(key) ?? {
++      id: key,
++      title: String(r.title),
++      category: String(r.category ?? "General"),
++      owner: String(r.owner ?? "Unknown"),
++      url: r.document_url ? String(r.document_url) : null,
++      relatedVmIds: [],
++      updatedAt: r.updated_at ? new Date(r.updated_at).toISOString().slice(0, 10) : "",
++    };
++    if (r.vm_key && !item.relatedVmIds.includes(String(r.vm_key))) item.relatedVmIds.push(String(r.vm_key));
++    map.set(key, item);
++  }
+   return [...map.values()];
+ }

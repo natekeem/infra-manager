@@ -37,9 +37,7 @@ export function ClusterDrawer({
           >
             {cluster.status}
           </Badge>
-          <span className="font-mono text-[9px] text-[var(--muted)]">
-            {cluster.sourceRef ?? "CLUSTER REGISTRY"}
-          </span>
+          <span className="font-mono text-[9px] text-[var(--muted)]">{cluster.type}</span>
         </div>
 
         {/* Cluster Information */}

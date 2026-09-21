@@ -29,11 +29,12 @@ The `evaluateNetworkStatus` domain function evaluates combinations of approval, 
 | `POLICY_VALID_BUT_UNREACHABLE` | POLICY VALID / TCP DOWN | 1 (Critical) | Policy is active but TCP failed. Check firewall or target service. |
 | `RETURN_DIRECTION_FAILED` | RETURN FAILED | 2 (Critical) | Forward TCP succeeded, but return probe failed on bidirectional policy. |
 | `POLICY_NOT_APPROVED_BUT_REACHABLE` | POLICY PENDING / TCP UP | 3 (Warning) | Port reachable without approved security ticket (compliance breach). |
-| `POLICY_EXPIRED_BUT_REACHABLE` | POLICY EXPIRED / TCP UP | 4 (Warning) | Policy expired but port remains open on firewall. Revocation required. |
+| `POLICY_EXPIRED_BUT_REACHABLE` | POLICY EXPIRED / TCP UP | 4 (Warning) | Policy expired but the declared connection is still observed as reachable. Reconcile policy renewal/decommission state. |
 | `UNREACHABLE` | UNREACHABLE | 5 (Warning) | TCP probe failed with unapproved policy. |
-| `EXPIRING` | EXPIRING (D-30) | 6 (Attention) | TCP is healthy, but policy expires within 30 days. Renewal ticket required. |
-| `UNKNOWN` | UNKNOWN | 7 (Neutral) | Insufficient telemetry or policy metadata. Never guess values. |
-| `NORMAL` | NORMAL | 8 (Healthy) | Policy is approved and active; all forward (and return) probes are UP. |
+| `BIDIRECTIONAL_PARTIAL` | BIDI / NO RETURN DATA | 6 (Attention) | Forward is healthy but the required reverse probe has no current data. |
+| `EXPIRING` | EXPIRING (D-30) | 7 (Attention) | TCP is healthy, but policy expires within 30 days. Renewal ticket required. |
+| `UNKNOWN` | UNKNOWN | 8 (Neutral) | Insufficient telemetry or policy metadata. Never guess values. |
+| `NORMAL` | NORMAL | 9 (Healthy) | Policy is approved and active; all required forward/return probes are UP. |
 
 ---
 
@@ -43,8 +44,8 @@ Enterprise applications often declare two-way communication (e.g. database clien
 - In `NetworkPolicy`, `direction` is set to `"BIDIRECTIONAL"`.
 - The evaluation engine checks:
   1. `observation.tcp === "UP"` (Forward `A → B` reachability)
-  2. `observation.reverseTcp === "UP"` (Return `B → A` reachability)
-- If `tcp === "UP"` but `reverseTcp === "DOWN"`, the state is flagged as **`RETURN_DIRECTION_FAILED`**.
+  2. `reverseObservation.tcp === "UP"` (Return `B → A` reachability)
+- If forward `tcp === "UP"` but `reverseObservation.tcp === "DOWN"`, the state is flagged as **`RETURN_DIRECTION_FAILED`**.
 - Diagnosis message:
   `"Return direction failed (출발→대상 연결은 성공했으나 대상→출발 회신 방향 TCP 연결 실패. 방화벽 회신 정책 확인 필요)"`
 - In `ConnectionDrawer`, two distinct cards are rendered side-by-side:
@@ -57,9 +58,11 @@ Enterprise applications often declare two-way communication (e.g. database clien
 
 ```influx
 # Forward measurement
-net_response,source_host=RPA-APP03,target_host=RPA-DB01,port=1433,direction=forward result_code=0,response_time_ms=2.1
+net_response,source_vm_id=app03,source_name=RPA-APP03,target_vm_id=db01,target_name=RPA-DB01,target_ip=10.10.30.11,target_port=1433,probe_protocol=TCP result_code=0,response_time=0.0021
 
-# Return measurement (from target side)
-net_response,source_host=RPA-DB01,target_host=RPA-APP03,port=1433,direction=return result_code=1,response_time_ms=0
+# Return measurement (independent directional observation from the target VM)
+net_response,source_vm_id=db01,source_name=RPA-DB01,target_vm_id=app03,target_name=RPA-APP03,target_ip=10.10.20.13,target_port=1433,probe_protocol=TCP result_code=1,response_time=0
 ```
+
+No policy ID is required in Influx. The application joins declared policy and observed state by directional connection identity: Source VM + Target IP + Protocol + Port.
 Missing observations are marked as `NO_DATA` rather than assumed healthy or blocked.

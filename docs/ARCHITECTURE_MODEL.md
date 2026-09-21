@@ -19,7 +19,6 @@ Common attributes for all physical and virtual assets:
 - `id`: Unique asset identifier (e.g. `vm-bot01`, `nas-01`)
 - `assetType`: `"VM" | "PHYSICAL_SERVER" | "NAS" | "NETWORK_APPLIANCE" | "OTHER"`
 - `hostname`, `ipAddress`, `environment` (`PROD`, `STG`, `DEV`), `role`, `service`, `zone`, `criticality`, `health`
-- `sourceRef`: Provenance tracker (e.g. CMDB spreadsheet, vCenter export batch)
 
 ### 2.2. Virtual Machines: `VmAsset`
 Extends `InfraAsset` with VM-specific compute metrics and OS details:

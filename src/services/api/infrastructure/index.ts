@@ -1,4 +1,4 @@
-import { evaluateNetworkStatus, severityRank } from "@/domain/network-status";
+import { evaluateNetworkStatus, policyForwardKey, policyReverseKey, severityRank, connectivityKey } from "@/domain/network-status";
 import type {
   AssetSoftwareInstallation,
   ClusterEntity,
@@ -27,6 +27,7 @@ import {
 import { loadPoliciesFromMysql, loadSoftwareFromMysql, loadSopsFromMysql, loadVmsFromMysql } from "@/services/server/repository";
 import { loadConnectivityFromInflux } from "@/services/server/influx-observations";
 import { healthFromResource, loadVmResourceSnapshotFromInflux } from "@/services/server/influx-resources";
+import { enrichInstallations, enrichLegacySoftware } from "@/domain/software-lifecycle";
 
 const useMysql = () => process.env.DATA_SOURCE === "mysql";
 
@@ -56,7 +57,8 @@ export async function getClusters(): Promise<ClusterEntity[]> {
 }
 
 export async function getSoftware(): Promise<SoftwareInstall[]> {
-  return useMysql() ? loadSoftwareFromMysql() : mockSoftware;
+  const software = useMysql() ? await loadSoftwareFromMysql() : mockSoftware;
+  return enrichLegacySoftware(software, mockSoftwareProducts, mockSoftwareReleases);
 }
 
 export async function getSoftwareProducts(): Promise<SoftwareProduct[]> {
@@ -68,7 +70,7 @@ export async function getSoftwareReleases(): Promise<SoftwareRelease[]> {
 }
 
 export async function getAssetSoftwareInstallations(): Promise<AssetSoftwareInstallation[]> {
-  return mockAssetSoftwareInstallations;
+  return enrichInstallations(mockAssetSoftwareInstallations, mockSoftwareReleases);
 }
 
 export async function getSops(): Promise<SopDocument[]> {
@@ -79,17 +81,35 @@ export async function getPolicies(): Promise<NetworkPolicy[]> {
   return useMysql() ? loadPoliciesFromMysql() : mockPolicies;
 }
 
-async function getObservations(policies: NetworkPolicy[]): Promise<ConnectivityObservation[]> {
+async function getObservations(): Promise<ConnectivityObservation[]> {
   if (!useMysql()) return mockObservations;
-  return loadConnectivityFromInflux(policies);
+  return loadConnectivityFromInflux();
+}
+
+function latestByConnection(observations: ConnectivityObservation[]) {
+  const byKey = new Map<string, ConnectivityObservation>();
+  for (const observation of observations) {
+    const key = connectivityKey(observation);
+    const current = byKey.get(key);
+    if (!current || new Date(observation.checkedAt).getTime() >= new Date(current.checkedAt).getTime()) {
+      byKey.set(key, observation);
+    }
+  }
+  return byKey;
 }
 
 export async function getNetworkStatuses(): Promise<NetworkStatus[]> {
   const policies = await getPolicies();
-  const observations = await getObservations(policies);
-  const byPolicy = new Map(observations.map((o) => [o.policyId, o]));
+  const observations = await getObservations();
+  const byConnection = latestByConnection(observations);
+
   return policies
-    .map((p) => evaluateNetworkStatus(p, byPolicy.get(p.id)))
+    .map((policy) => {
+      const forward = byConnection.get(policyForwardKey(policy));
+      const reverseKey = policyReverseKey(policy);
+      const reverse = reverseKey ? byConnection.get(reverseKey) : undefined;
+      return evaluateNetworkStatus(policy, forward, reverse);
+    })
     .sort((a, b) => severityRank[a.overall] - severityRank[b.overall]);
 }
 

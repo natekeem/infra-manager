@@ -10,6 +10,7 @@ export type NetworkOverallState =
   | "POLICY_VALID_BUT_UNREACHABLE"
   | "POLICY_NOT_APPROVED_BUT_REACHABLE"
   | "RETURN_DIRECTION_FAILED"
+  | "BIDIRECTIONAL_PARTIAL"
   | "UNREACHABLE"
   | "UNKNOWN";
 
@@ -28,7 +29,6 @@ export interface InfraAsset {
   criticality: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   health: VmHealth;
   owner?: string;
-  sourceRef?: string | null;
   lastVerifiedAt?: string | null;
 }
 
@@ -97,7 +97,6 @@ export interface ClusterEntity {
   members: ClusterMember[];
   services: ClusterServiceInstance[];
   owner?: string;
-  sourceRef?: string | null;
 }
 
 // 3-Tier Software Lifecycle Model
@@ -137,7 +136,6 @@ export interface AssetSoftwareInstallation {
   category?: string;
   installedAt?: string;
   lastVerifiedAt?: string;
-  sourceRef?: string | null;
 }
 
 // Legacy SoftwareInstall (kept for backward compatibility)
@@ -149,7 +147,6 @@ export interface SoftwareInstall {
   vendor?: string;
   category?: string;
   eoslDate?: string | null;
-  sourceRef?: string | null;
 }
 
 export interface NetworkPolicy {
@@ -171,30 +168,35 @@ export interface NetworkPolicy {
   requestId?: string | null;
   purpose?: string | null;
   owner?: string | null;
-  sourceRef?: string | null;
 }
 
 export interface ConnectivityObservation {
-  policyId: string;
+  /**
+   * Observed connectivity is independent from a firewall policy.
+   * It is joined to the policy by source + target + protocol + port.
+   */
   sourceVmId: string;
+  sourceName?: string;
+  sourceIp?: string | null;
+  targetVmId?: string | null;
+  targetName?: string;
   targetIp: string;
+  protocol: "TCP" | "UDP";
   port: number;
   ping: ProbeState;
   tcp: ProbeState;
   pingLatencyMs?: number | null;
   tcpLatencyMs?: number | null;
   checkedAt: string;
-  // Reverse probe for BIDIRECTIONAL policies
-  reversePing?: ProbeState;
-  reverseTcp?: ProbeState;
-  reversePingLatencyMs?: number | null;
-  reverseTcpLatencyMs?: number | null;
-  reverseCheckedAt?: string;
 }
 
 export interface NetworkStatus {
+  /** Policy is the primary/declared row. */
   policy: NetworkPolicy;
+  /** Source -> Target Telegraf observation joined by connection identity. */
   observation?: ConnectivityObservation;
+  /** Target -> Source observation for an internal BIDIRECTIONAL policy. */
+  reverseObservation?: ConnectivityObservation;
   overall: NetworkOverallState;
   daysToExpiry?: number | null;
   diagnostic: string;

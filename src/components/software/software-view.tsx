@@ -68,7 +68,6 @@ export function SoftwareView({
         lifecycleStatus,
         vendor: s.vendor,
         category: s.category,
-        sourceRef: s.sourceRef,
       } as AssetSoftwareInstallation;
     });
   }, [installations, software]);
@@ -244,13 +243,12 @@ export function SoftwareView({
                   <Th>Category</Th>
                   <Th>Lifecycle Status</Th>
                   <Th>EOSL Date</Th>
-                  <Th>Source Ref</Th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
                 {filteredInstallations.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="p-6 text-center text-[11px] text-[var(--muted)]">
+                    <td colSpan={7} className="p-6 text-center text-[11px] text-[var(--muted)]">
                       일치하는 소프트웨어 설치 내역이 없습니다.
                     </td>
                   </tr>
@@ -310,11 +308,6 @@ export function SoftwareView({
                               {days < 0 ? `D+${Math.abs(days)}` : `D-${days}`}
                             </div>
                           )}
-                        </Td>
-                        <Td>
-                          <span className="font-mono text-[9px] text-[var(--muted)]">
-                            {inst.sourceRef ?? "-"}
-                          </span>
                         </Td>
                       </tr>
                     );

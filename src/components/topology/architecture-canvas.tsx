@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   BaseEdge,
@@ -8,6 +8,7 @@ import {
   EdgeLabelRenderer,
   Handle,
   MiniMap,
+  MarkerType,
   Position,
   ReactFlow,
   getSmoothStepPath,
@@ -32,7 +33,7 @@ import { ClusterDrawer } from "@/components/cluster/cluster-drawer";
 import { NasDrawer } from "@/components/storage/nas-drawer";
 import { SoftwareDetailDrawer } from "@/components/software/software-detail-drawer";
 import { MaximizeIcon, SearchIcon } from "@/components/common/icons";
-import { Badge } from "@/components/tailgrids/core/badge";
+import { matchLegacySoftwareRelease } from "@/domain/software-lifecycle";
 
 type ViewMode = "overview" | "service" | "vm";
 type OverlayMode = "policy" | "live";
@@ -59,6 +60,7 @@ export type TopologyEdgeData = {
   issueCount: number;
   status?: NetworkStatus;
   flowActive?: boolean;
+  showLabel?: boolean;
   onSelect?: () => void;
 };
 
@@ -85,7 +87,7 @@ function GroupNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
   const isExternal = data.kind === "external";
   return (
     <div
-      className={`w-[200px] rounded-md border bg-[var(--surface)] p-2.5 shadow-sm transition ${
+      className={`h-[116px] w-[200px] rounded-md border bg-[var(--surface)] p-2.5 shadow-sm transition ${
         selected ? "border-[#5750f1] ring-1 ring-[#5750f1]/20" : "border-[var(--border-strong)]"
       }`}
     >
@@ -341,13 +343,16 @@ function FlowEdge(props: EdgeProps<Edge<TopologyEdgeData>>) {
   const color = statusColor(data.issueCount, data.status);
   const isTcpUp = data.status?.observation?.tcp === "UP";
   const isBidi = data.status?.isBidirectional;
-  const isReverseUp = isBidi && data.status?.observation?.reverseTcp === "UP";
+  const isReverseUp = isBidi && data.status?.reverseObservation?.tcp === "UP";
   const flowActive = data.flowActive ?? true;
 
   return (
     <>
       <BaseEdge
         path={path}
+        markerStart={props.markerStart}
+        markerEnd={props.markerEnd}
+        interactionWidth={18}
         style={{
           stroke: color,
           strokeWidth: data.issueCount ? 1.8 : 1.2,
@@ -367,22 +372,24 @@ function FlowEdge(props: EdgeProps<Edge<TopologyEdgeData>>) {
         </circle>
       )}
 
-      <EdgeLabelRenderer>
-        <button
-          onClick={() => data.onSelect?.()}
-          style={{ transform: `translate(-50%,-50%) translate(${x}px,${y}px)` }}
-          className="nodrag nopan absolute rounded border border-[var(--border)] bg-[var(--surface)] px-1.5 py-0.5 text-left shadow-sm transition hover:border-[#5750f1]"
-        >
-          <div className="whitespace-nowrap text-[8px] font-semibold">{data.label}</div>
-          <div className="whitespace-nowrap text-[7px] text-[var(--muted)]">{data.secondary}</div>
-        </button>
-      </EdgeLabelRenderer>
+      {data.showLabel && (
+        <EdgeLabelRenderer>
+          <button
+            onClick={() => data.onSelect?.()}
+            style={{ transform: `translate(-50%,-50%) translate(${x}px,${y}px)` }}
+            className="nodrag nopan absolute z-10 rounded border border-[var(--border)] bg-[var(--surface)]/95 px-1.5 py-0.5 text-left shadow-sm backdrop-blur-[1px] transition hover:border-[#5750f1]"
+          >
+            <div className="whitespace-nowrap text-[8px] font-semibold">{data.label}</div>
+            <div className="whitespace-nowrap text-[7px] text-[var(--muted)]">{data.secondary}</div>
+          </button>
+        </EdgeLabelRenderer>
+      )}
     </>
   );
 }
 
 const nodeTypes = {
-  group: GroupNode,
+  tier: GroupNode,
   vm: VmNode,
   cluster: ClusterNode,
   nas: NasNode,
@@ -414,7 +421,11 @@ export function ArchitectureCanvas({
   const [zone, setZone] = useState("ALL");
   const [overlay, setOverlay] = useState<OverlayMode>("live");
   const [issuesOnly, setIssuesOnly] = useState(false);
-  const [flowAnimation, setFlowAnimation] = useState(true);
+  const [flowAnimation, setFlowAnimation] = useState(false);
+  const [showEdgeLabels, setShowEdgeLabels] = useState(false);
+  const [layoutEditMode, setLayoutEditMode] = useState(false);
+  const [positionOverrides, setPositionOverrides] = useState<Record<string, { x: number; y: number }>>({});
+  const [canvasRevision, setCanvasRevision] = useState(0);
   const [query, setQuery] = useState("");
 
   // Drawers
@@ -463,11 +474,43 @@ export function ArchitectureCanvas({
       overlay,
       query,
       flowAnimation,
+      showEdgeLabels,
       clusters,
       nasAssets,
       setSelectedConnection
     );
-  }, [mode, envVms, envStatuses, zone, issuesOnly, issueVmIds, overlay, query, flowAnimation, clusters, nasAssets]);
+  }, [mode, envVms, envStatuses, zone, issuesOnly, issueVmIds, overlay, query, flowAnimation, showEdgeLabels, clusters, nasAssets]);
+
+  const layoutStorageKey = `rpa-topology-layout:v2:${mode}:${envFilter}:${zone}`;
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(layoutStorageKey);
+      setPositionOverrides(saved ? JSON.parse(saved) : {});
+    } catch {
+      setPositionOverrides({});
+    }
+  }, [layoutStorageKey]);
+
+  const renderedNodes = useMemo(
+    () => nodes.map((node) => ({ ...node, position: positionOverrides[node.id] ?? node.position })),
+    [nodes, positionOverrides]
+  );
+
+  function saveNodePosition(nodeId: string, position: { x: number; y: number }) {
+    const snapped = { x: Math.round(position.x / 20) * 20, y: Math.round(position.y / 20) * 20 };
+    setPositionOverrides((current) => {
+      const next = { ...current, [nodeId]: snapped };
+      window.localStorage.setItem(layoutStorageKey, JSON.stringify(next));
+      return next;
+    });
+  }
+
+  function resetLayout() {
+    window.localStorage.removeItem(layoutStorageKey);
+    setPositionOverrides({});
+    setCanvasRevision((value) => value + 1);
+  }
 
   function handleSearch(val: string) {
     setQuery(val);
@@ -572,6 +615,38 @@ export function ArchitectureCanvas({
             <span>Flow</span>
           </button>
 
+          <button
+            onClick={() => setShowEdgeLabels((value) => !value)}
+            title="Show connection labels. Off by default on VM view to prevent label/node collisions."
+            className={`flex h-7 items-center gap-1 rounded-md border px-2 text-[9px] font-medium transition ${
+              showEdgeLabels
+                ? "border-[#5750f1] bg-[#5750f1]/10 text-[#5750f1]"
+                : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]"
+            }`}
+          >
+            Labels
+          </button>
+
+          <button
+            onClick={() => setLayoutEditMode((value) => !value)}
+            title="Allow manual node movement. Dragging snaps to a 20px grid."
+            className={`flex h-7 items-center gap-1 rounded-md border px-2 text-[9px] font-medium transition ${
+              layoutEditMode
+                ? "border-[#5750f1] bg-[#5750f1]/10 text-[#5750f1]"
+                : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]"
+            }`}
+          >
+            {layoutEditMode ? "Editing layout" : "Edit layout"}
+          </button>
+
+          <button
+            onClick={resetLayout}
+            title="Discard manual positions and restore the automatic hierarchical layout."
+            className="flex h-7 items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[9px] text-[var(--muted)] transition hover:text-[var(--foreground)]"
+          >
+            Auto layout
+          </button>
+
           {/* Search: hostname / IP / port */}
           <div className="flex h-7 w-[200px] items-center gap-1.5 rounded-md border border-[var(--border)] px-2">
             <SearchIcon className="h-3.5 w-3.5 shrink-0 text-[var(--muted)]" />
@@ -609,7 +684,8 @@ export function ArchitectureCanvas({
       {/* React Flow Canvas */}
       <div className="relative h-[calc(100vh-170px)] min-h-[640px]">
         <ReactFlow
-          nodes={nodes}
+          key={`${mode}-${envFilter}-${zone}-${canvasRevision}`}
+          nodes={renderedNodes}
           edges={edges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
@@ -617,6 +693,12 @@ export function ArchitectureCanvas({
           fitViewOptions={{ padding: 0.16 }}
           minZoom={0.25}
           maxZoom={1.8}
+          nodesDraggable={layoutEditMode}
+          nodesConnectable={false}
+          snapToGrid
+          snapGrid={[20, 20]}
+          elevateEdgesOnSelect
+          onNodeDragStop={(_, node) => saveNodePosition(node.id, node.position)}
           onNodeClick={(_, node) => {
             const d = node.data as TopologyNodeData;
             if (d.vm) setSelectedVm(d.vm);
@@ -642,7 +724,7 @@ export function ArchitectureCanvas({
             if (d?.status) setSelectedConnection(d.status);
           }}
         >
-          <Background gap={24} size={1} color="var(--border)" />
+          <Background gap={20} size={1} color="var(--border)" />
           <Controls showInteractive={false} />
           <MiniMap pannable zoomable nodeColor="#c7cbd1" maskColor="rgba(17,24,39,.08)" />
         </ReactFlow>
@@ -654,7 +736,7 @@ export function ArchitectureCanvas({
             <b className="text-[var(--foreground)]">Actual</b>: Source→Target Telegraf TCP probe (양방향 지원)
           </div>
           <div className="mt-0.5">
-            더블클릭 → 티어 드릴다운 · 노드/연결 클릭 → 우측 슬라이드 서랍 상세
+            더블클릭 → 티어 드릴다운 · 노드/연결 클릭 → 우측 슬라이드 서랍 상세 · Labels → 포트 라벨 표시 · Edit layout → 20px 격자 스냅
           </div>
         </div>
       </div>
@@ -668,7 +750,7 @@ export function ArchitectureCanvas({
         open={!!selectedVm}
         onClose={() => setSelectedVm(null)}
         onSelectSoftware={(sw) => {
-          const matched = softwareReleases.find((r) => r.productName === sw.name);
+          const matched = matchLegacySoftwareRelease(sw, softwareProducts, softwareReleases);
           if (matched) setSelectedRelease(matched);
         }}
       />
@@ -770,8 +852,9 @@ function buildOverview(
   const nodes: Node<TopologyNodeData>[] = [
     ...groups.map((g) => ({
       id: `zone-${g.z}`,
-      type: "group",
+      type: "tier",
       position: zonePos[g.z] ?? { x: 0, y: 0 },
+      style: { width: 200, height: 116 },
       data: {
         kind: "group" as const,
         key: g.z,
@@ -788,8 +871,9 @@ function buildOverview(
       ? [
           {
             id: "zone-EXTERNAL",
-            type: "group",
+            type: "tier",
             position: zonePos.EXTERNAL,
+            style: { width: 200, height: 116 },
             data: {
               kind: "external" as const,
               key: "EXTERNAL",
@@ -836,12 +920,14 @@ function buildOverview(
       type: "flow",
       source: `zone-${a.source}`,
       target: `zone-${a.target}`,
+      markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
       data: {
         label,
         secondary,
         issueCount: a.issues,
         status: a.sample,
         flowActive,
+        showLabel: true,
         onSelect: () => a.sample && onSelectConnection(a.sample),
       },
     };
@@ -878,8 +964,9 @@ function buildServices(
     const sVms = vms.filter((v) => v.service === service);
     return {
       id: `svc-${service}`,
-      type: "group",
+      type: "tier",
       position: { x: (i % 3) * 280 + 80, y: Math.floor(i / 3) * 170 + 90 },
+      style: { width: 200, height: 116 },
       data: {
         kind: "group" as const,
         key: service,
@@ -904,8 +991,9 @@ function buildServices(
   externals.forEach((name, i) =>
     nodes.push({
       id: `ext-${name}`,
-      type: "group",
+      type: "tier",
       position: { x: 940, y: 90 + i * 150 },
+      style: { width: 200, height: 116 },
       data: {
         kind: "external" as const,
         key: name,
@@ -937,12 +1025,14 @@ function buildServices(
     type: "flow",
     source: `svc-${a.src}`,
     target: services.includes(a.tgt) ? `svc-${a.tgt}` : `ext-${a.tgt}`,
+    markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
     data: {
       label: overlay === "policy" ? `${a.count} Policies` : `${a.count} Flows`,
       secondary: a.issues ? `${a.issues} Issues` : overlay === "policy" ? "Approved" : "Reachable",
       issueCount: a.issues,
       status: a.sample,
       flowActive,
+      showLabel: true,
       onSelect: () => a.sample && onSelectConnection(a.sample),
     },
   }));
@@ -959,6 +1049,7 @@ function buildVms(
   overlay: OverlayMode,
   query: string,
   flowActive: boolean,
+  showEdgeLabels: boolean,
   clusters: ClusterEntity[],
   nasAssets: NasAsset[],
   onSelectConnection: (status: NetworkStatus) => void
@@ -972,47 +1063,95 @@ function buildVms(
   );
   const visibleIds = new Set(visible.map((v) => v.id));
 
-  // Node spacing matching card dimensions (w: 230, h: 125) with safe clearance
-  const COLS = 4;
-  const X_GAP = 270;
-  const Y_GAP = 160;
+  // Automatic hierarchical/swim-lane layout.
+  // The default layout favors readable service flow; users can make small final adjustments in Edit layout mode.
+  const VM_W = 230;
+  const VM_H = 125;
+  const X_STEP = 270;
+  const Y_STEP = 165;
 
-  const nodes: Node<TopologyNodeData>[] = visible.map((vm, i) => ({
-    id: vm.id,
-    type: "vm",
-    position: { x: (i % COLS) * X_GAP + 60, y: Math.floor(i / COLS) * Y_GAP + 70 },
-    data: { kind: "vm" as const, key: vm.id, label: vm.hostname, vm },
-  }));
+  const zoneSpec: Record<string, { x: number; y: number; cols: number }> = {
+    WEB: { x: 520, y: 40, cols: 4 },
+    APP: { x: 260, y: 300, cols: 6 },
+    DB: { x: 520, y: 590, cols: 4 },
+    CONTROL: { x: -620, y: 300, cols: 2 },
+    BOT: { x: -880, y: 590, cols: 4 },
+    VDI: { x: -880, y: 930, cols: 4 },
+    SUPPORT: { x: 2240, y: 590, cols: 2 },
+  };
 
-  // Append Cluster Nodes if relevant
+  function positionForVm(vm: VmAsset, indexWithinZone: number, zoneCount: number) {
+    if (zone !== "ALL") {
+      const cols = Math.min(4, Math.max(1, zoneCount));
+      return {
+        x: (indexWithinZone % cols) * X_STEP + 80,
+        y: Math.floor(indexWithinZone / cols) * Y_STEP + 80,
+      };
+    }
+
+    const spec = zoneSpec[vm.zone] ?? { x: 520, y: 1180, cols: 4 };
+    return {
+      x: spec.x + (indexWithinZone % spec.cols) * X_STEP,
+      y: spec.y + Math.floor(indexWithinZone / spec.cols) * Y_STEP,
+    };
+  }
+
+  const zoneIndexes = new Map<string, number>();
+  const zoneCounts = new Map<string, number>();
+  for (const vm of visible) zoneCounts.set(vm.zone, (zoneCounts.get(vm.zone) ?? 0) + 1);
+
+  const nodes: Node<TopologyNodeData>[] = visible.map((vm) => {
+    const indexWithinZone = zoneIndexes.get(vm.zone) ?? 0;
+    zoneIndexes.set(vm.zone, indexWithinZone + 1);
+    return {
+      id: vm.id,
+      type: "vm",
+      position: positionForVm(vm, indexWithinZone, zoneCounts.get(vm.zone) ?? 1),
+      style: { width: VM_W, height: VM_H },
+      data: { kind: "vm" as const, key: vm.id, label: vm.hostname, vm },
+    };
+  });
+
+  // Append logical cluster nodes close to the DB lane (or below a filtered tier).
   const relevantClusters = clusters.filter(
     (c) => (zone === "ALL" || c.zone === zone) && (!issuesOnly || c.status !== "HEALTHY")
   );
-  relevantClusters.forEach((c, idx) => {
-    const rowOffset = Math.ceil(visible.length / COLS);
+  relevantClusters.forEach((cluster, index) => {
+    const position =
+      zone === "ALL"
+        ? { x: 760 + index * X_STEP, y: 805 }
+        : { x: (index % 4) * X_STEP + 80, y: Math.ceil(visible.length / 4) * Y_STEP + 110 };
     nodes.push({
-      id: `cluster-${c.id}`,
+      id: `cluster-${cluster.id}`,
       type: "cluster",
-      position: { x: (idx % COLS) * X_GAP + 60, y: (rowOffset + Math.floor(idx / COLS)) * Y_GAP + 70 },
+      position,
+      style: { width: 230, height: 135 },
       data: {
         kind: "cluster" as const,
-        key: c.id,
-        label: c.name,
-        cluster: c,
+        key: cluster.id,
+        label: cluster.name,
+        cluster,
       },
     });
   });
 
-  // Append NAS Assets if relevant
+  // Append NAS assets near the support/data lane.
   const relevantNas = nasAssets.filter(
     (n) => (zone === "ALL" || n.zone === zone) && (!issuesOnly || n.status !== "ONLINE")
   );
-  relevantNas.forEach((nas, idx) => {
-    const rowOffset = Math.ceil(visible.length / COLS) + Math.ceil(relevantClusters.length / COLS);
+  relevantNas.forEach((nas, index) => {
+    const position =
+      zone === "ALL"
+        ? { x: 2240 + (index % 2) * X_STEP, y: 940 + Math.floor(index / 2) * Y_STEP }
+        : {
+            x: (index % 4) * X_STEP + 80,
+            y: (Math.ceil(visible.length / 4) + Math.ceil(relevantClusters.length / 4)) * Y_STEP + 110,
+          };
     nodes.push({
       id: `nas-${nas.id}`,
       type: "nas",
-      position: { x: (idx % COLS) * X_GAP + 60, y: (rowOffset + Math.floor(idx / COLS)) * Y_GAP + 70 },
+      position,
+      style: { width: 230, height: 135 },
       data: {
         kind: "nas" as const,
         key: nas.id,
@@ -1022,7 +1161,7 @@ function buildVms(
     });
   });
 
-  // External Targets
+  // External targets are kept in a dedicated lane to prevent them from cutting across VM cards.
   const extMap = new Map<string, number>();
   for (const s of statuses) {
     if (visibleIds.has(s.policy.sourceVmId) && !s.policy.targetVmId && (!issuesOnly || s.overall !== "NORMAL")) {
@@ -1030,12 +1169,15 @@ function buildVms(
     }
   }
 
-  let ei = 0;
+  let externalIndex = 0;
   for (const [name, issues] of extMap) {
     nodes.push({
       id: `ext-${name}`,
-      type: "group",
-      position: { x: COLS * X_GAP + 80, y: 70 + ei++ * 150 },
+      type: "tier",
+      position: zone === "ALL"
+        ? { x: 2240, y: 120 + externalIndex++ * 150 }
+        : { x: 1180, y: 80 + externalIndex++ * 150 },
+      style: { width: 200, height: 116 },
       data: {
         kind: "external" as const,
         key: name,
@@ -1070,17 +1212,31 @@ function buildVms(
                 s.observation?.tcpLatencyMs != null ? ` (${s.observation.tcpLatencyMs}ms)` : ""
               }`;
 
+      const sourceId = s.policy.sourceVmId;
+      const targetId = s.policy.targetVmId ?? `ext-${s.policy.targetName}`;
+      const sourceNode = nodes.find((node) => node.id === sourceId);
+      const targetNode = nodes.find((node) => node.id === targetId);
+      const horizontalForward =
+        Boolean(sourceNode && targetNode) &&
+        (targetNode!.position.x - sourceNode!.position.x) > Math.abs(targetNode!.position.y - sourceNode!.position.y);
+
       return {
         id: s.policy.id,
         type: "flow",
-        source: s.policy.sourceVmId,
-        target: s.policy.targetVmId ?? `ext-${s.policy.targetName}`,
+        source: sourceId,
+        target: targetId,
+        sourceHandle: horizontalForward ? "r" : undefined,
+        targetHandle: horizontalForward ? "l" : undefined,
+        markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
+        markerStart: isBidi ? { type: MarkerType.ArrowClosed, width: 12, height: 12 } : undefined,
         data: {
           label,
           secondary,
           issueCount: s.overall === "NORMAL" ? 0 : 1,
           status: s,
           flowActive,
+          // On a 30+ VM canvas, edge labels are opt-in. Status is conveyed by line color/dash; click opens full detail.
+          showLabel: showEdgeLabels,
           onSelect: () => onSelectConnection(s),
         },
       };

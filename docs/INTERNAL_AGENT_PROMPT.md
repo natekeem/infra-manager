@@ -18,7 +18,6 @@ NON-NEGOTIABLE:
 - Do not change sidebar/header/layout/typography/density/Drawer UX.
 - Do not rewrite architecture components unless required for a real-data field mapping bug.
 - Do not invent missing VM, IP, port, approval, expiry, SW or EOSL values.
-- Keep source provenance (`sourceRef`) for every record where possible.
 
 TASK 1 — DATA NORMALIZATION
 Inspect all supplied VM inventories, firewall-opening/approval files, SOP lists/documents and software inventories. Produce `data/internal-normalized.json` matching `samples/normalized-import.example.json` exactly.
@@ -43,7 +42,6 @@ Validate:
 - protocol TCP/UDP
 - expiry date format
 - request IDs preserved
-- sourceRef present when source is known
 
 TASK 3 — MYSQL
 Apply `db/schema.sql` if needed and run:
@@ -68,8 +66,7 @@ Verify these screens using real data:
 - Dashboard
 - Virtual Machines
 - Architecture Overview / Service / VM drill-down
-- Policy Registry
-- Connectivity
+- Policy & Connectivity (policy baseline joined with Telegraf actual state)
 - Software & EOSL
 - SOP
 

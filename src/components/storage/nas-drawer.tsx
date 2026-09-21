@@ -86,7 +86,6 @@ export function NasDrawer({
             <KV k="Zone" v={nas.zone} />
             <KV k="Criticality" v={<Badge tone={nas.criticality === "CRITICAL" ? "danger" : "neutral"}>{nas.criticality}</Badge>} />
             <KV k="Owner" v={nas.owner ?? "-"} />
-            <KV k="Source Ref" v={<span className="font-mono text-[9px]">{nas.sourceRef ?? "-"}</span>} />
           </div>
         </section>
 

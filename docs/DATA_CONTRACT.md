@@ -4,7 +4,7 @@ The application deliberately separates **declared state** from **observed state*
 
 ## MySQL: declared state
 
-MySQL stores VM assets, software inventory/EOSL, approved network-opening policies, service dependencies and SOP mapping. Source provenance is retained via `source_ref` and `import_batch`.
+MySQL stores VM assets, software inventory/EOSL, approved network-opening policies, service dependencies and SOP mapping. Bulk import history may be retained with `import_batch`; per-record Source Ref is intentionally not part of the domain model.
 
 ## InfluxDB: observed state
 

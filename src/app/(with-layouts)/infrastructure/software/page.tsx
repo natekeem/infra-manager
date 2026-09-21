@@ -1,6 +1,35 @@
 import { PageHeader } from "@/components/common/page-header";
-import { Badge } from "@/components/tailgrids/core/badge";
-import { getSoftware, getVmAssets } from "@/services/api/infrastructure";
-import { getEoslState } from "@/domain/eosl";
-export default async function Page(){const [software,vms]=await Promise.all([getSoftware(),getVmAssets()]);const vm=Object.fromEntries(vms.map(v=>[v.id,v]));const now=new Date("2026-09-21T00:28:00+09:00");return <><PageHeader title="Software & EOSL" description="Installed software inventory, versions and support-life risks by VM."/><div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)]"><div className="overflow-x-auto"><table className="w-full min-w-[920px] text-left text-[10px]"><thead><tr className="border-b border-[var(--border)] bg-[var(--surface-2)] text-[9px] uppercase tracking-[0.04em] text-[var(--muted)]"><Th>VM</Th><Th>Software</Th><Th>Version</Th><Th>Vendor</Th><Th>Category</Th><Th>EOSL</Th><Th>Source</Th></tr></thead><tbody>{software.map(sw=>{const e=getEoslState(sw.eoslDate,now);return <tr key={sw.id} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--surface-2)]"><Td><b>{vm[sw.vmId]?.hostname}</b><div className="font-mono text-[9px] text-[var(--muted)]">{vm[sw.vmId]?.ipAddress}</div></Td><Td><b>{sw.name}</b></Td><Td>{sw.version??'-'}</Td><Td>{sw.vendor??'-'}</Td><Td>{sw.category??'-'}</Td><Td><Badge tone={e.state==='EOSL'?'danger':e.state==='D90'||e.state==='D180'?'warning':'neutral'}>{e.state}</Badge><div className="mt-0.5 text-[9px] text-[var(--muted)]">{sw.eoslDate??'not mapped'}</div></Td><Td className="text-[9px] text-[var(--muted)]">{sw.sourceRef??'-'}</Td></tr>})}</tbody></table></div></div></>}
-const Th=({children}:{children:React.ReactNode})=><th className="px-3 py-2 font-medium">{children}</th>;const Td=({children,className}:{children:React.ReactNode;className?:string})=><td className={`px-3 py-2 align-middle ${className??''}`}>{children}</td>;
+import { SoftwareView } from "@/components/software/software-view";
+import {
+  getAssetSoftwareInstallations,
+  getSoftware,
+  getSoftwareProducts,
+  getSoftwareReleases,
+  getVmAssets,
+} from "@/services/api/infrastructure";
+
+export default async function SoftwarePage() {
+  const [software, vms, products, releases, installations] = await Promise.all([
+    getSoftware(),
+    getVmAssets(),
+    getSoftwareProducts(),
+    getSoftwareReleases(),
+    getAssetSoftwareInstallations(),
+  ]);
+
+  return (
+    <>
+      <PageHeader
+        title="Software & EOSL Lifecycle"
+        description="3-tier software product catalog, release matching rules, and asset installation lifecycle tracking."
+      />
+      <SoftwareView
+        software={software}
+        vms={vms}
+        products={products}
+        releases={releases}
+        installations={installations}
+      />
+    </>
+  );
+}

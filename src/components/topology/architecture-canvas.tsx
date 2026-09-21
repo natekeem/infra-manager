@@ -16,16 +16,29 @@ import {
   type Node,
   type NodeProps,
 } from "@xyflow/react";
-import type { NetworkStatus, SoftwareInstall, SopDocument, VmAsset } from "@/domain/models";
+import type {
+  ClusterEntity,
+  NasAsset,
+  NetworkStatus,
+  SoftwareInstall,
+  SoftwareProduct,
+  SoftwareRelease,
+  SopDocument,
+  VmAsset,
+} from "@/domain/models";
 import { VmDrawer } from "@/components/infrastructure/vm-drawer";
 import { ConnectionDrawer } from "@/components/network/connection-drawer";
+import { ClusterDrawer } from "@/components/cluster/cluster-drawer";
+import { NasDrawer } from "@/components/storage/nas-drawer";
+import { SoftwareDetailDrawer } from "@/components/software/software-detail-drawer";
 import { MaximizeIcon, SearchIcon } from "@/components/common/icons";
+import { Badge } from "@/components/tailgrids/core/badge";
 
 type ViewMode = "overview" | "service" | "vm";
 type OverlayMode = "policy" | "live";
 
 export type TopologyNodeData = {
-  kind: "group" | "vm" | "external";
+  kind: "group" | "vm" | "external" | "cluster" | "nas";
   key: string;
   label: string;
   sublabel?: string;
@@ -36,6 +49,8 @@ export type TopologyNodeData = {
   connectionsCount?: number;
   issueCount?: number;
   vm?: VmAsset;
+  cluster?: ClusterEntity;
+  nas?: NasAsset;
 };
 
 export type TopologyEdgeData = {
@@ -43,22 +58,24 @@ export type TopologyEdgeData = {
   secondary: string;
   issueCount: number;
   status?: NetworkStatus;
+  flowActive?: boolean;
   onSelect?: () => void;
 };
 
 const zoneOrder = ["WEB", "APP", "DB", "CONTROL", "BOT", "VDI", "SUPPORT", "EXTERNAL"];
 const zonePos: Record<string, { x: number; y: number }> = {
-  WEB: { x: 380, y: 70 },
-  APP: { x: 380, y: 260 },
-  DB: { x: 380, y: 460 },
-  CONTROL: { x: 60, y: 160 },
+  WEB: { x: 420, y: 60 },
+  APP: { x: 420, y: 260 },
+  DB: { x: 420, y: 470 },
+  CONTROL: { x: 60, y: 150 },
   BOT: { x: 60, y: 350 },
   VDI: { x: 60, y: 530 },
-  SUPPORT: { x: 700, y: 460 },
-  EXTERNAL: { x: 700, y: 200 },
+  SUPPORT: { x: 780, y: 470 },
+  EXTERNAL: { x: 780, y: 180 },
 };
 
 function statusColor(issueCount: number, status?: NetworkStatus) {
+  if (status?.overall === "RETURN_DIRECTION_FAILED") return "#d92d20";
   if (status?.overall.includes("UNREACHABLE") || status?.overall === "UNREACHABLE") return "#f04438";
   if (status?.overall === "EXPIRING" || status?.overall.includes("EXPIRED")) return "#f79009";
   return issueCount > 0 ? "#f79009" : "#98a2b3";
@@ -68,7 +85,7 @@ function GroupNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
   const isExternal = data.kind === "external";
   return (
     <div
-      className={`w-[194px] rounded-md border bg-[var(--surface)] p-2.5 shadow-sm transition ${
+      className={`w-[200px] rounded-md border bg-[var(--surface)] p-2.5 shadow-sm transition ${
         selected ? "border-[#5750f1] ring-1 ring-[#5750f1]/20" : "border-[var(--border-strong)]"
       }`}
     >
@@ -78,7 +95,7 @@ function GroupNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
       <Handle id="r" type="source" position={Position.Right} className="!h-1.5 !w-1.5 !border-0 !bg-[#98a2b3]" />
 
       <div className="flex items-center justify-between gap-1 border-b border-[var(--border)] pb-1.5">
-        <span className="truncate text-[11px] font-bold tracking-tight">{data.label}</span>
+        <span className="truncate text-[11px] font-bold tracking-tight text-[var(--foreground)]">{data.label}</span>
         {data.issueCount ? (
           <span className="rounded bg-[var(--danger-soft)] px-1.5 py-0.5 text-[8px] font-semibold text-[#b42318]">
             {data.issueCount} issue
@@ -123,7 +140,7 @@ function VmNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
   const vm = data.vm!;
   return (
     <div
-      className={`w-[164px] rounded-md border bg-[var(--surface)] px-2.5 py-2 shadow-sm transition ${
+      className={`w-[230px] h-[125px] rounded-md border bg-[var(--surface)] p-2.5 shadow-sm transition flex flex-col justify-between ${
         selected ? "border-[#5750f1] ring-1 ring-[#5750f1]/20" : "border-[var(--border)]"
       }`}
     >
@@ -132,22 +149,168 @@ function VmNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
       <Handle id="r" type="source" position={Position.Right} className="!h-1.5 !w-1.5 !border-0 !bg-[#98a2b3]" />
       <Handle id="l" type="target" position={Position.Left} className="!h-1.5 !w-1.5 !border-0 !bg-[#98a2b3]" />
 
+      {/* Row 1: Hostname + Health dot */}
       <div className="flex items-center justify-between gap-1">
-        <span className="truncate text-[10px] font-semibold">{vm.hostname}</span>
-        <span
-          className={`h-1.5 w-1.5 rounded-full ${
-            vm.health === "healthy" ? "bg-[#12b76a]" : vm.health === "critical" ? "bg-[#f04438]" : "bg-[#f79009]"
-          }`}
-        />
+        <span className="truncate text-[11px] font-semibold text-[var(--foreground)]" title={vm.hostname}>
+          {vm.hostname}
+        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="rounded bg-[var(--surface-2)] px-1 py-0.5 font-mono text-[8px] text-[var(--muted)]">
+            {vm.role}
+          </span>
+          <span
+            className={`h-2 w-2 rounded-full ${
+              vm.health === "healthy" ? "bg-[#12b76a]" : vm.health === "critical" ? "bg-[#f04438]" : "bg-[#f79009]"
+            }`}
+          />
+        </div>
       </div>
-      <div className="mt-0.5 flex items-center justify-between text-[8px] text-[var(--muted)]">
-        <span className="font-mono">{vm.ipAddress}</span>
-        <span className="rounded bg-[var(--surface-2)] px-1 py-0.2 font-mono text-[7px]">{vm.environment}</span>
+
+      {/* Row 2: IP + Env / Zone */}
+      <div className="flex items-center justify-between text-[9px] text-[var(--muted)]">
+        <span className="font-mono text-[var(--foreground)]">{vm.ipAddress}</span>
+        <div className="flex items-center gap-1 font-mono text-[8px]">
+          <span className="rounded border border-[var(--border)] px-1 py-0.2">{vm.environment}</span>
+          <span className="rounded bg-[var(--surface-2)] px-1 py-0.2">{vm.zone}</span>
+        </div>
       </div>
-      <div className="mt-2 grid grid-cols-3 gap-1 text-center text-[8px]">
+
+      {/* Row 3: Compact Metrics */}
+      <div className="grid grid-cols-3 gap-1 text-center text-[8px]">
         <Metric k="CPU" v={vm.cpuPct} />
         <Metric k="MEM" v={vm.memoryPct} />
         <Metric k="DISK" v={vm.diskPct} />
+      </div>
+
+      {/* Row 4: OS Summary */}
+      <div className="flex items-center justify-between border-t border-[var(--border)] pt-1 text-[8px] text-[var(--muted-2)]">
+        <span className="truncate">{vm.osName}</span>
+        <span className="font-mono text-[7.5px]">{vm.service}</span>
+      </div>
+    </div>
+  );
+}
+
+function ClusterNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
+  const cluster = data.cluster!;
+  return (
+    <div
+      className={`w-[230px] h-[135px] rounded-md border bg-[var(--surface)] p-2.5 shadow-sm transition flex flex-col justify-between border-purple-500/40 ${
+        selected ? "border-purple-600 ring-1 ring-purple-500/20" : ""
+      }`}
+    >
+      <Handle type="target" position={Position.Top} className="!h-1.5 !w-1.5 !border-0 !bg-purple-400" />
+      <Handle type="source" position={Position.Bottom} className="!h-1.5 !w-1.5 !border-0 !bg-purple-400" />
+      <Handle id="r" type="source" position={Position.Right} className="!h-1.5 !w-1.5 !border-0 !bg-purple-400" />
+      <Handle id="l" type="target" position={Position.Left} className="!h-1.5 !w-1.5 !border-0 !bg-purple-400" />
+
+      {/* Row 1: Cluster Name + Type Badge */}
+      <div className="flex items-center justify-between gap-1">
+        <div className="flex items-center gap-1.5">
+          <span className="rounded bg-purple-500/10 px-1.5 py-0.5 font-mono text-[8px] font-bold text-purple-600 dark:text-purple-400">
+            {cluster.type}
+          </span>
+          <span className="truncate text-[11px] font-bold text-[var(--foreground)]" title={cluster.name}>
+            {cluster.name}
+          </span>
+        </div>
+        <span className="h-2 w-2 rounded-full bg-[#12b76a]" />
+      </div>
+
+      {/* Row 2: Virtual IP */}
+      <div className="flex items-center justify-between text-[9px]">
+        <span className="text-[var(--muted)]">VIP:</span>
+        <span className="font-mono font-bold text-[#5750f1]">{cluster.vip}</span>
+        <span className="rounded bg-[var(--surface-2)] px-1 py-0.2 font-mono text-[8px] text-[var(--muted)]">
+          {cluster.zone}
+        </span>
+      </div>
+
+      {/* Row 3: Cluster Members */}
+      <div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-1 text-[8px]">
+        <div className="flex justify-between text-[var(--muted)] mb-0.5">
+          <span>Active / Passive Nodes:</span>
+          <span>{cluster.members.length} nodes</span>
+        </div>
+        <div className="flex gap-1">
+          {cluster.members.map((m) => (
+            <span
+              key={m.assetId}
+              className={`rounded px-1 py-0.5 font-mono font-medium ${
+                m.role === "ACTIVE"
+                  ? "bg-purple-600/15 text-purple-700 dark:text-purple-300"
+                  : "bg-[var(--surface-3)] text-[var(--muted)]"
+              }`}
+            >
+              {m.hostname} ({m.role.slice(0, 1)})
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Row 4: Clustered Service */}
+      <div className="flex items-center justify-between border-t border-[var(--border)] pt-1 text-[8px] text-[var(--muted-2)]">
+        <span>HA Database Cluster</span>
+        <span className="font-mono text-[7.5px]">Port 1433</span>
+      </div>
+    </div>
+  );
+}
+
+function NasNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
+  const nas = data.nas!;
+  const usedPct = nas.capacityTb > 0 ? Math.round((nas.usedCapacityTb / nas.capacityTb) * 100) : 0;
+
+  return (
+    <div
+      className={`w-[220px] h-[120px] rounded-md border bg-[var(--surface)] p-2.5 shadow-sm transition flex flex-col justify-between border-cyan-500/40 ${
+        selected ? "border-cyan-600 ring-1 ring-cyan-500/20" : ""
+      }`}
+    >
+      <Handle type="target" position={Position.Top} className="!h-1.5 !w-1.5 !border-0 !bg-cyan-400" />
+      <Handle type="source" position={Position.Bottom} className="!h-1.5 !w-1.5 !border-0 !bg-cyan-400" />
+      <Handle id="r" type="source" position={Position.Right} className="!h-1.5 !w-1.5 !border-0 !bg-cyan-400" />
+      <Handle id="l" type="target" position={Position.Left} className="!h-1.5 !w-1.5 !border-0 !bg-cyan-400" />
+
+      {/* Row 1: Hostname + Protocol */}
+      <div className="flex items-center justify-between gap-1">
+        <div className="flex items-center gap-1.5">
+          <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[8px] font-bold text-cyan-700 dark:text-cyan-300">
+            NAS
+          </span>
+          <span className="truncate text-[11px] font-semibold text-[var(--foreground)]" title={nas.hostname}>
+            {nas.hostname}
+          </span>
+        </div>
+        <span className="h-2 w-2 rounded-full bg-[#12b76a]" />
+      </div>
+
+      {/* Row 2: IP + Protocol */}
+      <div className="flex items-center justify-between text-[9px] text-[var(--muted)]">
+        <span className="font-mono text-[var(--foreground)]">{nas.ipAddress}</span>
+        <span className="rounded border border-[var(--border)] px-1 py-0.2 font-mono text-[8px]">{nas.protocol}</span>
+      </div>
+
+      {/* Row 3: Capacity Bar */}
+      <div className="space-y-1 text-[8px]">
+        <div className="flex justify-between text-[var(--muted)]">
+          <span>Capacity:</span>
+          <span className="font-mono">{nas.usedCapacityTb} / {nas.capacityTb} TB ({usedPct}%)</span>
+        </div>
+        <div className="h-1.5 w-full overflow-hidden rounded bg-[var(--surface-3)]">
+          <div
+            className={`h-full rounded transition-all ${
+              usedPct >= 90 ? "bg-[var(--danger)]" : usedPct >= 75 ? "bg-[var(--warning)]" : "bg-cyan-500"
+            }`}
+            style={{ width: `${Math.min(100, usedPct)}%` }}
+          />
+        </div>
+      </div>
+
+      {/* Row 4: Mount targets */}
+      <div className="flex items-center justify-between border-t border-[var(--border)] pt-1 text-[8px] text-[var(--muted-2)]">
+        <span>{nas.vendor} {nas.model ?? ""}</span>
+        <span>{nas.targetVms?.length ?? 0} VMs mounted</span>
       </div>
     </div>
   );
@@ -165,9 +328,22 @@ function Metric({ k, v }: { k: string; v?: number }) {
 }
 
 function FlowEdge(props: EdgeProps<Edge<TopologyEdgeData>>) {
-  const [path, x, y] = getSmoothStepPath(props);
+  const [path, x, y] = getSmoothStepPath({
+    sourceX: props.sourceX,
+    sourceY: props.sourceY,
+    sourcePosition: props.sourcePosition,
+    targetX: props.targetX,
+    targetY: props.targetY,
+    targetPosition: props.targetPosition,
+    borderRadius: 8,
+  });
   const data = props.data!;
   const color = statusColor(data.issueCount, data.status);
+  const isTcpUp = data.status?.observation?.tcp === "UP";
+  const isBidi = data.status?.isBidirectional;
+  const isReverseUp = isBidi && data.status?.observation?.reverseTcp === "UP";
+  const flowActive = data.flowActive ?? true;
+
   return (
     <>
       <BaseEdge
@@ -178,11 +354,24 @@ function FlowEdge(props: EdgeProps<Edge<TopologyEdgeData>>) {
           strokeDasharray: data.status?.observation?.tcp === "DOWN" ? "5 4" : undefined,
         }}
       />
+
+      {/* SVG Probe Flow Particle Animation */}
+      {flowActive && isTcpUp && (
+        <circle r="3" fill={color}>
+          <animateMotion dur="2.4s" repeatCount="indefinite" path={path} />
+        </circle>
+      )}
+      {flowActive && isReverseUp && (
+        <circle r="2.5" fill="#12b76a">
+          <animateMotion dur="2.4s" repeatCount="indefinite" path={path} keyPoints="1;0" keyTimes="0;1" calcMode="linear" />
+        </circle>
+      )}
+
       <EdgeLabelRenderer>
         <button
           onClick={() => data.onSelect?.()}
           style={{ transform: `translate(-50%,-50%) translate(${x}px,${y}px)` }}
-          className="nodrag nopan absolute rounded border border-[var(--border)] bg-[var(--surface)] px-1.5 py-1 text-left shadow-sm transition hover:border-[#5750f1]"
+          className="nodrag nopan absolute rounded border border-[var(--border)] bg-[var(--surface)] px-1.5 py-0.5 text-left shadow-sm transition hover:border-[#5750f1]"
         >
           <div className="whitespace-nowrap text-[8px] font-semibold">{data.label}</div>
           <div className="whitespace-nowrap text-[7px] text-[var(--muted)]">{data.secondary}</div>
@@ -192,7 +381,12 @@ function FlowEdge(props: EdgeProps<Edge<TopologyEdgeData>>) {
   );
 }
 
-const nodeTypes = { group: GroupNode, vm: VmNode };
+const nodeTypes = {
+  group: GroupNode,
+  vm: VmNode,
+  cluster: ClusterNode,
+  nas: NasNode,
+};
 const edgeTypes = { flow: FlowEdge };
 
 export function ArchitectureCanvas({
@@ -200,11 +394,19 @@ export function ArchitectureCanvas({
   statuses,
   software,
   sops,
+  clusters = [],
+  nasAssets = [],
+  softwareReleases = [],
+  softwareProducts = [],
 }: {
   vms: VmAsset[];
   statuses: NetworkStatus[];
   software: SoftwareInstall[];
   sops: SopDocument[];
+  clusters?: ClusterEntity[];
+  nasAssets?: NasAsset[];
+  softwareReleases?: SoftwareRelease[];
+  softwareProducts?: SoftwareProduct[];
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [mode, setMode] = useState<ViewMode>("overview");
@@ -212,11 +414,17 @@ export function ArchitectureCanvas({
   const [zone, setZone] = useState("ALL");
   const [overlay, setOverlay] = useState<OverlayMode>("live");
   const [issuesOnly, setIssuesOnly] = useState(false);
+  const [flowAnimation, setFlowAnimation] = useState(true);
   const [query, setQuery] = useState("");
+
+  // Drawers
   const [selectedVm, setSelectedVm] = useState<VmAsset | null>(null);
   const [selectedConnection, setSelectedConnection] = useState<NetworkStatus | null>(null);
+  const [selectedCluster, setSelectedCluster] = useState<ClusterEntity | null>(null);
+  const [selectedNas, setSelectedNas] = useState<NasAsset | null>(null);
+  const [selectedRelease, setSelectedRelease] = useState<SoftwareRelease | null>(null);
 
-  // Filter VMs by environment first
+  // Filter VMs by environment
   const envVms = useMemo(
     () => vms.filter((v) => envFilter === "ALL" || v.environment === envFilter),
     [vms, envFilter]
@@ -241,13 +449,25 @@ export function ArchitectureCanvas({
 
   const { nodes, edges } = useMemo(() => {
     if (mode === "overview") {
-      return buildOverview(envVms, envStatuses, issuesOnly, overlay, query);
+      return buildOverview(envVms, envStatuses, issuesOnly, overlay, query, flowAnimation, setSelectedConnection);
     }
     if (mode === "service") {
-      return buildServices(envVms, envStatuses, issuesOnly, overlay, query);
+      return buildServices(envVms, envStatuses, issuesOnly, overlay, query, flowAnimation, setSelectedConnection);
     }
-    return buildVms(envVms, envStatuses, zone, issuesOnly, issueVmIds, overlay, query, setSelectedConnection);
-  }, [mode, envVms, envStatuses, zone, issuesOnly, issueVmIds, overlay, query]);
+    return buildVms(
+      envVms,
+      envStatuses,
+      zone,
+      issuesOnly,
+      issueVmIds,
+      overlay,
+      query,
+      flowAnimation,
+      clusters,
+      nasAssets,
+      setSelectedConnection
+    );
+  }, [mode, envVms, envStatuses, zone, issuesOnly, issueVmIds, overlay, query, flowAnimation, clusters, nasAssets]);
 
   function handleSearch(val: string) {
     setQuery(val);
@@ -276,7 +496,7 @@ export function ArchitectureCanvas({
     <div ref={containerRef} className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)]">
       {/* Top Architecture Controls Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] p-2">
-        {/* Left side: View Mode, Environment, and Zone (if in VM mode) */}
+        {/* Left side: View Mode, Environment, and Zone */}
         <div className="flex items-center gap-2">
           {/* View: Overview / Service / VM */}
           <Segment value={mode} setValue={setMode} />
@@ -296,7 +516,7 @@ export function ArchitectureCanvas({
             </select>
           </div>
 
-          {/* Tier Zone Filter (only when in VM drill-down mode) */}
+          {/* Tier Zone Filter (VM drill-down mode) */}
           {mode === "vm" && (
             <div className="flex items-center gap-1 text-[9px] text-[var(--muted)]">
               <span>Tier:</span>
@@ -316,14 +536,14 @@ export function ArchitectureCanvas({
           )}
         </div>
 
-        {/* Right side: Overlay Toggle, Search (hostname / IP / port), Issues Only, Fullscreen */}
+        {/* Right side: Overlay Toggle, Flow Animation Toggle, Search, Issues Only, Fullscreen */}
         <div className="flex items-center gap-2">
           {/* Overlay: Policy / Live */}
           <div className="flex rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-0.5">
             <button
               onClick={() => setOverlay("policy")}
               className={`h-6 rounded px-2 text-[9px] font-medium transition ${
-                overlay === "policy" ? "bg-[var(--surface)] text-[var(--text)] shadow-sm" : "text-[var(--muted)]"
+                overlay === "policy" ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]"
               }`}
             >
               Policy
@@ -331,15 +551,29 @@ export function ArchitectureCanvas({
             <button
               onClick={() => setOverlay("live")}
               className={`h-6 rounded px-2 text-[9px] font-medium transition ${
-                overlay === "live" ? "bg-[var(--surface)] text-[var(--text)] shadow-sm" : "text-[var(--muted)]"
+                overlay === "live" ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]"
               }`}
             >
               Live
             </button>
           </div>
 
+          {/* Flow Animation Toggle */}
+          <button
+            onClick={() => setFlowAnimation((prev) => !prev)}
+            title="Toggle Probe Flow Particle Animation"
+            className={`flex h-7 items-center gap-1 rounded-md border px-2 text-[9px] font-medium transition ${
+              flowAnimation
+                ? "border-[#5750f1] bg-[#5750f1]/10 text-[#5750f1]"
+                : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]"
+            }`}
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${flowAnimation ? "bg-[#5750f1] animate-pulse" : "bg-[var(--muted)]"}`} />
+            <span>Flow</span>
+          </button>
+
           {/* Search: hostname / IP / port */}
-          <div className="flex h-7 w-[220px] items-center gap-1.5 rounded-md border border-[var(--border)] px-2">
+          <div className="flex h-7 w-[200px] items-center gap-1.5 rounded-md border border-[var(--border)] px-2">
             <SearchIcon className="h-3.5 w-3.5 shrink-0 text-[var(--muted)]" />
             <input
               value={query}
@@ -364,7 +598,7 @@ export function ArchitectureCanvas({
           <button
             onClick={toggleFullscreen}
             title="Toggle fullscreen"
-            className="flex h-7 items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[9px] text-[var(--muted)] transition hover:text-[var(--text)]"
+            className="flex h-7 items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[9px] text-[var(--muted)] transition hover:text-[var(--foreground)]"
           >
             <MaximizeIcon className="h-3.5 w-3.5" />
             <span>Fullscreen</span>
@@ -372,7 +606,7 @@ export function ArchitectureCanvas({
         </div>
       </div>
 
-      {/* React Flow Canvas (Maximized) */}
+      {/* React Flow Canvas */}
       <div className="relative h-[calc(100vh-170px)] min-h-[640px]">
         <ReactFlow
           nodes={nodes}
@@ -386,6 +620,8 @@ export function ArchitectureCanvas({
           onNodeClick={(_, node) => {
             const d = node.data as TopologyNodeData;
             if (d.vm) setSelectedVm(d.vm);
+            else if (d.cluster) setSelectedCluster(d.cluster);
+            else if (d.nas) setSelectedNas(d.nas);
           }}
           onNodeDoubleClick={(_, node) => {
             const d = node.data as TopologyNodeData;
@@ -403,7 +639,7 @@ export function ArchitectureCanvas({
           }}
           onEdgeClick={(_, edge) => {
             const d = edge.data as TopologyEdgeData;
-            if (d.status) setSelectedConnection(d.status);
+            if (d?.status) setSelectedConnection(d.status);
           }}
         >
           <Background gap={24} size={1} color="var(--border)" />
@@ -414,16 +650,16 @@ export function ArchitectureCanvas({
         {/* Informative Legend Overlay */}
         <div className="pointer-events-none absolute bottom-3 left-3 rounded-md border border-[var(--border)] bg-[var(--surface)]/95 px-2.5 py-2 text-[8px] text-[var(--muted)] shadow-sm">
           <div>
-            <b className="text-[var(--text)]">Policy (Should Be)</b>: 승인/만료 ·{" "}
-            <b className="text-[var(--text)]">Actual</b>: Source→Target Telegraf TCP probe
+            <b className="text-[var(--foreground)]">Policy (Should Be)</b>: 승인/만료 ·{" "}
+            <b className="text-[var(--foreground)]">Actual</b>: Source→Target Telegraf TCP probe (양방향 지원)
           </div>
           <div className="mt-0.5">
-            그룹 더블클릭 → 해당 티어 VM 드릴다운 · VM/연결 클릭 → 왼쪽 Drawer 상세
+            더블클릭 → 티어 드릴다운 · 노드/연결 클릭 → 우측 슬라이드 서랍 상세
           </div>
         </div>
       </div>
 
-      {/* Slide Drawers (440px from left) */}
+      {/* Slide Drawers (All slide from Right, width 460px) */}
       <VmDrawer
         vm={selectedVm}
         network={statuses}
@@ -431,11 +667,37 @@ export function ArchitectureCanvas({
         sops={sops}
         open={!!selectedVm}
         onClose={() => setSelectedVm(null)}
+        onSelectSoftware={(sw) => {
+          const matched = softwareReleases.find((r) => r.productName === sw.name);
+          if (matched) setSelectedRelease(matched);
+        }}
       />
       <ConnectionDrawer
         status={selectedConnection}
         open={!!selectedConnection}
         onClose={() => setSelectedConnection(null)}
+      />
+      <ClusterDrawer
+        cluster={selectedCluster}
+        open={!!selectedCluster}
+        onClose={() => setSelectedCluster(null)}
+      />
+      <NasDrawer
+        nas={selectedNas}
+        open={!!selectedNas}
+        onClose={() => setSelectedNas(null)}
+        onSelectVm={(hostname) => {
+          const hit = vms.find((v) => v.hostname === hostname);
+          if (hit) {
+            setSelectedNas(null);
+            setSelectedVm(hit);
+          }
+        }}
+      />
+      <SoftwareDetailDrawer
+        release={selectedRelease}
+        open={!!selectedRelease}
+        onClose={() => setSelectedRelease(null)}
       />
     </div>
   );
@@ -449,7 +711,7 @@ function Segment({ value, setValue }: { value: ViewMode; setValue: (v: ViewMode)
           key={v}
           onClick={() => setValue(v)}
           className={`h-6 rounded px-2.5 text-[9px] font-medium transition ${
-            value === v ? "bg-[var(--surface)] text-[var(--text)] shadow-sm" : "text-[var(--muted)]"
+            value === v ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]"
           }`}
         >
           {v === "overview" ? "Overview" : v === "service" ? "Service" : "VM"}
@@ -464,7 +726,9 @@ function buildOverview(
   statuses: NetworkStatus[],
   issuesOnly: boolean,
   overlay: OverlayMode,
-  query: string
+  query: string,
+  flowActive: boolean,
+  onSelectConnection: (status: NetworkStatus) => void
 ) {
   const q = query.trim().toLowerCase();
   const issueIds = new Set(
@@ -577,6 +841,8 @@ function buildOverview(
         secondary,
         issueCount: a.issues,
         status: a.sample,
+        flowActive,
+        onSelect: () => a.sample && onSelectConnection(a.sample),
       },
     };
   });
@@ -589,7 +855,9 @@ function buildServices(
   statuses: NetworkStatus[],
   issuesOnly: boolean,
   overlay: OverlayMode,
-  query: string
+  query: string,
+  flowActive: boolean,
+  onSelectConnection: (status: NetworkStatus) => void
 ) {
   const q = query.trim().toLowerCase();
   const services = Array.from(new Set(vms.map((v) => v.service)));
@@ -637,7 +905,7 @@ function buildServices(
     nodes.push({
       id: `ext-${name}`,
       type: "group",
-      position: { x: 920, y: 90 + i * 150 },
+      position: { x: 940, y: 90 + i * 150 },
       data: {
         kind: "external" as const,
         key: name,
@@ -674,6 +942,8 @@ function buildServices(
       secondary: a.issues ? `${a.issues} Issues` : overlay === "policy" ? "Approved" : "Reachable",
       issueCount: a.issues,
       status: a.sample,
+      flowActive,
+      onSelect: () => a.sample && onSelectConnection(a.sample),
     },
   }));
 
@@ -688,6 +958,9 @@ function buildVms(
   issueVmIds: Set<string>,
   overlay: OverlayMode,
   query: string,
+  flowActive: boolean,
+  clusters: ClusterEntity[],
+  nasAssets: NasAsset[],
   onSelectConnection: (status: NetworkStatus) => void
 ) {
   const q = query.trim().toLowerCase();
@@ -699,13 +972,57 @@ function buildVms(
   );
   const visibleIds = new Set(visible.map((v) => v.id));
 
+  // Node spacing matching card dimensions (w: 230, h: 125) with safe clearance
+  const COLS = 4;
+  const X_GAP = 270;
+  const Y_GAP = 160;
+
   const nodes: Node<TopologyNodeData>[] = visible.map((vm, i) => ({
     id: vm.id,
     type: "vm",
-    position: { x: (i % 5) * 210 + 60, y: Math.floor(i / 5) * 145 + 70 },
+    position: { x: (i % COLS) * X_GAP + 60, y: Math.floor(i / COLS) * Y_GAP + 70 },
     data: { kind: "vm" as const, key: vm.id, label: vm.hostname, vm },
   }));
 
+  // Append Cluster Nodes if relevant
+  const relevantClusters = clusters.filter(
+    (c) => (zone === "ALL" || c.zone === zone) && (!issuesOnly || c.status !== "HEALTHY")
+  );
+  relevantClusters.forEach((c, idx) => {
+    const rowOffset = Math.ceil(visible.length / COLS);
+    nodes.push({
+      id: `cluster-${c.id}`,
+      type: "cluster",
+      position: { x: (idx % COLS) * X_GAP + 60, y: (rowOffset + Math.floor(idx / COLS)) * Y_GAP + 70 },
+      data: {
+        kind: "cluster" as const,
+        key: c.id,
+        label: c.name,
+        cluster: c,
+      },
+    });
+  });
+
+  // Append NAS Assets if relevant
+  const relevantNas = nasAssets.filter(
+    (n) => (zone === "ALL" || n.zone === zone) && (!issuesOnly || n.status !== "ONLINE")
+  );
+  relevantNas.forEach((nas, idx) => {
+    const rowOffset = Math.ceil(visible.length / COLS) + Math.ceil(relevantClusters.length / COLS);
+    nodes.push({
+      id: `nas-${nas.id}`,
+      type: "nas",
+      position: { x: (idx % COLS) * X_GAP + 60, y: (rowOffset + Math.floor(idx / COLS)) * Y_GAP + 70 },
+      data: {
+        kind: "nas" as const,
+        key: nas.id,
+        label: nas.hostname,
+        nas,
+      },
+    });
+  });
+
+  // External Targets
   const extMap = new Map<string, number>();
   for (const s of statuses) {
     if (visibleIds.has(s.policy.sourceVmId) && !s.policy.targetVmId && (!issuesOnly || s.overall !== "NORMAL")) {
@@ -718,7 +1035,7 @@ function buildVms(
     nodes.push({
       id: `ext-${name}`,
       type: "group",
-      position: { x: 1120, y: 70 + ei++ * 140 },
+      position: { x: COLS * X_GAP + 80, y: 70 + ei++ * 150 },
       data: {
         kind: "external" as const,
         key: name,
@@ -738,7 +1055,8 @@ function buildVms(
         (!q || `${s.policy.port} ${s.policy.protocol} ${s.policy.requestId ?? ""}`.toLowerCase().includes(q))
     )
     .map((s) => {
-      const label = `${s.policy.protocol}/${s.policy.port}`;
+      const isBidi = s.isBidirectional || s.policy.direction === "BIDIRECTIONAL";
+      const label = `${s.policy.protocol}/${s.policy.port}${isBidi ? " (⇄)" : ""}`;
       const secondary =
         overlay === "policy"
           ? `${s.policy.approvalStatus}${
@@ -746,9 +1064,11 @@ function buildVms(
                 ? ` · ${s.daysToExpiry >= 0 ? `D-${s.daysToExpiry}` : `D+${Math.abs(s.daysToExpiry)}`}`
                 : ""
             }`
-          : `TCP ${s.observation?.tcp ?? "NO DATA"}${
-              s.observation?.tcpLatencyMs != null ? ` (${s.observation.tcpLatencyMs}ms)` : ""
-            }`;
+          : s.overall === "RETURN_DIRECTION_FAILED"
+            ? "RETURN FAILED"
+            : `TCP ${s.observation?.tcp ?? "NO DATA"}${
+                s.observation?.tcpLatencyMs != null ? ` (${s.observation.tcpLatencyMs}ms)` : ""
+              }`;
 
       return {
         id: s.policy.id,
@@ -760,6 +1080,7 @@ function buildVms(
           secondary,
           issueCount: s.overall === "NORMAL" ? 0 : 1,
           status: s,
+          flowActive,
           onSelect: () => onSelectConnection(s),
         },
       };

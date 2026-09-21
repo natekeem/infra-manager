@@ -1,5 +1,6 @@
 export type VmHealth = "healthy" | "warning" | "critical" | "unknown";
 export type PolicyApprovalStatus = "APPROVED" | "PENDING" | "REJECTED" | "UNKNOWN";
+export type PolicyDirection = "ONE_WAY" | "BIDIRECTIONAL";
 export type ProbeState = "UP" | "DOWN" | "NO_DATA";
 export type NetworkOverallState =
   | "NORMAL"
@@ -8,11 +9,16 @@ export type NetworkOverallState =
   | "POLICY_EXPIRED_AND_UNREACHABLE"
   | "POLICY_VALID_BUT_UNREACHABLE"
   | "POLICY_NOT_APPROVED_BUT_REACHABLE"
+  | "RETURN_DIRECTION_FAILED"
   | "UNREACHABLE"
   | "UNKNOWN";
 
-export interface VmAsset {
+export type AssetType = "VM" | "PHYSICAL_SERVER" | "NAS" | "NETWORK_APPLIANCE" | "OTHER";
+export type LogicalEntityType = "CLUSTER" | "SERVICE" | "EXTERNAL_ENDPOINT";
+
+export interface InfraAsset {
   id: string;
+  assetType?: AssetType;
   hostname: string;
   ipAddress: string;
   environment: string;
@@ -20,6 +26,14 @@ export interface VmAsset {
   service: string;
   zone: string;
   criticality: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+  health: VmHealth;
+  owner?: string;
+  sourceRef?: string | null;
+  lastVerifiedAt?: string | null;
+}
+
+export interface VmAsset extends InfraAsset {
+  assetType?: "VM";
   osName: string;
   osVersion?: string;
   cpuCores?: number;
@@ -28,14 +42,105 @@ export interface VmAsset {
   cpuPct?: number;
   memoryPct?: number;
   diskPct?: number;
-  health: VmHealth;
-  owner?: string;
   eoslDate?: string | null;
   grafanaPath?: string | null;
-  sourceRef?: string | null;
-  lastVerifiedAt?: string | null;
 }
 
+export interface NasAsset extends InfraAsset {
+  assetType: "NAS";
+  vendor: string;
+  model?: string;
+  capacityTb: number;
+  usedCapacityTb: number;
+  protocol: "NFS" | "SMB" | "iSCSI" | "MULTI";
+  mountPath?: string;
+  status: "ONLINE" | "DEGRADED" | "OFFLINE";
+  targetVms?: string[];
+}
+
+export interface PhysicalServerAsset extends InfraAsset {
+  assetType: "PHYSICAL_SERVER";
+  hardwareModel?: string;
+  rackLocation?: string;
+  serialNumber?: string;
+  cpuCores?: number;
+  memoryGb?: number;
+  diskGb?: number;
+}
+
+export interface ClusterMember {
+  clusterId: string;
+  assetId: string;
+  hostname: string;
+  ipAddress: string;
+  role: "ACTIVE" | "PASSIVE" | "WITNESS" | "WORKER";
+  priority: number;
+  status: "ONLINE" | "STANDBY" | "OFFLINE";
+}
+
+export interface ClusterServiceInstance {
+  clusterId: string;
+  serviceType: string;
+  instanceName: string;
+  port: number;
+  version?: string;
+}
+
+export interface ClusterEntity {
+  id: string;
+  name: string;
+  type: "MSCS" | "KUBERNETES" | "ORACLE_RAC" | "OTHER";
+  vip: string;
+  environment: string;
+  zone: string;
+  status: "HEALTHY" | "DEGRADED" | "CRITICAL";
+  members: ClusterMember[];
+  services: ClusterServiceInstance[];
+  owner?: string;
+  sourceRef?: string | null;
+}
+
+// 3-Tier Software Lifecycle Model
+export interface SoftwareProduct {
+  id: string;
+  name: string;
+  vendor: string;
+  category: string;
+  description?: string;
+}
+
+export interface SoftwareRelease {
+  id: string;
+  productId: string;
+  productName: string;
+  version: string;
+  vendor: string;
+  releaseDate?: string;
+  supportEndDate?: string;
+  eoslDate: string | null;
+  status: "SUPPORTED" | "D180" | "D90" | "D30" | "EOSL";
+  versionMatchRule: "exact" | "prefix" | "regex" | "range";
+  matchPattern?: string;
+}
+
+export interface AssetSoftwareInstallation {
+  id: string;
+  assetId: string;
+  productId: string;
+  productName: string;
+  detectedVersion: string;
+  matchedReleaseId?: string | null;
+  matchedReleaseVersion?: string | null;
+  eoslDate?: string | null;
+  lifecycleStatus: "SUPPORTED" | "D180" | "D90" | "D30" | "EOSL" | "UNMAPPED";
+  vendor?: string;
+  category?: string;
+  installedAt?: string;
+  lastVerifiedAt?: string;
+  sourceRef?: string | null;
+}
+
+// Legacy SoftwareInstall (kept for backward compatibility)
 export interface SoftwareInstall {
   id: string;
   vmId: string;
@@ -57,6 +162,7 @@ export interface NetworkPolicy {
   targetIp: string;
   protocol: "TCP" | "UDP";
   port: number;
+  direction?: PolicyDirection;
   approvalStatus: PolicyApprovalStatus;
   requestedAt?: string | null;
   approvedAt?: string | null;
@@ -78,6 +184,12 @@ export interface ConnectivityObservation {
   pingLatencyMs?: number | null;
   tcpLatencyMs?: number | null;
   checkedAt: string;
+  // Reverse probe for BIDIRECTIONAL policies
+  reversePing?: ProbeState;
+  reverseTcp?: ProbeState;
+  reversePingLatencyMs?: number | null;
+  reverseTcpLatencyMs?: number | null;
+  reverseCheckedAt?: string;
 }
 
 export interface NetworkStatus {
@@ -86,6 +198,9 @@ export interface NetworkStatus {
   overall: NetworkOverallState;
   daysToExpiry?: number | null;
   diagnostic: string;
+  isBidirectional?: boolean;
+  reverseOverall?: NetworkOverallState;
+  reverseDiagnostic?: string;
 }
 
 export interface SopDocument {
@@ -96,6 +211,8 @@ export interface SopDocument {
   url?: string | null;
   relatedVmIds: string[];
   updatedAt: string;
+  summary?: string;
+  severity?: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
 }
 
 export interface ResourcePoint {

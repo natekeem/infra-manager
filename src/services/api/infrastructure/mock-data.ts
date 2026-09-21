@@ -1,4 +1,16 @@
-import type { ConnectivityObservation, NetworkPolicy, ResourcePoint, SoftwareInstall, SopDocument, VmAsset } from "@/domain/models";
+import type {
+  AssetSoftwareInstallation,
+  ClusterEntity,
+  ConnectivityObservation,
+  NasAsset,
+  NetworkPolicy,
+  ResourcePoint,
+  SoftwareInstall,
+  SoftwareProduct,
+  SoftwareRelease,
+  SopDocument,
+  VmAsset,
+} from "@/domain/models";
 
 export const vms: VmAsset[] = [
   {
@@ -1657,6 +1669,7 @@ export const policies: NetworkPolicy[] = [
     "targetIp": "10.10.30.11",
     "protocol": "TCP",
     "port": 1433,
+    "direction": "BIDIRECTIONAL",
     "approvalStatus": "APPROVED",
     "requestedAt": "2026-01-10",
     "approvedAt": "2026-01-12",
@@ -1777,6 +1790,7 @@ export const policies: NetworkPolicy[] = [
     "targetIp": "10.20.40.10",
     "protocol": "TCP",
     "port": 636,
+    "direction": "BIDIRECTIONAL",
     "approvalStatus": "APPROVED",
     "requestedAt": "2026-01-10",
     "approvedAt": "2026-01-12",
@@ -2185,6 +2199,10 @@ export const observations: ConnectivityObservation[] = [
     "tcp": "UP",
     "pingLatencyMs": 0.7,
     "tcpLatencyMs": 5.6,
+    "reversePing": "UP",
+    "reverseTcp": "UP",
+    "reversePingLatencyMs": 0.9,
+    "reverseTcpLatencyMs": 3.1,
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
@@ -2248,9 +2266,13 @@ export const observations: ConnectivityObservation[] = [
     "targetIp": "10.20.40.10",
     "port": 636,
     "ping": "UP",
-    "tcp": "DOWN",
-    "pingLatencyMs": 3.1,
-    "tcpLatencyMs": null,
+    "tcp": "UP",
+    "pingLatencyMs": 1.2,
+    "tcpLatencyMs": 4.5,
+    "reversePing": "UP",
+    "reverseTcp": "DOWN",
+    "reversePingLatencyMs": 1.4,
+    "reverseTcpLatencyMs": null,
     "checkedAt": "2026-09-21T00:27:00+09:00"
   },
   {
@@ -2658,4 +2680,377 @@ export const resourceTrend: ResourcePoint[] = [
     "disk": 62
   }
 ];
+
+export const nasAssets: NasAsset[] = [
+  {
+    "id": "nas01",
+    "assetType": "NAS",
+    "hostname": "RPA-NAS01",
+    "ipAddress": "10.10.80.11",
+    "environment": "PROD",
+    "role": "Shared Storage",
+    "service": "RPA File Store",
+    "zone": "SUPPORT",
+    "criticality": "HIGH",
+    "health": "healthy",
+    "vendor": "NetApp",
+    "model": "AFF A250",
+    "capacityTb": 48,
+    "usedCapacityTb": 29.4,
+    "protocol": "MULTI",
+    "mountPath": "/mnt/rpa-share",
+    "status": "ONLINE",
+    "owner": "Storage Team",
+    "targetVms": ["app01", "app02", "bot01", "bot02", "ctrl01"]
+  },
+  {
+    "id": "nas02",
+    "assetType": "NAS",
+    "hostname": "RPA-NAS02",
+    "ipAddress": "10.10.80.12",
+    "environment": "STG",
+    "role": "Backup Storage",
+    "service": "RPA Backup Store",
+    "zone": "SUPPORT",
+    "criticality": "MEDIUM",
+    "health": "healthy",
+    "vendor": "Synology",
+    "model": "FS3600",
+    "capacityTb": 24,
+    "usedCapacityTb": 14.8,
+    "protocol": "NFS",
+    "mountPath": "/mnt/rpa-backup",
+    "status": "ONLINE",
+    "owner": "Storage Team",
+    "targetVms": ["app06", "bot07"]
+  }
+];
+
+export const clusters: ClusterEntity[] = [
+  {
+    "id": "cluster-sql01",
+    "name": "MSSQL-PRD",
+    "type": "MSCS",
+    "vip": "10.10.30.100",
+    "environment": "PROD",
+    "zone": "DB",
+    "status": "HEALTHY",
+    "owner": "DB Team",
+    "members": [
+      {
+        "clusterId": "cluster-sql01",
+        "assetId": "db01",
+        "hostname": "RPA-DB01",
+        "ipAddress": "10.10.30.11",
+        "role": "ACTIVE",
+        "priority": 1,
+        "status": "ONLINE"
+      },
+      {
+        "clusterId": "cluster-sql01",
+        "assetId": "db02",
+        "hostname": "RPA-DB02",
+        "ipAddress": "10.10.30.12",
+        "role": "PASSIVE",
+        "priority": 2,
+        "status": "STANDBY"
+      }
+    ],
+    "services": [
+      {
+        "clusterId": "cluster-sql01",
+        "serviceType": "MSSQL",
+        "instanceName": "MSSQLSERVER",
+        "port": 1433,
+        "version": "2019 CU22"
+      }
+    ]
+  }
+];
+
+export const softwareProducts: SoftwareProduct[] = [
+  {
+    "id": "prod-sql",
+    "name": "Microsoft SQL Server",
+    "vendor": "Microsoft",
+    "category": "Database",
+    "description": "Enterprise Relational Database Management System"
+  },
+  {
+    "id": "prod-java",
+    "name": "Java OpenJDK / JRE",
+    "vendor": "Eclipse Adoptium",
+    "category": "Runtime",
+    "description": "Java SE Platform Runtime Environment"
+  },
+  {
+    "id": "prod-win",
+    "name": "Windows Server",
+    "vendor": "Microsoft",
+    "category": "Operating System",
+    "description": "Enterprise Server Operating System"
+  },
+  {
+    "id": "prod-aa",
+    "name": "Automation Anywhere",
+    "vendor": "Automation Anywhere",
+    "category": "RPA Platform",
+    "description": "Enterprise RPA Bot Agent & Control Room"
+  },
+  {
+    "id": "prod-telegraf",
+    "name": "Telegraf Agent",
+    "vendor": "InfluxData",
+    "category": "Monitoring",
+    "description": "Server-side metrics collector & probe agent"
+  },
+  {
+    "id": "prod-cs",
+    "name": "CrowdStrike Falcon Sensor",
+    "vendor": "CrowdStrike",
+    "category": "Security",
+    "description": "Endpoint Protection & EDR sensor"
+  }
+];
+
+export const softwareReleases: SoftwareRelease[] = [
+  {
+    "id": "rel-java8",
+    "productId": "prod-java",
+    "productName": "Java OpenJDK / JRE",
+    "version": "8.0",
+    "vendor": "Oracle",
+    "releaseDate": "2014-03-18",
+    "supportEndDate": "2023-03-31",
+    "eoslDate": "2023-03-31",
+    "status": "EOSL",
+    "versionMatchRule": "prefix",
+    "matchPattern": "8"
+  },
+  {
+    "id": "rel-java17",
+    "productId": "prod-java",
+    "productName": "Java OpenJDK / JRE",
+    "version": "17.0",
+    "vendor": "Eclipse Adoptium",
+    "releaseDate": "2021-09-14",
+    "supportEndDate": "2029-10-31",
+    "eoslDate": "2029-10-31",
+    "status": "SUPPORTED",
+    "versionMatchRule": "prefix",
+    "matchPattern": "17"
+  },
+  {
+    "id": "rel-win2012r2",
+    "productId": "prod-win",
+    "productName": "Windows Server",
+    "version": "2012 R2",
+    "vendor": "Microsoft",
+    "releaseDate": "2013-10-18",
+    "supportEndDate": "2023-10-10",
+    "eoslDate": "2023-10-10",
+    "status": "EOSL",
+    "versionMatchRule": "exact",
+    "matchPattern": "2012 R2"
+  },
+  {
+    "id": "rel-win2016",
+    "productId": "prod-win",
+    "productName": "Windows Server",
+    "version": "2016",
+    "vendor": "Microsoft",
+    "releaseDate": "2016-10-12",
+    "supportEndDate": "2026-11-15",
+    "eoslDate": "2026-11-15",
+    "status": "D90",
+    "versionMatchRule": "exact",
+    "matchPattern": "2016"
+  },
+  {
+    "id": "rel-win2019",
+    "productId": "prod-win",
+    "productName": "Windows Server",
+    "version": "2019",
+    "vendor": "Microsoft",
+    "releaseDate": "2018-10-02",
+    "supportEndDate": "2029-01-09",
+    "eoslDate": "2029-01-09",
+    "status": "SUPPORTED",
+    "versionMatchRule": "exact",
+    "matchPattern": "2019"
+  },
+  {
+    "id": "rel-win2022",
+    "productId": "prod-win",
+    "productName": "Windows Server",
+    "version": "2022",
+    "vendor": "Microsoft",
+    "releaseDate": "2021-08-18",
+    "supportEndDate": "2031-10-14",
+    "eoslDate": "2031-10-14",
+    "status": "SUPPORTED",
+    "versionMatchRule": "exact",
+    "matchPattern": "2022"
+  },
+  {
+    "id": "rel-aa21",
+    "productId": "prod-aa",
+    "productName": "Automation Anywhere",
+    "version": "A360 v21",
+    "vendor": "Automation Anywhere",
+    "releaseDate": "2021-06-01",
+    "supportEndDate": "2027-01-20",
+    "eoslDate": "2027-01-20",
+    "status": "D180",
+    "versionMatchRule": "prefix",
+    "matchPattern": "A360 v21"
+  },
+  {
+    "id": "rel-aa26",
+    "productId": "prod-aa",
+    "productName": "Automation Anywhere",
+    "version": "A360 v26",
+    "vendor": "Automation Anywhere",
+    "releaseDate": "2023-08-01",
+    "supportEndDate": "2029-06-30",
+    "eoslDate": "2029-06-30",
+    "status": "SUPPORTED",
+    "versionMatchRule": "prefix",
+    "matchPattern": "A360"
+  },
+  {
+    "id": "rel-telegraf1",
+    "productId": "prod-telegraf",
+    "productName": "Telegraf Agent",
+    "version": "1.36",
+    "vendor": "InfluxData",
+    "releaseDate": "2024-02-15",
+    "supportEndDate": "2028-12-31",
+    "eoslDate": "2028-12-31",
+    "status": "SUPPORTED",
+    "versionMatchRule": "prefix",
+    "matchPattern": "1.36"
+  }
+];
+
+export const assetSoftwareInstallations: AssetSoftwareInstallation[] = [
+  {
+    "id": "inst01",
+    "assetId": "app01",
+    "productId": "prod-win",
+    "productName": "Windows Server",
+    "detectedVersion": "2019",
+    "matchedReleaseId": "rel-win2019",
+    "matchedReleaseVersion": "2019",
+    "eoslDate": "2029-01-09",
+    "lifecycleStatus": "SUPPORTED",
+    "vendor": "Microsoft",
+    "category": "Operating System"
+  },
+  {
+    "id": "inst02",
+    "assetId": "app01",
+    "productId": "prod-aa",
+    "productName": "Automation Anywhere",
+    "detectedVersion": "A360 v26",
+    "matchedReleaseId": "rel-aa26",
+    "matchedReleaseVersion": "A360 v26",
+    "eoslDate": "2029-06-30",
+    "lifecycleStatus": "SUPPORTED",
+    "vendor": "Automation Anywhere",
+    "category": "RPA"
+  },
+  {
+    "id": "inst03",
+    "assetId": "app01",
+    "productId": "prod-java",
+    "productName": "Java OpenJDK / JRE",
+    "detectedVersion": "17.0.8",
+    "matchedReleaseId": "rel-java17",
+    "matchedReleaseVersion": "17.0",
+    "eoslDate": "2029-10-31",
+    "lifecycleStatus": "SUPPORTED",
+    "vendor": "Eclipse Adoptium",
+    "category": "Runtime"
+  },
+  {
+    "id": "inst04",
+    "assetId": "app01",
+    "productId": "prod-telegraf",
+    "productName": "Telegraf Agent",
+    "detectedVersion": "1.36",
+    "matchedReleaseId": "rel-telegraf1",
+    "matchedReleaseVersion": "1.36",
+    "eoslDate": "2028-12-31",
+    "lifecycleStatus": "SUPPORTED",
+    "vendor": "InfluxData",
+    "category": "Monitoring"
+  },
+  {
+    "id": "inst05",
+    "assetId": "app01",
+    "productId": "prod-cs",
+    "productName": "CrowdStrike Falcon Sensor",
+    "detectedVersion": "7.15",
+    "matchedReleaseId": null,
+    "matchedReleaseVersion": null,
+    "eoslDate": null,
+    "lifecycleStatus": "UNMAPPED",
+    "vendor": "CrowdStrike",
+    "category": "Security"
+  },
+  {
+    "id": "inst06",
+    "assetId": "db03",
+    "productId": "prod-win",
+    "productName": "Windows Server",
+    "detectedVersion": "2016",
+    "matchedReleaseId": "rel-win2016",
+    "matchedReleaseVersion": "2016",
+    "eoslDate": "2026-11-15",
+    "lifecycleStatus": "D90",
+    "vendor": "Microsoft",
+    "category": "Operating System"
+  },
+  {
+    "id": "inst07",
+    "assetId": "bot08",
+    "productId": "prod-win",
+    "productName": "Windows Server",
+    "detectedVersion": "2012 R2",
+    "matchedReleaseId": "rel-win2012r2",
+    "matchedReleaseVersion": "2012 R2",
+    "eoslDate": "2023-10-10",
+    "lifecycleStatus": "EOSL",
+    "vendor": "Microsoft",
+    "category": "Operating System"
+  },
+  {
+    "id": "inst08",
+    "assetId": "bot08",
+    "productId": "prod-java",
+    "productName": "Java OpenJDK / JRE",
+    "detectedVersion": "8.0.202",
+    "matchedReleaseId": "rel-java8",
+    "matchedReleaseVersion": "8.0",
+    "eoslDate": "2023-03-31",
+    "lifecycleStatus": "EOSL",
+    "vendor": "Oracle",
+    "category": "Runtime"
+  },
+  {
+    "id": "inst09",
+    "assetId": "vdi04",
+    "productId": "prod-aa",
+    "productName": "Automation Anywhere",
+    "detectedVersion": "A360 v21",
+    "matchedReleaseId": "rel-aa21",
+    "matchedReleaseVersion": "A360 v21",
+    "eoslDate": "2027-01-20",
+    "lifecycleStatus": "D180",
+    "vendor": "Automation Anywhere",
+    "category": "RPA"
+  }
+];
+
 

@@ -9,6 +9,7 @@ export function StatusBadge({ state }: { state: NetworkOverallState }) {
     POLICY_EXPIRED_AND_UNREACHABLE: { label: "POLICY EXPIRED / TCP DOWN", tone: "danger" },
     POLICY_VALID_BUT_UNREACHABLE: { label: "POLICY VALID / TCP DOWN", tone: "danger" },
     POLICY_NOT_APPROVED_BUT_REACHABLE: { label: "POLICY PENDING / TCP UP", tone: "danger" },
+    RETURN_DIRECTION_FAILED: { label: "RETURN FAILED", tone: "danger" },
     UNREACHABLE: { label: "UNREACHABLE", tone: "danger" },
     UNKNOWN: { label: "UNKNOWN", tone: "neutral" },
   };

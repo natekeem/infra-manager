@@ -1,16 +1,41 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import type { NetworkStatus } from "@/domain/models";
 import { SlideDrawer } from "@/components/common/slide-drawer";
 import { StatusBadge } from "./status-badge";
 import { Badge } from "@/components/tailgrids/core/badge";
 
-export function ConnectionDrawer({ status, open, onClose }: { status: NetworkStatus | null; open: boolean; onClose: () => void }) {
-  if (!status) return null;
-  const p = status.policy;
-  const o = status.observation;
-  const reverse = status.reverseObservation;
-  const isBidi = p.direction === "BIDIRECTIONAL" || status.isBidirectional;
+export type HandleDirection = "t" | "b" | "l" | "r";
+
+export function ConnectionDrawer({
+  status,
+  relatedStatuses,
+  open,
+  onClose,
+  sourceHandle,
+  targetHandle,
+  onUpdateHandles,
+}: {
+  status: NetworkStatus | null;
+  relatedStatuses?: NetworkStatus[];
+  open: boolean;
+  onClose: () => void;
+  sourceHandle?: HandleDirection;
+  targetHandle?: HandleDirection;
+  onUpdateHandles?: (handles: { source?: HandleDirection; target?: HandleDirection }) => void;
+}) {
+  const [activeStatus, setActiveStatus] = useState<NetworkStatus | null>(status);
+
+  useEffect(() => {
+    setActiveStatus(status);
+  }, [status]);
+
+  if (!activeStatus) return null;
+  const p = activeStatus.policy;
+  const o = activeStatus.observation;
+  const reverse = activeStatus.reverseObservation;
+  const isBidi = p.direction === "BIDIRECTIONAL" || activeStatus.isBidirectional;
   const observesReverse = isBidi && Boolean(p.targetVmId);
 
   return (
@@ -21,8 +46,32 @@ export function ConnectionDrawer({ status, open, onClose }: { status: NetworkSta
       subtitle={`${p.protocol}/${p.port} · ${p.purpose ?? "Network flow"}`}
     >
       <div className="p-4 space-y-4">
+        {/* Multi-flow selector if aggregated */}
+        {relatedStatuses && relatedStatuses.length > 1 && (
+          <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-2">
+            <div className="mb-1 text-[9px] font-medium text-[var(--muted)]">
+              Aggregated Flows ({relatedStatuses.length}) — Click to view:
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {relatedStatuses.map((s) => (
+                <button
+                  key={s.policy.id}
+                  onClick={() => setActiveStatus(s)}
+                  className={`rounded border px-1.5 py-0.5 font-mono text-[8px] transition ${
+                    s.policy.id === activeStatus.policy.id
+                      ? "border-[#5750f1] bg-[#5750f1] text-white"
+                      : "border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)] hover:border-[var(--border-strong)]"
+                  }`}
+                >
+                  {s.policy.protocol}/{s.policy.port}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center justify-between">
-          <StatusBadge state={status.overall} />
+          <StatusBadge state={activeStatus.overall} />
           <div className="flex items-center gap-2">
             <Badge tone={isBidi ? "info" : "neutral"}>{isBidi ? "BIDIRECTIONAL" : "ONE_WAY"}</Badge>
             <span className="font-mono text-[9px] text-[var(--muted)]">{p.requestId ?? "NO REQUEST ID"}</span>
@@ -36,7 +85,7 @@ export function ConnectionDrawer({ status, open, onClose }: { status: NetworkSta
           <KV k="Target" v={`${p.targetName} · ${p.targetIp}`} />
           <KV k="Protocol / Port" v={`${p.protocol} / ${p.port}`} />
           <KV k="Expires" v={p.expiresAt ?? "-"} />
-          <KV k="Remaining" v={status.daysToExpiry == null ? "-" : status.daysToExpiry >= 0 ? `D-${status.daysToExpiry}` : `D+${Math.abs(status.daysToExpiry)}`} />
+          <KV k="Remaining" v={activeStatus.daysToExpiry == null ? "-" : activeStatus.daysToExpiry >= 0 ? `D-${activeStatus.daysToExpiry}` : `D+${Math.abs(activeStatus.daysToExpiry)}`} />
           <KV k="Purpose" v={p.purpose ?? "-"} />
         </DrawerSection>
 
@@ -89,10 +138,58 @@ export function ConnectionDrawer({ status, open, onClose }: { status: NetworkSta
         )}
 
         <DrawerSection title="Diagnosis">
-          <div className={`rounded-md border p-3 text-[10px] leading-5 ${status.overall === "RETURN_DIRECTION_FAILED" ? "border-[var(--danger)]/40 bg-[var(--danger-surface)] text-[var(--danger)]" : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--muted)]"}`}>
-            {status.diagnostic}
+          <div className={`rounded-md border p-3 text-[10px] leading-5 ${activeStatus.overall === "RETURN_DIRECTION_FAILED" ? "border-[var(--danger)]/40 bg-[var(--danger-surface)] text-[var(--danger)]" : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--muted)]"}`}>
+            {activeStatus.diagnostic}
           </div>
         </DrawerSection>
+
+        {onUpdateHandles && (
+          <DrawerSection title="Connection Routing / Handles (선 연결 위치)">
+            <div className="space-y-2 rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-2.5 text-[10px]">
+              <div className="flex items-center justify-between">
+                <span className="text-[var(--muted)]">출발선 위치 (Source Exit):</span>
+                <select
+                  value={sourceHandle ?? "auto"}
+                  onChange={(e) =>
+                    onUpdateHandles({
+                      source: e.target.value === "auto" ? undefined : (e.target.value as HandleDirection),
+                      target: targetHandle,
+                    })
+                  }
+                  className="h-6 rounded border border-[var(--border)] bg-[var(--surface)] px-2 font-mono text-[9px] text-[var(--foreground)] outline-none"
+                >
+                  <option value="auto">Auto (자동 감지)</option>
+                  <option value="t">Top (상단)</option>
+                  <option value="b">Bottom (하단)</option>
+                  <option value="l">Left (좌측)</option>
+                  <option value="r">Right (우측)</option>
+                </select>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[var(--muted)]">도착선 위치 (Target Entry):</span>
+                <select
+                  value={targetHandle ?? "auto"}
+                  onChange={(e) =>
+                    onUpdateHandles({
+                      source: sourceHandle,
+                      target: e.target.value === "auto" ? undefined : (e.target.value as HandleDirection),
+                    })
+                  }
+                  className="h-6 rounded border border-[var(--border)] bg-[var(--surface)] px-2 font-mono text-[9px] text-[var(--foreground)] outline-none"
+                >
+                  <option value="auto">Auto (자동 감지)</option>
+                  <option value="t">Top (상단)</option>
+                  <option value="b">Bottom (하단)</option>
+                  <option value="l">Left (좌측)</option>
+                  <option value="r">Right (우측)</option>
+                </select>
+              </div>
+              <div className="text-[8px] text-[var(--muted)]">
+                카드 위치를 이동한 후 선이 자연스럽게 이어지도록 상/하/좌/우 중 출발/도착 연결점을 수동 설정할 수 있습니다.
+              </div>
+            </div>
+          </DrawerSection>
+        )}
 
         <div className="rounded-md border border-dashed border-[var(--border-strong)] p-3 text-[9px] text-[var(--muted)] leading-relaxed">
           통신 실패는 방화벽 차단으로 단정하지 않습니다. Ping/TCP 결과와 승인 정책을 이용해 원인 범위를 좁히고 실제 방화벽 작업 상태 또는 대상 서비스를 확인합니다.

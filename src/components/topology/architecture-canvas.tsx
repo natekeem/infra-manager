@@ -12,6 +12,7 @@ import {
   Position,
   ReactFlow,
   applyNodeChanges,
+  getBezierPath,
   getSmoothStepPath,
   type Edge,
   type EdgeProps,
@@ -33,6 +34,7 @@ import { VmDrawer } from "@/components/infrastructure/vm-drawer";
 import { ConnectionDrawer } from "@/components/network/connection-drawer";
 import { ClusterDrawer } from "@/components/cluster/cluster-drawer";
 import { NasDrawer } from "@/components/storage/nas-drawer";
+import { TierDrawer, type TierDrawerData } from "@/components/topology/tier-drawer";
 import { SoftwareDetailDrawer } from "@/components/software/software-detail-drawer";
 import { MaximizeIcon, SearchIcon } from "@/components/common/icons";
 import { matchLegacySoftwareRelease } from "@/domain/software-lifecycle";
@@ -61,11 +63,13 @@ export type TopologyEdgeData = {
   secondary: string;
   issueCount: number;
   status?: NetworkStatus;
+  relatedStatuses?: NetworkStatus[];
   flowActive?: boolean;
   showLabel?: boolean;
   onSelect?: () => void;
   edgeIndex?: number;
   totalEdges?: number;
+  lineStyle?: "bezier" | "smoothstep";
 };
 
 const zoneOrder = ["WEB", "APP", "DB", "CONTROL", "BOT", "VDI", "SUPPORT", "EXTERNAL"];
@@ -87,6 +91,28 @@ function statusColor(issueCount: number, status?: NetworkStatus) {
   return issueCount > 0 ? "#f79009" : "#98a2b3";
 }
 
+function NodeHandles({ color = "!bg-[#98a2b3]" }: { color?: string }) {
+  return (
+    <>
+      {/* 4-Way Source & Target Handles */}
+      <Handle id="t-src" type="source" position={Position.Top} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
+      <Handle id="t-tgt" type="target" position={Position.Top} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
+      <Handle id="b-src" type="source" position={Position.Bottom} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
+      <Handle id="b-tgt" type="target" position={Position.Bottom} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
+      <Handle id="l-src" type="source" position={Position.Left} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
+      <Handle id="l-tgt" type="target" position={Position.Left} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
+      <Handle id="r-src" type="source" position={Position.Right} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
+      <Handle id="r-tgt" type="target" position={Position.Right} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
+
+      {/* Aliases for backwards compatibility */}
+      <Handle id="t" type="target" position={Position.Top} style={{ opacity: 0, pointerEvents: "none" }} />
+      <Handle id="b" type="source" position={Position.Bottom} style={{ opacity: 0, pointerEvents: "none" }} />
+      <Handle id="l" type="target" position={Position.Left} style={{ opacity: 0, pointerEvents: "none" }} />
+      <Handle id="r" type="source" position={Position.Right} style={{ opacity: 0, pointerEvents: "none" }} />
+    </>
+  );
+}
+
 function GroupNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
   const isExternal = data.kind === "external";
   return (
@@ -95,10 +121,7 @@ function GroupNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
         selected ? "border-[#5750f1] ring-1 ring-[#5750f1]/20" : "border-[var(--border-strong)]"
       }`}
     >
-      <Handle type="target" position={Position.Top} className="!h-1.5 !w-1.5 !border-0 !bg-[#98a2b3]" />
-      <Handle type="source" position={Position.Bottom} className="!h-1.5 !w-1.5 !border-0 !bg-[#98a2b3]" />
-      <Handle id="l" type="target" position={Position.Left} className="!h-1.5 !w-1.5 !border-0 !bg-[#98a2b3]" />
-      <Handle id="r" type="source" position={Position.Right} className="!h-1.5 !w-1.5 !border-0 !bg-[#98a2b3]" />
+      <NodeHandles />
 
       <div className="flex items-center justify-between gap-1 border-b border-[var(--border)] pb-1.5">
         <span className="truncate text-[11px] font-bold tracking-tight text-[var(--foreground)]">{data.label}</span>
@@ -135,7 +158,7 @@ function GroupNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
       )}
 
       <div className="mt-2 flex items-center justify-between border-t border-[var(--border)] pt-1 text-[8px] text-[var(--muted-2)]">
-        <span>{isExternal ? "Dependency" : "Double-click to expand"}</span>
+        <span>{isExternal ? "Dependency" : "Click: Overview · Double-click: Expand"}</span>
         <span>→</span>
       </div>
     </div>
@@ -150,10 +173,7 @@ function VmNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
         selected ? "border-[#5750f1] ring-1 ring-[#5750f1]/20" : "border-[var(--border)]"
       }`}
     >
-      <Handle type="target" position={Position.Top} className="!h-1.5 !w-1.5 !border-0 !bg-[#98a2b3]" />
-      <Handle type="source" position={Position.Bottom} className="!h-1.5 !w-1.5 !border-0 !bg-[#98a2b3]" />
-      <Handle id="r" type="source" position={Position.Right} className="!h-1.5 !w-1.5 !border-0 !bg-[#98a2b3]" />
-      <Handle id="l" type="target" position={Position.Left} className="!h-1.5 !w-1.5 !border-0 !bg-[#98a2b3]" />
+      <NodeHandles />
 
       {/* Row 1: Hostname + Health dot */}
       <div className="flex items-center justify-between gap-1">
@@ -205,10 +225,7 @@ function ClusterNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
         selected ? "border-purple-600 ring-1 ring-purple-500/20" : ""
       }`}
     >
-      <Handle type="target" position={Position.Top} className="!h-1.5 !w-1.5 !border-0 !bg-purple-400" />
-      <Handle type="source" position={Position.Bottom} className="!h-1.5 !w-1.5 !border-0 !bg-purple-400" />
-      <Handle id="r" type="source" position={Position.Right} className="!h-1.5 !w-1.5 !border-0 !bg-purple-400" />
-      <Handle id="l" type="target" position={Position.Left} className="!h-1.5 !w-1.5 !border-0 !bg-purple-400" />
+      <NodeHandles color="!bg-purple-400" />
 
       {/* Row 1: Cluster Name + Type Badge */}
       <div className="flex items-center justify-between gap-1">
@@ -273,10 +290,7 @@ function NasNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
         selected ? "border-cyan-600 ring-1 ring-cyan-500/20" : ""
       }`}
     >
-      <Handle type="target" position={Position.Top} className="!h-1.5 !w-1.5 !border-0 !bg-cyan-400" />
-      <Handle type="source" position={Position.Bottom} className="!h-1.5 !w-1.5 !border-0 !bg-cyan-400" />
-      <Handle id="r" type="source" position={Position.Right} className="!h-1.5 !w-1.5 !border-0 !bg-cyan-400" />
-      <Handle id="l" type="target" position={Position.Left} className="!h-1.5 !w-1.5 !border-0 !bg-cyan-400" />
+      <NodeHandles color="!bg-cyan-400" />
 
       {/* Row 1: Hostname + Protocol */}
       <div className="flex items-center justify-between gap-1">
@@ -335,33 +349,56 @@ function Metric({ k, v }: { k: string; v?: number }) {
 
 function FlowEdge(props: EdgeProps<Edge<TopologyEdgeData>>) {
   const { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition } = props;
-  const [path] = getSmoothStepPath({
-    sourceX,
-    sourceY,
-    sourcePosition,
-    targetX,
-    targetY,
-    targetPosition,
-    borderRadius: 8,
-  });
   const data = props.data!;
+  const isBezier = data.lineStyle !== "smoothstep";
+  const [path] = isBezier
+    ? getBezierPath({
+        sourceX,
+        sourceY,
+        sourcePosition,
+        targetX,
+        targetY,
+        targetPosition,
+        curvature: 0.25,
+      })
+    : getSmoothStepPath({
+        sourceX,
+        sourceY,
+        sourcePosition,
+        targetX,
+        targetY,
+        targetPosition,
+        borderRadius: 8,
+      });
+
   const color = statusColor(data.issueCount, data.status);
   const isTcpUp = data.status?.observation?.tcp === "UP";
   const isBidi = data.status?.isBidirectional;
   const isReverseUp = isBidi && data.status?.reverseObservation?.tcp === "UP";
   const flowActive = data.flowActive ?? true;
 
-  // Source-anchored sticky badge positioning:
-  // Instead of clustering at the crowded center midpoint (where curves collide),
-  // labels are anchored right outside the source handle with vertical staggering for multi-port edges.
-  const isForward = targetX >= sourceX;
-  const baseOffsetX = isForward ? 44 : -44;
+  // Source-anchored sticky badge positioning with orientation-aware stagger:
   const edgeIdx = data.edgeIndex ?? 0;
   const totalEdg = data.totalEdges ?? 1;
-  const staggerY = (edgeIdx - (totalEdg - 1) / 2) * 20;
+  const stagger = (edgeIdx - (totalEdg - 1) / 2) * 20;
 
-  const labelX = sourceX + baseOffsetX;
-  const labelY = sourceY + staggerY;
+  let labelX = sourceX;
+  let labelY = sourceY;
+
+  if (sourcePosition === Position.Top) {
+    labelX = sourceX + stagger;
+    labelY = sourceY - 32;
+  } else if (sourcePosition === Position.Bottom) {
+    labelX = sourceX + stagger;
+    labelY = sourceY + 32;
+  } else if (sourcePosition === Position.Left) {
+    labelX = sourceX - 44;
+    labelY = sourceY + stagger;
+  } else {
+    // Position.Right or default
+    labelX = sourceX + 44;
+    labelY = sourceY + stagger;
+  }
 
   return (
     <>
@@ -429,6 +466,42 @@ const nodeTypes = {
 };
 const edgeTypes = { flow: FlowEdge };
 
+export type HandleDirection = "t" | "b" | "l" | "r";
+
+function getSmartHandlePair(
+  sourcePos?: { x: number; y: number },
+  targetPos?: { x: number; y: number },
+  sourceDim = { w: 200, h: 116 },
+  targetDim = { w: 200, h: 116 }
+): { sourceHandle: string; targetHandle: string } {
+  if (!sourcePos || !targetPos) {
+    return { sourceHandle: "r-src", targetHandle: "l-tgt" };
+  }
+
+  const scx = sourcePos.x + sourceDim.w / 2;
+  const scy = sourcePos.y + sourceDim.h / 2;
+  const tcx = targetPos.x + targetDim.w / 2;
+  const tcy = targetPos.y + targetDim.h / 2;
+
+  const dx = tcx - scx;
+  const dy = tcy - scy;
+
+  // Decide dominant orientation based on delta
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    if (dx >= 0) {
+      return { sourceHandle: "r-src", targetHandle: "l-tgt" };
+    } else {
+      return { sourceHandle: "l-src", targetHandle: "r-tgt" };
+    }
+  } else {
+    if (dy >= 0) {
+      return { sourceHandle: "b-src", targetHandle: "t-tgt" };
+    } else {
+      return { sourceHandle: "t-src", targetHandle: "b-tgt" };
+    }
+  }
+}
+
 export function ArchitectureCanvas({
   vms,
   statuses,
@@ -455,15 +528,22 @@ export function ArchitectureCanvas({
   const [overlay, setOverlay] = useState<OverlayMode>("live");
   const [issuesOnly, setIssuesOnly] = useState(false);
   const [flowAnimation, setFlowAnimation] = useState(false);
-  const [showEdgeLabels, setShowEdgeLabels] = useState(false);
+  const [lineStyle, setLineStyle] = useState<"bezier" | "smoothstep">("bezier");
+  const [showEdgeLabels, setShowEdgeLabels] = useState(true);
   const [layoutEditMode, setLayoutEditMode] = useState(false);
   const [positionOverrides, setPositionOverrides] = useState<Record<string, { x: number; y: number }>>({});
+  const [edgeHandleOverrides, setEdgeHandleOverrides] = useState<
+    Record<string, { source?: HandleDirection; target?: HandleDirection }>
+  >({});
   const [canvasRevision, setCanvasRevision] = useState(0);
   const [query, setQuery] = useState("");
 
   // Drawers
   const [selectedVm, setSelectedVm] = useState<VmAsset | null>(null);
   const [selectedConnection, setSelectedConnection] = useState<NetworkStatus | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [selectedRelatedStatuses, setSelectedRelatedStatuses] = useState<NetworkStatus[]>([]);
+  const [selectedTier, setSelectedTier] = useState<TierDrawerData | null>(null);
   const [selectedCluster, setSelectedCluster] = useState<ClusterEntity | null>(null);
   const [selectedNas, setSelectedNas] = useState<NasAsset | null>(null);
   const [selectedRelease, setSelectedRelease] = useState<SoftwareRelease | null>(null);
@@ -491,12 +571,21 @@ export function ArchitectureCanvas({
     [envStatuses]
   );
 
+  const handleSelectConnection = useCallback(
+    (edgeId: string, status: NetworkStatus, relatedStatuses: NetworkStatus[]) => {
+      setSelectedEdgeId(edgeId);
+      setSelectedConnection(status);
+      setSelectedRelatedStatuses(relatedStatuses);
+    },
+    []
+  );
+
   const { nodes, edges } = useMemo(() => {
     if (mode === "overview") {
-      return buildOverview(envVms, envStatuses, issuesOnly, overlay, query, flowAnimation, setSelectedConnection);
+      return buildOverview(envVms, envStatuses, issuesOnly, overlay, query, flowAnimation, handleSelectConnection);
     }
     if (mode === "service") {
-      return buildServices(envVms, envStatuses, issuesOnly, overlay, query, flowAnimation, setSelectedConnection);
+      return buildServices(envVms, envStatuses, issuesOnly, overlay, query, flowAnimation, handleSelectConnection);
     }
     return buildVms(
       envVms,
@@ -507,12 +596,24 @@ export function ArchitectureCanvas({
       overlay,
       query,
       flowAnimation,
-      showEdgeLabels,
       clusters,
       nasAssets,
-      setSelectedConnection
+      handleSelectConnection
     );
-  }, [mode, envVms, envStatuses, zone, issuesOnly, issueVmIds, overlay, query, flowAnimation, showEdgeLabels, clusters, nasAssets]);
+  }, [
+    mode,
+    envVms,
+    envStatuses,
+    zone,
+    issuesOnly,
+    issueVmIds,
+    overlay,
+    query,
+    flowAnimation,
+    clusters,
+    nasAssets,
+    handleSelectConnection,
+  ]);
 
   const layoutStorageKey = `rpa-topology-layout:v2:${mode}:${envFilter}:${zone}`;
 
@@ -524,6 +625,25 @@ export function ArchitectureCanvas({
       setPositionOverrides({});
     }
   }, [layoutStorageKey]);
+
+  useEffect(() => {
+    try {
+      const savedHandles = window.localStorage.getItem("rpa-topology-handles:v1");
+      if (savedHandles) setEdgeHandleOverrides(JSON.parse(savedHandles));
+    } catch {
+      setEdgeHandleOverrides({});
+    }
+  }, []);
+
+  function updateEdgeHandles(edgeId: string, handles: { source?: HandleDirection; target?: HandleDirection }) {
+    setEdgeHandleOverrides((prev) => {
+      const next = { ...prev, [edgeId]: handles };
+      try {
+        window.localStorage.setItem("rpa-topology-handles:v1", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }
 
   // Real-time smooth dragging state with ghost twin preview
   const [liveNodes, setLiveNodes] = useState<Node<TopologyNodeData>[]>([]);
@@ -577,7 +697,9 @@ export function ArchitectureCanvas({
       position: dragOrigin.position,
       style: {
         ...originNode.style,
+        opacity: 0.38,
         pointerEvents: "none",
+        filter: "grayscale(60%)",
       },
       className: "react-flow__node-ghost",
       data: {
@@ -590,6 +712,46 @@ export function ArchitectureCanvas({
 
     return [ghostNode, ...liveNodes];
   }, [liveNodes, dragOrigin]);
+
+  // Dynamically resolve edge connection handles (4-way) and properties
+  const resolvedEdges = useMemo(() => {
+    const nodeMap = new Map<string, { x: number; y: number; w: number; h: number }>();
+    for (const n of liveNodes) {
+      const w = (n.style?.width as number) || 200;
+      const h = (n.style?.height as number) || 116;
+      nodeMap.set(n.id, { x: n.position.x, y: n.position.y, w, h });
+    }
+
+    return edges.map((e) => {
+      const override = edgeHandleOverrides[e.id];
+      let sourceHandle = override?.source ? `${override.source}-src` : undefined;
+      let targetHandle = override?.target ? `${override.target}-tgt` : undefined;
+
+      if (!sourceHandle || !targetHandle) {
+        const src = nodeMap.get(e.source);
+        const tgt = nodeMap.get(e.target);
+        const smart = getSmartHandlePair(
+          src,
+          tgt,
+          src ? { w: src.w, h: src.h } : undefined,
+          tgt ? { w: tgt.w, h: tgt.h } : undefined
+        );
+        if (!sourceHandle) sourceHandle = smart.sourceHandle;
+        if (!targetHandle) targetHandle = smart.targetHandle;
+      }
+
+      return {
+        ...e,
+        sourceHandle,
+        targetHandle,
+        data: {
+          ...e.data,
+          lineStyle,
+          showLabel: showEdgeLabels,
+        },
+      };
+    });
+  }, [edges, liveNodes, edgeHandleOverrides, lineStyle, showEdgeLabels]);
 
   function handleSearch(val: string) {
     setQuery(val);
@@ -658,7 +820,7 @@ export function ArchitectureCanvas({
           )}
         </div>
 
-        {/* Right side: Overlay Toggle, Flow Animation Toggle, Search, Issues Only, Fullscreen */}
+        {/* Right side: Overlay Toggle, Line Style Toggle, Flow Animation Toggle, Labels Toggle, Search, Issues Only, Fullscreen */}
         <div className="flex items-center gap-2">
           {/* Overlay: Policy / Live */}
           <div className="flex rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-0.5">
@@ -680,6 +842,28 @@ export function ArchitectureCanvas({
             </button>
           </div>
 
+          {/* Line Style Toggle: Curved / Step */}
+          <div className="flex rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-0.5">
+            <button
+              onClick={() => setLineStyle("bezier")}
+              className={`h-6 rounded px-2 text-[9px] font-medium transition ${
+                lineStyle === "bezier" ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]"
+              }`}
+              title="Smooth Curved (Bezier) Lines"
+            >
+              Curved
+            </button>
+            <button
+              onClick={() => setLineStyle("smoothstep")}
+              className={`h-6 rounded px-2 text-[9px] font-medium transition ${
+                lineStyle === "smoothstep" ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]"
+              }`}
+              title="Orthogonal (Step) Lines"
+            >
+              Step
+            </button>
+          </div>
+
           {/* Flow Animation Toggle */}
           <button
             onClick={() => setFlowAnimation((prev) => !prev)}
@@ -696,14 +880,15 @@ export function ArchitectureCanvas({
 
           <button
             onClick={() => setShowEdgeLabels((value) => !value)}
-            title="Show connection labels. Off by default on VM view to prevent label/node collisions."
-            className={`flex h-7 items-center gap-1 rounded-md border px-2 text-[9px] font-medium transition ${
+            title="토폴로지 연결선의 포트 및 프로토콜 라벨 표시/숨김 (ON/OFF)"
+            className={`flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[9px] font-medium transition ${
               showEdgeLabels
                 ? "border-[#5750f1] bg-[#5750f1]/10 text-[#5750f1]"
                 : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]"
             }`}
           >
-            Labels
+            <span className={`h-1.5 w-1.5 rounded-full ${showEdgeLabels ? "bg-[#5750f1]" : "bg-[var(--muted)]"}`} />
+            <span>Labels: {showEdgeLabels ? "ON" : "OFF"}</span>
           </button>
 
           <button
@@ -760,12 +945,12 @@ export function ArchitectureCanvas({
         </div>
       </div>
 
-      {/* React Flow Canvas */}
-      <div className="relative h-[calc(100vh-170px)] min-h-[640px]">
+      {/* React Flow Canvas - Reduced height to prevent vertical viewport scrolling */}
+      <div className="relative h-[calc(100vh-215px)] min-h-[480px]">
         <ReactFlow
           key={`${mode}-${envFilter}-${zone}-${canvasRevision}`}
           nodes={displayNodes}
-          edges={edges}
+          edges={resolvedEdges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           fitView
@@ -782,9 +967,37 @@ export function ArchitectureCanvas({
           onNodeDragStop={onNodeDragStop}
           onNodeClick={(_, node) => {
             const d = node.data as TopologyNodeData;
-            if (d.vm) setSelectedVm(d.vm);
-            else if (d.cluster) setSelectedCluster(d.cluster);
-            else if (d.nas) setSelectedNas(d.nas);
+            if (d.vm) {
+              setSelectedVm(d.vm);
+            } else if (d.cluster) {
+              setSelectedCluster(d.cluster);
+            } else if (d.nas) {
+              setSelectedNas(d.nas);
+            } else if (d.kind === "group" || d.kind === "external") {
+              const tierVms = envVms.filter((v) => d.kind === "group" && (v.zone === d.key || v.service === d.key));
+              const tierStatuses = envStatuses.filter((s) => {
+                const srcVm = envVms.find((v) => v.id === s.policy.sourceVmId);
+                const tgtVm = envVms.find((v) => v.id === s.policy.targetVmId);
+                if (d.kind === "external") {
+                  return !s.policy.targetVmId && s.policy.targetName === d.key;
+                }
+                return (
+                  (srcVm && (srcVm.zone === d.key || srcVm.service === d.key)) ||
+                  (tgtVm && (tgtVm.zone === d.key || tgtVm.service === d.key))
+                );
+              });
+
+              setSelectedTier({
+                tierName: d.label,
+                kind: d.kind,
+                vms: tierVms,
+                statuses: tierStatuses,
+                healthyCount: d.healthyCount,
+                warningCount: d.warningCount,
+                criticalCount: d.criticalCount,
+                issueCount: d.issueCount,
+              });
+            }
           }}
           onNodeDoubleClick={(_, node) => {
             const d = node.data as TopologyNodeData;
@@ -802,7 +1015,11 @@ export function ArchitectureCanvas({
           }}
           onEdgeClick={(_, edge) => {
             const d = edge.data as TopologyEdgeData;
-            if (d?.status) setSelectedConnection(d.status);
+            setSelectedEdgeId(edge.id);
+            if (d?.status) {
+              setSelectedConnection(d.status);
+              setSelectedRelatedStatuses(d.relatedStatuses ?? (d.status ? [d.status] : []));
+            }
           }}
         >
           <Background gap={20} size={1} color="var(--border)" />
@@ -836,7 +1053,7 @@ export function ArchitectureCanvas({
             <b className="text-[var(--foreground)]">Actual</b>: Source→Target Telegraf TCP probe (양방향 지원)
           </div>
           <div className="mt-0.5">
-            더블클릭 → 티어 드릴다운 · 노드/연결 클릭 → 우측 슬라이드 서랍 상세 · Labels → 포트 라벨 표시 · Edit layout → 20px 격자 스냅
+            더블클릭 → 티어 드릴다운 · 노드/연결 클릭 → 우측 슬라이드 서랍 상세 · Labels → 포트 라벨 ON/OFF · Curved/Step → 곡선/직각 선택 · Edit layout → 20px 격자 스냅
           </div>
         </div>
       </div>
@@ -856,8 +1073,38 @@ export function ArchitectureCanvas({
       />
       <ConnectionDrawer
         status={selectedConnection}
+        relatedStatuses={selectedRelatedStatuses}
+        sourceHandle={edgeHandleOverrides[selectedEdgeId ?? ""]?.source}
+        targetHandle={edgeHandleOverrides[selectedEdgeId ?? ""]?.target}
+        onUpdateHandles={(handles) => {
+          if (selectedEdgeId) {
+            updateEdgeHandles(selectedEdgeId, handles);
+          }
+        }}
         open={!!selectedConnection}
-        onClose={() => setSelectedConnection(null)}
+        onClose={() => {
+          setSelectedConnection(null);
+          setSelectedEdgeId(null);
+          setSelectedRelatedStatuses([]);
+        }}
+      />
+      <TierDrawer
+        data={selectedTier}
+        open={!!selectedTier}
+        onClose={() => setSelectedTier(null)}
+        onDrillDown={(tierName) => {
+          setMode("vm");
+          const cleanZone = tierName.replace(" TIER", "").trim();
+          if (zoneOrder.includes(cleanZone)) {
+            setZone(cleanZone);
+          } else {
+            setZone("ALL");
+          }
+        }}
+        onSelectVm={(vm) => {
+          setSelectedTier(null);
+          setSelectedVm(vm);
+        }}
       />
       <ClusterDrawer
         cluster={selectedCluster}
@@ -910,7 +1157,7 @@ function buildOverview(
   overlay: OverlayMode,
   query: string,
   flowActive: boolean,
-  onSelectConnection: (status: NetworkStatus) => void
+  onSelectConnection: (edgeId: string, status: NetworkStatus, relatedStatuses: NetworkStatus[]) => void
 ) {
   const q = query.trim().toLowerCase();
   const issueIds = new Set(
@@ -987,7 +1234,7 @@ function buildOverview(
   ];
 
   const vmZone = Object.fromEntries(vms.map((v) => [v.id, v.zone]));
-  const agg = new Map<string, { source: string; target: string; count: number; issues: number; sample?: NetworkStatus }>();
+  const agg = new Map<string, { source: string; target: string; count: number; issues: number; sample?: NetworkStatus; all: NetworkStatus[] }>();
 
   for (const s of statuses) {
     if (issuesOnly && s.overall === "NORMAL") continue;
@@ -998,8 +1245,9 @@ function buildOverview(
     const tgt = s.policy.targetVmId ? vmZone[s.policy.targetVmId] : "EXTERNAL";
     if (!src || !tgt || src === tgt) continue;
     const key = `${src}->${tgt}`;
-    const cur = agg.get(key) ?? { source: src, target: tgt, count: 0, issues: 0, sample: s };
+    const cur = agg.get(key) ?? { source: src, target: tgt, count: 0, issues: 0, sample: s, all: [] };
     cur.count++;
+    cur.all.push(s);
     if (s.overall !== "NORMAL") cur.issues++;
     agg.set(key, cur);
   }
@@ -1037,11 +1285,11 @@ function buildOverview(
         secondary,
         issueCount: a.issues,
         status: a.sample,
+        relatedStatuses: a.all,
         flowActive,
-        showLabel: true,
         edgeIndex: idx,
         totalEdges: total,
-        onSelect: () => a.sample && onSelectConnection(a.sample),
+        onSelect: () => a.sample && onSelectConnection(id, a.sample, a.all),
       },
     };
   });
@@ -1056,7 +1304,7 @@ function buildServices(
   overlay: OverlayMode,
   query: string,
   flowActive: boolean,
-  onSelectConnection: (status: NetworkStatus) => void
+  onSelectConnection: (edgeId: string, status: NetworkStatus, relatedStatuses: NetworkStatus[]) => void
 ) {
   const q = query.trim().toLowerCase();
   const services = Array.from(new Set(vms.map((v) => v.service)));
@@ -1117,7 +1365,7 @@ function buildServices(
     })
   );
 
-  const agg = new Map<string, { src: string; tgt: string; count: number; issues: number; sample?: NetworkStatus }>();
+  const agg = new Map<string, { src: string; tgt: string; count: number; issues: number; sample?: NetworkStatus; all: NetworkStatus[] }>();
   for (const s of statuses) {
     if (issuesOnly && s.overall === "NORMAL") continue;
     if (q && !`${s.policy.port} ${s.policy.sourceName} ${s.policy.targetName}`.toLowerCase().includes(q)) {
@@ -1127,8 +1375,9 @@ function buildServices(
     const tgt = s.policy.targetVmId ? vmService[s.policy.targetVmId] : s.policy.targetName;
     if (!src || !tgt || src === tgt) continue;
     const k = `${src}->${tgt}`;
-    const a = agg.get(k) ?? { src, tgt, count: 0, issues: 0, sample: s };
+    const a = agg.get(k) ?? { src, tgt, count: 0, issues: 0, sample: s, all: [] };
     a.count++;
+    a.all.push(s);
     if (s.overall !== "NORMAL") a.issues++;
     agg.set(k, a);
   }
@@ -1156,11 +1405,11 @@ function buildServices(
         secondary: a.issues ? `${a.issues} Issues` : overlay === "policy" ? "Approved" : "Reachable",
         issueCount: a.issues,
         status: a.sample,
+        relatedStatuses: a.all,
         flowActive,
-        showLabel: true,
         edgeIndex: idx,
         totalEdges: total,
-        onSelect: () => a.sample && onSelectConnection(a.sample),
+        onSelect: () => a.sample && onSelectConnection(id, a.sample, a.all),
       },
     };
   });
@@ -1177,10 +1426,9 @@ function buildVms(
   overlay: OverlayMode,
   query: string,
   flowActive: boolean,
-  showEdgeLabels: boolean,
   clusters: ClusterEntity[],
   nasAssets: NasAsset[],
-  onSelectConnection: (status: NetworkStatus) => void
+  onSelectConnection: (edgeId: string, status: NetworkStatus, relatedStatuses: NetworkStatus[]) => void
 ) {
   const q = query.trim().toLowerCase();
   const visible = vms.filter(
@@ -1348,11 +1596,6 @@ function buildVms(
 
     const sourceId = s.policy.sourceVmId;
     const targetId = s.policy.targetVmId ?? `ext-${s.policy.targetName}`;
-    const sourceNode = nodes.find((node) => node.id === sourceId);
-    const targetNode = nodes.find((node) => node.id === targetId);
-    const horizontalForward =
-      Boolean(sourceNode && targetNode) &&
-      (targetNode!.position.x - sourceNode!.position.x) > Math.abs(targetNode!.position.y - sourceNode!.position.y);
 
     const edgeIdx = sourceIdxMap.get(sourceId) || 0;
     sourceIdxMap.set(sourceId, edgeIdx + 1);
@@ -1363,8 +1606,6 @@ function buildVms(
       type: "flow",
       source: sourceId,
       target: targetId,
-      sourceHandle: horizontalForward ? "r" : undefined,
-      targetHandle: horizontalForward ? "l" : undefined,
       markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
       markerStart: isBidi ? { type: MarkerType.ArrowClosed, width: 12, height: 12 } : undefined,
       data: {
@@ -1372,11 +1613,11 @@ function buildVms(
         secondary,
         issueCount: s.overall === "NORMAL" ? 0 : 1,
         status: s,
+        relatedStatuses: [s],
         flowActive,
-        showLabel: showEdgeLabels,
         edgeIndex: edgeIdx,
         totalEdges: totalEdg,
-        onSelect: () => onSelectConnection(s),
+        onSelect: () => onSelectConnection(s.policy.id, s, [s]),
       },
     };
   });

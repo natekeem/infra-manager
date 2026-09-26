@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import type { TopologyGroup, TopologyGroupType } from "@/domain/models";
 import { managementRepo } from "@/services/management/mock-repository";
 import { Badge } from "@/components/tailgrids/core/badge";
@@ -15,6 +15,17 @@ export function TopologyManagementView({
 }) {
   const { activeProject } = useProjectGroup();
   const [groups, setGroups] = useState<TopologyGroup[]>(initialGroups);
+
+  useEffect(() => {
+    let isMounted = true;
+    managementRepo.getTopologyGroups().then((all) => {
+      if (!isMounted) return;
+      if (all && all.length > 0) setGroups(all);
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("ALL");
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);

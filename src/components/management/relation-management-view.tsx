@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import type {
   ArchitectureRelation,
   Asset,
@@ -27,6 +27,19 @@ export function RelationManagementView({
 }) {
   const { activeProject } = useProjectGroup();
   const [relations, setRelations] = useState<ArchitectureRelation[]>(initialRelations);
+
+  useEffect(() => {
+    let isMounted = true;
+    managementRepo.getRelations().then((all) => {
+      if (!isMounted) return;
+      if (all && all.length > 0) {
+        setRelations(all);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("ALL");
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);

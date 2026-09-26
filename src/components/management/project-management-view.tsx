@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { ProjectGroup } from "@/domain/models";
 import { managementRepo } from "@/services/management/mock-repository";
 import { Badge } from "@/components/tailgrids/core/badge";
@@ -15,6 +15,17 @@ export function ProjectManagementView({
 }) {
   const { setActiveProjectId, addProjectGroup, updateProjectGroup } = useProjectGroup();
   const [projects, setProjects] = useState<ProjectGroup[]>(initialProjects);
+
+  useEffect(() => {
+    let isMounted = true;
+    managementRepo.getProjects().then((all) => {
+      if (!isMounted) return;
+      if (all && all.length > 0) setProjects(all);
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
   const [query, setQuery] = useState("");
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<ProjectGroup | null>(null);

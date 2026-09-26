@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import type { Asset, ClusterEntity, ClusterMember } from "@/domain/models";
 import { managementRepo } from "@/services/management/mock-repository";
 import { Badge } from "@/components/tailgrids/core/badge";
@@ -17,6 +17,19 @@ export function ClusterManagementView({
 }) {
   const { activeProject } = useProjectGroup();
   const [clusters, setClusters] = useState<ClusterEntity[]>(initialClusters);
+
+  useEffect(() => {
+    let isMounted = true;
+    managementRepo.getClusters().then((all) => {
+      if (!isMounted) return;
+      if (all && all.length > 0) {
+        setClusters(all);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
   const [query, setQuery] = useState("");
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingCluster, setEditingCluster] = useState<ClusterEntity | null>(null);

@@ -550,10 +550,37 @@ export function ArchitectureCanvas({
 }) {
   const { activeProject } = useProjectGroup();
 
-  // Navigation & Filter States
-  const [mode, setMode] = useState<ViewMode>("overview");
+  // Navigation & Filter States (persisted across reloads)
+  const [mode, setModeState] = useState<ViewMode>("overview");
+  const [envFilter, setEnvFilterState] = useState("ALL");
 
-  const [envFilter, setEnvFilter] = useState("ALL");
+  useEffect(() => {
+    try {
+      const savedMode = window.localStorage.getItem("rpa-architecture-mode");
+      if (savedMode === "overview" || savedMode === "asset") {
+        setModeState(savedMode);
+      }
+      const savedEnv = window.localStorage.getItem("rpa-architecture-env");
+      if (savedEnv) {
+        setEnvFilterState(savedEnv);
+      }
+    } catch {}
+  }, []);
+
+  const setMode = useCallback((v: ViewMode) => {
+    setModeState(v);
+    try {
+      window.localStorage.setItem("rpa-architecture-mode", v);
+    } catch {}
+  }, []);
+
+  const setEnvFilter = useCallback((env: string) => {
+    setEnvFilterState(env);
+    try {
+      window.localStorage.setItem("rpa-architecture-env", env);
+    } catch {}
+  }, []);
+
   const [drillGroup, setDrillGroup] = useState<string | null>(null);
   const [overlay, setOverlay] = useState<OverlayMode>("live");
   const [issuesOnly, setIssuesOnly] = useState(false);
@@ -566,10 +593,21 @@ export function ArchitectureCanvas({
   const [canvasRevision, setCanvasRevision] = useState(0);
   const [query, setQuery] = useState("");
 
-  // Live relations state to support in-canvas relation creation and deletion
+  // Live relations state to support in-canvas relation creation, deletion, and cross-session persistence
   const [currentRelations, setCurrentRelations] = useState<ArchitectureRelation[]>(relations);
   useEffect(() => {
-    setCurrentRelations(relations);
+    let isMounted = true;
+    managementRepo.getRelations().then((allRelations) => {
+      if (!isMounted) return;
+      if (allRelations && allRelations.length > 0) {
+        setCurrentRelations(allRelations);
+      } else {
+        setCurrentRelations(relations);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
   }, [relations]);
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -736,7 +774,14 @@ export function ArchitectureCanvas({
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem(layoutStorageKey);
-      setPositionOverrides(saved ? JSON.parse(saved) : {});
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === "object") {
+          setPositionOverrides(parsed);
+          return;
+        }
+      }
+      setPositionOverrides({});
     } catch {
       setPositionOverrides({});
     }
@@ -762,7 +807,16 @@ export function ArchitectureCanvas({
   }
 
   // Real-time smooth dragging state with ghost twin preview
-  const [liveNodes, setLiveNodes] = useState<Node<TopologyNodeData>[]>([]);
+  const [liveNodes, setLiveNodes] = useState<Node<TopologyNodeData>[]>(() =>
+    nodes.map((node) => ({
+      ...node,
+      position: node.position,
+      data: {
+        ...node.data,
+        isEditing: layoutEditMode,
+      },
+    }))
+  );
 
   useEffect(() => {
     setLiveNodes(
@@ -796,12 +850,37 @@ export function ArchitectureCanvas({
     saveNodePosition(node.id, node.position);
   }
 
+  const handleSaveAndExitEditMode = useCallback(() => {
+    setPositionOverrides((current) => {
+      const updated: Record<string, { x: number; y: number }> = { ...current };
+      liveNodes.forEach((n) => {
+        if (n.position) {
+          updated[n.id] = {
+            x: Math.round(n.position.x / 20) * 20,
+            y: Math.round(n.position.y / 20) * 20,
+          };
+        }
+      });
+      try {
+        window.localStorage.setItem(layoutStorageKey, JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    setLayoutEditMode(false);
+    setToastMessage("✓ 레이아웃 배치 및 연결 관계가 성공적으로 저장되었습니다.");
+    setTimeout(() => setToastMessage(null), 3500);
+  }, [liveNodes, layoutStorageKey]);
+
   function resetLayout() {
+    if (!confirm("노드 위치 배치를 초기 기본 상태로 되돌리시겠습니까?")) return;
     try {
       window.localStorage.removeItem(layoutStorageKey);
     } catch {}
     setPositionOverrides({});
     setCanvasRevision((value) => value + 1);
+    setToastMessage("레이아웃이 기본 위치로 초기화되었습니다.");
+    setTimeout(() => setToastMessage(null), 3000);
   }
 
   // Dynamically resolve edge connection handles (4-way) and properties
@@ -955,7 +1034,7 @@ export function ArchitectureCanvas({
       updateEdgeHandles(newRelation.id, { source: cleanSrc, target: cleanTgt });
 
       // 3. Update local relations state
-      setCurrentRelations((prev) => [newRelation, ...prev]);
+      setCurrentRelations((prev) => [newRelation, ...prev.filter((r) => r.id !== newRelation.id)]);
 
       // 4. Show success feedback
       setToastMessage(`✓ ${sourceLabel} → ${targetLabel} 연결 관계가 등록되었습니다. (관리 > 연결 관계에 자동 반영됨)`);
@@ -1101,7 +1180,13 @@ export function ArchitectureCanvas({
           {/* Edit Mode Toggle with prominent styling */}
           <button
             aria-pressed={layoutEditMode}
-            onClick={() => setLayoutEditMode((v) => !v)}
+            onClick={() => {
+              if (layoutEditMode) {
+                handleSaveAndExitEditMode();
+              } else {
+                setLayoutEditMode(true);
+              }
+            }}
             className={`flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[9px] font-semibold transition ${
               layoutEditMode
                 ? "bg-[#5750f1] text-white shadow-sm ring-2 ring-[#5750f1]/30 hover:bg-[#463fc9]"
@@ -1109,7 +1194,7 @@ export function ArchitectureCanvas({
             }`}
           >
             <span className={`h-2 w-2 rounded-full ${layoutEditMode ? "bg-white animate-pulse" : "bg-[var(--muted)]"}`} />
-            <span>{layoutEditMode ? "편집 완료" : "레이아웃 & 선 연결 편집"}</span>
+            <span>{layoutEditMode ? "편집 완료 (저장)" : "레이아웃 & 선 연결 편집"}</span>
           </button>
 
           <button onClick={resetLayout} className="h-7 rounded-md border border-[var(--border)] px-2 text-[9px] hover:bg-[var(--surface-2)]">
@@ -1157,10 +1242,10 @@ export function ArchitectureCanvas({
               • 노드 본체를 드래그하여 배치 이동 | • 노드 둘레의 <b>보라색 점</b>을 마우스로 끌어서 다른 노드로 선 연결
             </span>
             <button
-              onClick={() => setLayoutEditMode(false)}
+              onClick={handleSaveAndExitEditMode}
               className="ml-2 rounded bg-[#5750f1] px-2.5 py-1 text-[9px] font-semibold text-white shadow-sm hover:bg-[#463fc9] transition"
             >
-              편집 완료
+              편집 완료 및 저장
             </button>
           </div>
         )}

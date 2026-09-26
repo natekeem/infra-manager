@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { Asset, NetworkPolicy, PolicyApprovalStatus, PolicyDirection } from "@/domain/models";
 import { managementRepo } from "@/services/management/mock-repository";
 import { Badge } from "@/components/tailgrids/core/badge";
@@ -15,6 +15,19 @@ export function PolicyManagementView({
   availableAssets?: Asset[];
 }) {
   const [policies, setPolicies] = useState<NetworkPolicy[]>(initialPolicies);
+
+  useEffect(() => {
+    let isMounted = true;
+    managementRepo.getPolicies().then((all) => {
+      if (!isMounted) return;
+      if (all && all.length > 0) {
+        setPolicies(all);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
   const [query, setQuery] = useState("");
   const [approvalFilter, setApprovalFilter] = useState("ALL");
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);

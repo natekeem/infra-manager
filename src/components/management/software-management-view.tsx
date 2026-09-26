@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { SoftwareProduct, SoftwareRelease } from "@/domain/models";
 import { managementRepo } from "@/services/management/mock-repository";
 import { Badge } from "@/components/tailgrids/core/badge";
@@ -16,6 +16,18 @@ export function SoftwareManagementView({
 }) {
   const [products, setProducts] = useState<SoftwareProduct[]>(initialProducts);
   const [releases, setReleases] = useState<SoftwareRelease[]>(initialReleases);
+
+  useEffect(() => {
+    let isMounted = true;
+    Promise.all([managementRepo.getProducts(), managementRepo.getReleases()]).then(([allProducts, allReleases]) => {
+      if (!isMounted) return;
+      if (allProducts && allProducts.length > 0) setProducts(allProducts);
+      if (allReleases && allReleases.length > 0) setReleases(allReleases);
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
   const [query, setQuery] = useState("");
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingRelease, setEditingRelease] = useState<SoftwareRelease | null>(null);

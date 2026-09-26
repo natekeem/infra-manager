@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { Asset, SopDocument, TopologyGroup } from "@/domain/models";
 import { managementRepo } from "@/services/management/mock-repository";
 import { Badge } from "@/components/tailgrids/core/badge";
@@ -17,6 +17,17 @@ export function SopManagementView({
   availableGroups?: TopologyGroup[];
 }) {
   const [sops, setSops] = useState<SopDocument[]>(initialSops);
+
+  useEffect(() => {
+    let isMounted = true;
+    managementRepo.getSops().then((all) => {
+      if (!isMounted) return;
+      if (all && all.length > 0) setSops(all);
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("ALL");
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);

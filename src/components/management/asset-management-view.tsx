@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import type { Asset, AssetType } from "@/domain/models";
 import { managementRepo } from "@/services/management/mock-repository";
 import { Badge } from "@/components/tailgrids/core/badge";
@@ -11,6 +11,19 @@ import { SlideDrawer } from "@/components/common/slide-drawer";
 export function AssetManagementView({ initialAssets }: { initialAssets: Asset[] }) {
   const { activeProject } = useProjectGroup();
   const [assets, setAssets] = useState<Asset[]>(initialAssets);
+
+  useEffect(() => {
+    let isMounted = true;
+    managementRepo.getAssets().then((all) => {
+      if (!isMounted) return;
+      if (all && all.length > 0) {
+        setAssets(all);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("ALL");
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);

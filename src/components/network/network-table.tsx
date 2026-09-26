@@ -6,15 +6,22 @@ import { ConnectionDrawer } from "./connection-drawer";
 import { StatusBadge } from "./status-badge";
 import { Badge } from "@/components/tailgrids/core/badge";
 import { SearchIcon } from "@/components/common/icons";
+import { useProjectGroup } from "@/context/project-group-context";
 
 export function NetworkTable({ statuses }: { statuses: NetworkStatus[] }) {
+  const { activeProject } = useProjectGroup();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("ALL");
   const [selected, setSelected] = useState<NetworkStatus | null>(null);
 
+  const scopedStatuses = useMemo(
+    () => statuses.filter((s) => !s.policy.projectGroupId || s.policy.projectGroupId === activeProject.id),
+    [statuses, activeProject.id]
+  );
+
   const filtered = useMemo(
     () =>
-      statuses.filter((s) => {
+      scopedStatuses.filter((s) => {
         const q =
           `${s.policy.sourceName} ${s.policy.sourceIp} ${s.policy.targetName} ${s.policy.targetIp} ${s.policy.port} ${s.policy.requestId ?? ""} ${s.policy.purpose ?? ""}`.toLowerCase();
         const hit = q.includes(query.toLowerCase());
@@ -42,10 +49,10 @@ export function NetworkTable({ statuses }: { statuses: NetworkStatus[] }) {
 
         return hit && f;
       }),
-    [statuses, query, filter]
+    [scopedStatuses, query, filter]
   );
 
-  const tcpFailures = statuses.filter(
+  const tcpFailures = scopedStatuses.filter(
     (s) => s.observation?.tcp === "DOWN" || s.reverseObservation?.tcp === "DOWN"
   ).length;
 
@@ -59,7 +66,7 @@ export function NetworkTable({ statuses }: { statuses: NetworkStatus[] }) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="w-full bg-transparent text-[11px] outline-none"
-              placeholder="Search source, target, IP, port, request ID..."
+              placeholder="출발지, 목적지, IP, 포트, 요청 ID 검색..."
             />
           </div>
 
@@ -68,16 +75,16 @@ export function NetworkTable({ statuses }: { statuses: NetworkStatus[] }) {
             onChange={(e) => setFilter(e.target.value)}
             className="h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2.5 text-[10px] outline-none"
           >
-            <option value="ALL">All ({statuses.length})</option>
-            <option value="ISSUES">Issues ({statuses.filter((s) => s.overall !== "NORMAL").length})</option>
-            <option value="TCP_FAILED">TCP Failed ({tcpFailures})</option>
-            <option value="EXPIRING">Expiring Soon (≤30d)</option>
-            <option value="EXPIRED">Policy Expired</option>
-            <option value="PENDING">Pending / Unapproved</option>
+            <option value="ALL">전체 ({statuses.length})</option>
+            <option value="ISSUES">이슈 ({statuses.filter((s) => s.overall !== "NORMAL").length})</option>
+            <option value="TCP_FAILED">TCP 실패 ({tcpFailures})</option>
+            <option value="EXPIRING">만료 예정 (≤30일)</option>
+            <option value="EXPIRED">정책 만료</option>
+            <option value="PENDING">대기 / 미승인</option>
           </select>
 
           <span className="ml-auto text-[10px] tabular-nums text-[var(--muted)]">
-            <b>{filtered.length}</b> / {statuses.length} policy connections
+            <b>{filtered.length}</b> / {scopedStatuses.length}개 정책 연결
           </span>
         </div>
 
@@ -96,24 +103,24 @@ export function NetworkTable({ statuses }: { statuses: NetworkStatus[] }) {
             <thead>
               <tr className="border-b border-[var(--border)] bg-[var(--surface-2)] text-[9px] uppercase tracking-[0.04em] text-[var(--muted)]">
                 <th colSpan={5} className="border-r border-[var(--border)] px-3 py-1.5 font-semibold text-[var(--foreground)]">
-                  Connection / Policy baseline
+                  연결 / 정책 기준 (Should Be)
                 </th>
                 <th colSpan={4} className="border-r border-[var(--border)] px-3 py-1.5 font-semibold text-[var(--foreground)]">
-                  Actual / Telegraf probe
+                  실측 / Telegraf 프로브 (Actual)
                 </th>
-                <th className="px-3 py-1.5 font-semibold text-[var(--foreground)]">Evaluation</th>
+                <th className="px-3 py-1.5 font-semibold text-[var(--foreground)]">상태 진단</th>
               </tr>
               <tr className="h-8 border-b border-[var(--border)] bg-[var(--surface-2)] text-[9px] uppercase tracking-[0.04em] text-[var(--muted)]">
-                <th className="px-3 py-1.5 font-medium">Source → Target</th>
-                <th className="px-3 py-1.5 font-medium">Direction</th>
-                <th className="px-3 py-1.5 font-medium">Protocol / Port</th>
-                <th className="px-3 py-1.5 font-medium">Approval</th>
-                <th className="border-r border-[var(--border)] px-3 py-1.5 font-medium">Expiry</th>
+                <th className="px-3 py-1.5 font-medium">출발지 → 목적지</th>
+                <th className="px-3 py-1.5 font-medium">방향</th>
+                <th className="px-3 py-1.5 font-medium">프로토콜 / 포트</th>
+                <th className="px-3 py-1.5 font-medium">승인 상태</th>
+                <th className="border-r border-[var(--border)] px-3 py-1.5 font-medium">만료일</th>
                 <th className="px-3 py-1.5 font-medium">Ping</th>
                 <th className="px-3 py-1.5 font-medium">TCP</th>
                 <th className="px-3 py-1.5 font-medium">RTT</th>
-                <th className="border-r border-[var(--border)] px-3 py-1.5 font-medium">Last Check</th>
-                <th className="px-3 py-1.5 font-medium">Status</th>
+                <th className="border-r border-[var(--border)] px-3 py-1.5 font-medium">최근 확인</th>
+                <th className="px-3 py-1.5 font-medium">상태</th>
               </tr>
             </thead>
             <tbody>

@@ -3,43 +3,78 @@ import type {
   ManagementRepository,
 } from "./repository";
 import type {
-  InfraAsset,
+  ArchitectureRelation,
+  Asset,
+  ClusterEntity,
   NetworkPolicy,
+  ProjectGroup,
   SoftwareProduct,
   SoftwareRelease,
   SopDocument,
-  VmAsset,
+  TopologyGroup,
 } from "@/domain/models";
 import {
-  nasAssets as initialNasAssets,
+  clusters as initialClusters,
   policies as initialPolicies,
+  projectGroups as initialProjectGroups,
+  relations as initialRelations,
   softwareProducts as initialSoftwareProducts,
   softwareReleases as initialSoftwareReleases,
   sops as initialSops,
+  topologyGroups as initialTopologyGroups,
   vms as initialVms,
 } from "@/services/api/infrastructure/mock-data";
 
 class MockManagementRepository implements ManagementRepository {
-  private assets: InfraAsset[] = [
-    ...initialVms.map((v) => ({ ...v, assetType: "VM" as const })),
-    ...initialNasAssets,
-  ];
+  private projects: ProjectGroup[] = [...initialProjectGroups];
+  private assets: Asset[] = [...initialVms];
+  private topologyGroups: TopologyGroup[] = [...initialTopologyGroups];
+  private clusters: ClusterEntity[] = [...initialClusters];
+  private relations: ArchitectureRelation[] = [...initialRelations];
   private products: SoftwareProduct[] = [...initialSoftwareProducts];
   private releases: SoftwareRelease[] = [...initialSoftwareReleases];
   private policies: NetworkPolicy[] = [...initialPolicies];
   private sops: SopDocument[] = [...initialSops];
 
+  // Project Groups
+  async getProjects(): Promise<ProjectGroup[]> {
+    return [...this.projects];
+  }
+
+  async createProject(project: ProjectGroup): Promise<ProjectGroup> {
+    const newProj: ProjectGroup = {
+      ...project,
+      id: project.id || `proj-${Date.now().toString(36)}`,
+    };
+    this.projects.unshift(newProj);
+    return newProj;
+  }
+
+  async updateProject(id: string, updates: Partial<ProjectGroup>): Promise<ProjectGroup> {
+    const idx = this.projects.findIndex((p) => p.id === id);
+    if (idx === -1) throw new Error(`Project not found: ${id}`);
+    const updated = { ...this.projects[idx], ...updates };
+    this.projects[idx] = updated;
+    return updated;
+  }
+
+  async deleteProject(id: string): Promise<boolean> {
+    const len = this.projects.length;
+    this.projects = this.projects.filter((p) => p.id !== id);
+    return this.projects.length < len;
+  }
+
   // Assets
-  async getAssets(): Promise<InfraAsset[]> {
+  async getAssets(): Promise<Asset[]> {
     return [...this.assets];
   }
 
-  async getAssetById(id: string): Promise<InfraAsset | null> {
+  async getAssetById(id: string): Promise<Asset | null> {
     return this.assets.find((a) => a.id === id) ?? null;
   }
 
-  async createAsset(asset: InfraAsset): Promise<InfraAsset> {
-    const newAsset: InfraAsset = {
+  async createAsset(asset: Asset): Promise<Asset> {
+    const newAsset: Asset = {
       ...asset,
       id: asset.id || `asset-${Date.now().toString(36)}`,
       lastVerifiedAt: new Date().toISOString(),
@@ -48,7 +83,7 @@ class MockManagementRepository implements ManagementRepository {
     return newAsset;
   }
 
-  async updateAsset(id: string, updates: Partial<InfraAsset>): Promise<InfraAsset> {
+  async updateAsset(id: string, updates: Partial<Asset>): Promise<Asset> {
     const idx = this.assets.findIndex((a) => a.id === id);
     if (idx === -1) throw new Error(`Asset not found: ${id}`);
     const updated = { ...this.assets[idx], ...updates, lastVerifiedAt: new Date().toISOString() };
@@ -60,6 +95,90 @@ class MockManagementRepository implements ManagementRepository {
     const len = this.assets.length;
     this.assets = this.assets.filter((a) => a.id !== id);
     return this.assets.length < len;
+  }
+
+  // Topology Groups
+  async getTopologyGroups(): Promise<TopologyGroup[]> {
+    return [...this.topologyGroups];
+  }
+
+  async createTopologyGroup(group: TopologyGroup): Promise<TopologyGroup> {
+    const newGroup: TopologyGroup = {
+      ...group,
+      id: group.id || `tg-${Date.now().toString(36)}`,
+    };
+    this.topologyGroups.unshift(newGroup);
+    return newGroup;
+  }
+
+  async updateTopologyGroup(id: string, updates: Partial<TopologyGroup>): Promise<TopologyGroup> {
+    const idx = this.topologyGroups.findIndex((g) => g.id === id);
+    if (idx === -1) throw new Error(`Topology group not found: ${id}`);
+    const updated = { ...this.topologyGroups[idx], ...updates };
+    this.topologyGroups[idx] = updated;
+    return updated;
+  }
+
+  async deleteTopologyGroup(id: string): Promise<boolean> {
+    const len = this.topologyGroups.length;
+    this.topologyGroups = this.topologyGroups.filter((g) => g.id !== id);
+    return this.topologyGroups.length < len;
+  }
+
+  // Clusters
+  async getClusters(): Promise<ClusterEntity[]> {
+    return [...this.clusters];
+  }
+
+  async createCluster(cluster: ClusterEntity): Promise<ClusterEntity> {
+    const newCluster: ClusterEntity = {
+      ...cluster,
+      id: cluster.id || `cluster-${Date.now().toString(36)}`,
+    };
+    this.clusters.unshift(newCluster);
+    return newCluster;
+  }
+
+  async updateCluster(id: string, updates: Partial<ClusterEntity>): Promise<ClusterEntity> {
+    const idx = this.clusters.findIndex((c) => c.id === id);
+    if (idx === -1) throw new Error(`Cluster not found: ${id}`);
+    const updated = { ...this.clusters[idx], ...updates };
+    this.clusters[idx] = updated;
+    return updated;
+  }
+
+  async deleteCluster(id: string): Promise<boolean> {
+    const len = this.clusters.length;
+    this.clusters = this.clusters.filter((c) => c.id !== id);
+    return this.clusters.length < len;
+  }
+
+  // Architecture Relations
+  async getRelations(): Promise<ArchitectureRelation[]> {
+    return [...this.relations];
+  }
+
+  async createRelation(relation: ArchitectureRelation): Promise<ArchitectureRelation> {
+    const newRel: ArchitectureRelation = {
+      ...relation,
+      id: relation.id || `rel-${Date.now().toString(36)}`,
+    };
+    this.relations.unshift(newRel);
+    return newRel;
+  }
+
+  async updateRelation(id: string, updates: Partial<ArchitectureRelation>): Promise<ArchitectureRelation> {
+    const idx = this.relations.findIndex((r) => r.id === id);
+    if (idx === -1) throw new Error(`Relation not found: ${id}`);
+    const updated = { ...this.relations[idx], ...updates };
+    this.relations[idx] = updated;
+    return updated;
+  }
+
+  async deleteRelation(id: string): Promise<boolean> {
+    const len = this.relations.length;
+    this.relations = this.relations.filter((r) => r.id !== id);
+    return this.relations.length < len;
   }
 
   // Software Catalog
@@ -111,8 +230,8 @@ class MockManagementRepository implements ManagementRepository {
   async createPolicy(policy: NetworkPolicy): Promise<NetworkPolicy> {
     const newPolicy: NetworkPolicy = {
       ...policy,
-      id: policy.id || `np-${Date.now().toString(36)}`,
-      direction: policy.direction ?? "ONE_WAY",
+      id: policy.id || `pol-${Date.now().toString(36)}`,
+      requestedAt: policy.requestedAt || new Date().toISOString(),
     };
     this.policies.unshift(newPolicy);
     return newPolicy;
@@ -132,7 +251,7 @@ class MockManagementRepository implements ManagementRepository {
     return this.policies.length < len;
   }
 
-  // SOPs
+  // SOP Documents
   async getSops(): Promise<SopDocument[]> {
     return [...this.sops];
   }
@@ -141,7 +260,7 @@ class MockManagementRepository implements ManagementRepository {
     const newSop: SopDocument = {
       ...sop,
       id: sop.id || `sop-${Date.now().toString(36)}`,
-      updatedAt: new Date().toISOString().slice(0, 10),
+      updatedAt: new Date().toISOString().split("T")[0],
     };
     this.sops.unshift(newSop);
     return newSop;
@@ -150,7 +269,11 @@ class MockManagementRepository implements ManagementRepository {
   async updateSop(id: string, updates: Partial<SopDocument>): Promise<SopDocument> {
     const idx = this.sops.findIndex((s) => s.id === id);
     if (idx === -1) throw new Error(`SOP not found: ${id}`);
-    const updated = { ...this.sops[idx], ...updates, updatedAt: new Date().toISOString().slice(0, 10) };
+    const updated = {
+      ...this.sops[idx],
+      ...updates,
+      updatedAt: new Date().toISOString().split("T")[0],
+    };
     this.sops[idx] = updated;
     return updated;
   }
@@ -163,21 +286,21 @@ class MockManagementRepository implements ManagementRepository {
 
   // Batch Import
   async importBatch(payload: {
-    assets?: InfraAsset[];
+    assets?: Asset[];
     policies?: NetworkPolicy[];
     releases?: SoftwareRelease[];
     sops?: SopDocument[];
   }): Promise<BatchImportResult> {
+    const errors: string[] = [];
     let assetsCount = 0;
     let policiesCount = 0;
     let releasesCount = 0;
     let sopsCount = 0;
-    const errors: string[] = [];
 
-    if (payload.assets) {
+    if (payload.assets?.length) {
       for (const a of payload.assets) {
         if (!a.hostname || !a.ipAddress) {
-          errors.push(`Asset invalid (missing hostname/ip): ${JSON.stringify(a)}`);
+          errors.push(`Asset missing hostname/ipAddress: ${JSON.stringify(a)}`);
           continue;
         }
         await this.createAsset(a);
@@ -185,10 +308,10 @@ class MockManagementRepository implements ManagementRepository {
       }
     }
 
-    if (payload.policies) {
+    if (payload.policies?.length) {
       for (const p of payload.policies) {
-        if (!p.sourceIp || !p.targetIp || !p.port) {
-          errors.push(`Policy invalid (missing sourceIp/targetIp/port): ${JSON.stringify(p)}`);
+        if (!p.sourceVmId || !p.targetIp || !p.port) {
+          errors.push(`Policy missing mandatory fields: ${JSON.stringify(p)}`);
           continue;
         }
         await this.createPolicy(p);
@@ -196,10 +319,10 @@ class MockManagementRepository implements ManagementRepository {
       }
     }
 
-    if (payload.releases) {
+    if (payload.releases?.length) {
       for (const r of payload.releases) {
         if (!r.productName || !r.version) {
-          errors.push(`Release invalid (missing productName/version): ${JSON.stringify(r)}`);
+          errors.push(`Release missing productName/version: ${JSON.stringify(r)}`);
           continue;
         }
         await this.createRelease(r);
@@ -207,10 +330,10 @@ class MockManagementRepository implements ManagementRepository {
       }
     }
 
-    if (payload.sops) {
+    if (payload.sops?.length) {
       for (const s of payload.sops) {
-        if (!s.title) {
-          errors.push(`SOP invalid (missing title): ${JSON.stringify(s)}`);
+        if (!s.title || !s.category) {
+          errors.push(`SOP missing title/category: ${JSON.stringify(s)}`);
           continue;
         }
         await this.createSop(s);

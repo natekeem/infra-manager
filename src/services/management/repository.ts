@@ -1,12 +1,14 @@
 import type {
+  ArchitectureRelation,
+  Asset,
   ClusterEntity,
   InfraAsset,
-  NasAsset,
   NetworkPolicy,
+  ProjectGroup,
   SoftwareProduct,
   SoftwareRelease,
   SopDocument,
-  VmAsset,
+  TopologyGroup,
 } from "@/domain/models";
 
 export interface BatchImportResult {
@@ -19,12 +21,36 @@ export interface BatchImportResult {
 }
 
 export interface ManagementRepository {
+  // Project Groups
+  getProjects(): Promise<ProjectGroup[]>;
+  createProject(project: ProjectGroup): Promise<ProjectGroup>;
+  updateProject(id: string, updates: Partial<ProjectGroup>): Promise<ProjectGroup>;
+  deleteProject(id: string): Promise<boolean>;
+
   // Assets
-  getAssets(): Promise<InfraAsset[]>;
-  getAssetById(id: string): Promise<InfraAsset | null>;
-  createAsset(asset: InfraAsset): Promise<InfraAsset>;
-  updateAsset(id: string, updates: Partial<InfraAsset>): Promise<InfraAsset>;
+  getAssets(): Promise<Asset[]>;
+  getAssetById(id: string): Promise<Asset | null>;
+  createAsset(asset: Asset): Promise<Asset>;
+  updateAsset(id: string, updates: Partial<Asset>): Promise<Asset>;
   deleteAsset(id: string): Promise<boolean>;
+
+  // Topology Groups
+  getTopologyGroups(): Promise<TopologyGroup[]>;
+  createTopologyGroup(group: TopologyGroup): Promise<TopologyGroup>;
+  updateTopologyGroup(id: string, updates: Partial<TopologyGroup>): Promise<TopologyGroup>;
+  deleteTopologyGroup(id: string): Promise<boolean>;
+
+  // Clusters
+  getClusters(): Promise<ClusterEntity[]>;
+  createCluster(cluster: ClusterEntity): Promise<ClusterEntity>;
+  updateCluster(id: string, updates: Partial<ClusterEntity>): Promise<ClusterEntity>;
+  deleteCluster(id: string): Promise<boolean>;
+
+  // Architecture Relations
+  getRelations(): Promise<ArchitectureRelation[]>;
+  createRelation(relation: ArchitectureRelation): Promise<ArchitectureRelation>;
+  updateRelation(id: string, updates: Partial<ArchitectureRelation>): Promise<ArchitectureRelation>;
+  deleteRelation(id: string): Promise<boolean>;
 
   // Software Products & Catalog Releases
   getProducts(): Promise<SoftwareProduct[]>;
@@ -48,7 +74,7 @@ export interface ManagementRepository {
 
   // Batch Import
   importBatch(payload: {
-    assets?: InfraAsset[];
+    assets?: Asset[];
     policies?: NetworkPolicy[];
     releases?: SoftwareRelease[];
     sops?: SopDocument[];

@@ -15,6 +15,7 @@ import { EoslRiskSummary } from "@/components/dashboard/eosl-risk-summary";
 import { VmDrawer } from "@/components/infrastructure/vm-drawer";
 import { ConnectionDrawer } from "@/components/network/connection-drawer";
 import { ArrowUpRightIcon } from "@/components/common/icons";
+import { useProjectGroup } from "@/context/project-group-context";
 
 interface DashboardViewProps {
   vms: VmAsset[];
@@ -25,19 +26,54 @@ interface DashboardViewProps {
 }
 
 export function DashboardView({ vms, network, software, sops, trend }: DashboardViewProps) {
+  const { activeProject } = useProjectGroup();
   const [selectedVm, setSelectedVm] = useState<VmAsset | null>(null);
   const [selectedConnection, setSelectedConnection] = useState<NetworkStatus | null>(null);
 
+  // Dynamic filtering by active project group
+  const projectVms = useMemo(
+    () => vms.filter((v) => !v.projectGroupId || v.projectGroupId === activeProject.id),
+    [vms, activeProject.id]
+  );
+
+  const projectVmIds = useMemo(() => new Set(projectVms.map((v) => v.id)), [projectVms]);
+
+  const projectNetwork = useMemo(
+    () =>
+      network.filter(
+        (n) =>
+          (!n.policy.projectGroupId || n.policy.projectGroupId === activeProject.id) &&
+          (projectVmIds.has(n.policy.sourceVmId) || projectVmIds.has(n.policy.targetVmId ?? ""))
+      ),
+    [network, activeProject.id, projectVmIds]
+  );
+
+  const projectSoftware = useMemo(
+    () => software.filter((s) => projectVmIds.has(s.vmId)),
+    [software, projectVmIds]
+  );
+
+  const projectSops = useMemo(
+    () =>
+      sops.filter(
+        (s) =>
+          (!s.projectGroupId || s.projectGroupId === activeProject.id) ||
+          s.relatedVmIds.some((id) => projectVmIds.has(id))
+      ),
+    [sops, activeProject.id, projectVmIds]
+  );
+
+  // Dynamic metrics calculation from active dataset
   const metrics: SummaryMetrics = useMemo(() => {
-    const vmHealthy = vms.filter((v) => v.health === "healthy").length;
-    const vmWarning = vms.filter((v) => v.health === "warning").length;
-    const vmCritical = vms.filter((v) => v.health === "critical").length;
+    const vmHealthy = projectVms.filter((v) => v.health === "healthy").length;
+    const vmWarning = projectVms.filter((v) => v.health === "warning").length;
+    const vmCritical = projectVms.filter((v) => v.health === "critical").length;
 
-    const tcpReachable = network.filter((n) => n.observation?.tcp === "UP").length;
-    const tcpFailed = network.filter((n) => n.observation?.tcp === "DOWN").length;
+    const tcpReachable = projectNetwork.filter((n) => n.observation?.tcp === "UP").length;
+    const tcpFailed = projectNetwork.filter((n) => n.observation?.tcp === "DOWN").length;
 
-    const policyExpiring = network.filter((n) => n.overall === "EXPIRING").length;
-    const policyExpired = network.filter(
+    const policyExpiring = projectNetwork.filter((n) => n.overall === "EXPIRING").length;
+    const policyExpired = projectNetwork.filter(
       (n) =>
         n.overall === "POLICY_EXPIRED_BUT_REACHABLE" ||
         n.overall === "POLICY_EXPIRED_AND_UNREACHABLE" ||
@@ -45,8 +81,8 @@ export function DashboardView({ vms, network, software, sops, trend }: Dashboard
     ).length;
 
     const now = new Date("2026-09-21T00:28:00+09:00");
-    const vmEosl = vms.map((v) => getEoslState(v.eoslDate, now).state);
-    const swEosl = software.map((s) => getEoslState(s.eoslDate, now).state);
+    const vmEosl = projectVms.map((v) => getEoslState(v.eoslDate, now).state);
+    const swEosl = projectSoftware.map((s) => getEoslState(s.eoslDate, now).state);
     const allEosl = [...vmEosl, ...swEosl];
 
     const eoslExpired = allEosl.filter((s) => s === "EOSL").length;
@@ -54,10 +90,9 @@ export function DashboardView({ vms, network, software, sops, trend }: Dashboard
     const eoslD180 = allEosl.filter((s) => s === "D180").length;
     const eoslTotal = eoslExpired + eoslD90 + eoslD180;
 
-    // Critical issues: degraded VMs, TCP failures, unapproved reachable, expired unreachable
     const criticalIssues =
       vmCritical +
-      network.filter(
+      projectNetwork.filter(
         (n) =>
           n.observation?.tcp === "DOWN" ||
           n.overall === "POLICY_VALID_BUT_UNREACHABLE" ||
@@ -66,11 +101,11 @@ export function DashboardView({ vms, network, software, sops, trend }: Dashboard
       ).length;
 
     return {
-      vmTotal: vms.length,
+      vmTotal: projectVms.length,
       vmHealthy,
       vmWarning,
       vmCritical,
-      networkTotal: network.length,
+      networkTotal: projectNetwork.length,
       tcpReachable,
       tcpFailed,
       policyExpiring,
@@ -81,23 +116,51 @@ export function DashboardView({ vms, network, software, sops, trend }: Dashboard
       eoslD180,
       criticalIssues,
     };
-  }, [vms, network, software]);
+  }, [projectVms, projectNetwork, projectSoftware]);
+
+  // Systems Breakdown
+  const systems = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const v of projectVms) {
+      const s = v.system || "Common";
+      map.set(s, (map.get(s) ?? 0) + 1);
+    }
+    return Array.from(map.entries()).map(([name, count]) => ({ name, count }));
+  }, [projectVms]);
+
+  // Environment Health Breakdown
+  const envHealth = useMemo(() => {
+    const envs = ["PROD", "QA", "DEV"];
+    return envs
+      .map((env) => {
+        const vList = projectVms.filter((v) => v.environment === env);
+        if (vList.length === 0) return null;
+        const issues = vList.filter((v) => v.health !== "healthy").length;
+        const netIssues = projectNetwork.filter(
+          (n) =>
+            vList.some((v) => v.id === n.policy.sourceVmId) &&
+            n.overall !== "NORMAL"
+        ).length;
+        return { name: env, count: vList.length, issues: issues + netIssues };
+      })
+      .filter(Boolean) as { name: string; count: number; issues: number }[];
+  }, [projectVms, projectNetwork]);
 
   return (
     <>
       <PageHeader
-        title="Infrastructure Overview"
-        description="RPA platform operational status: declared firewall policies vs. observed Telegraf TCP telemetry."
+        title={`${activeProject.name} 운영 현황`}
+        description={`선언된 방화벽 정책과 Telegraf TCP 프로브 기반의 운영 현황입니다.`}
         actions={
           <>
             <span className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1.5 text-[9px] text-[var(--muted)]">
-              ● LIVE TELEMETRY · 1m
+              ● 실시간 모니터링 · 1m
             </span>
             <Link
               href="/infrastructure/architecture"
               className="flex h-8 items-center gap-1 rounded-md bg-[#5750f1] px-2.5 text-[10px] font-medium !text-white dark:!text-white transition hover:bg-[#4938d6]"
             >
-              Open Architecture <ArrowUpRightIcon className="h-3.5 w-3.5 text-white" />
+              아키텍처 보기 <ArrowUpRightIcon className="h-3.5 w-3.5 text-white" />
             </Link>
           </>
         }
@@ -106,12 +169,48 @@ export function DashboardView({ vms, network, software, sops, trend }: Dashboard
       {/* 1. Core Summary Metrics Bar (All 8 Core Information Points) */}
       <SummaryStrip metrics={metrics} />
 
+      {/* 1.1 Compact Systems & Environment Health Row */}
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-[10px]">
+        {/* Systems */}
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-[9px] font-semibold uppercase tracking-wider text-[var(--muted-2)]">
+            시스템:
+          </span>
+          {systems.map((s) => (
+            <span key={s.name} className="flex items-center gap-1 font-mono text-[9.5px]">
+              <span className="font-semibold text-[var(--foreground)]">{s.name}</span>
+              <span className="text-[var(--muted)]">({s.count})</span>
+            </span>
+          ))}
+        </div>
+
+        {/* Environments */}
+        <div className="flex items-center gap-3">
+          <span className="text-[9px] font-semibold uppercase tracking-wider text-[var(--muted-2)]">
+            환경:
+          </span>
+          {envHealth.map((e) => (
+            <span key={e.name} className="flex items-center gap-1 text-[9.5px]">
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  e.issues > 0 ? "bg-amber-500" : "bg-emerald-500"
+                }`}
+              />
+              <span className="font-semibold text-[var(--foreground)]">{e.name}</span>
+              <span className="text-[var(--muted)]">
+                {e.issues > 0 ? `${e.issues} 경고` : "정상"}
+              </span>
+            </span>
+          ))}
+        </div>
+      </div>
+
       {/* 2. Top Row: CPU/Memory/Disk Resource Trend + Control Signals */}
       <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-[1.35fr_.65fr]">
         <Card>
           <CardHeader
-            title="Resource Trend"
-            description="Fleet average over last 24h"
+            title="리소스 추이"
+            description="최근 24시간 평균"
             action={
               <div className="flex items-center gap-3 text-[9px]">
                 <span className="flex items-center gap-1 text-[var(--muted)]">
@@ -130,15 +229,15 @@ export function DashboardView({ vms, network, software, sops, trend }: Dashboard
         </Card>
 
         <Card>
-          <CardHeader title="Control Signals" description="Immediate operational priorities" />
+          <CardHeader title="핵심 지표" description="즉시 조치가 필요한 운영 우선순위" />
           <div className="grid grid-cols-2 gap-px bg-[var(--border)]">
             {[
-              ["TCP Failed", metrics.tcpFailed, "danger"],
-              ["Critical VMs", metrics.vmCritical, "danger"],
-              ["Policy Expiring", metrics.policyExpiring, "warning"],
-              ["Policy Expired", metrics.policyExpired, "danger"],
-              ["VM Attention", metrics.vmWarning + metrics.vmCritical, "warning"],
-              ["EOSL Risk", metrics.eoslTotal, "warning"],
+              ["TCP 실패", metrics.tcpFailed, "danger"],
+              ["위험 자산", metrics.vmCritical, "danger"],
+              ["정책 만료 예정", metrics.policyExpiring, "warning"],
+              ["정책 만료됨", metrics.policyExpired, "danger"],
+              ["주의 필요", metrics.vmWarning + metrics.vmCritical, "warning"],
+              ["EOSL 위험", metrics.eoslTotal, "warning"],
             ].map(([label, value, tone]) => (
               <div key={String(label)} className="bg-[var(--surface)] px-3 py-2.5">
                 <div className="text-[9px] text-[var(--muted)]">{label}</div>
@@ -157,11 +256,11 @@ export function DashboardView({ vms, network, software, sops, trend }: Dashboard
             ))}
           </div>
           <div className="border-t border-[var(--border)] p-3 text-[9px] leading-5 text-[var(--muted)]">
-            <b className="text-[var(--text)]">Two-Dimensional Network Model:</b>
+            <b className="text-[var(--text)]">2차원 네트워크 모델:</b>
             <br />
-            Declared Policy = <i>Should Be</i> · Telegraf TCP Probe = <i>Actual</i>.
+            선언 정책 = <i>Should Be</i> · Telegraf TCP 프로브 = <i>Actual</i>.
             <br />
-            Ping is diagnostic context only. Ping UP + TCP DOWN indicates service/firewall implementation failure.
+            Ping은 진단 참고용입니다. Ping UP + TCP DOWN은 서비스/방화벽 구현 오류를 의미합니다.
           </div>
         </Card>
       </div>
@@ -170,28 +269,28 @@ export function DashboardView({ vms, network, software, sops, trend }: Dashboard
       <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-[1.2fr_.8fr]">
         <Card>
           <CardHeader
-            title="Recent Active Issues"
-            description="Policy / actual mismatch, connectivity failure, and policy expiration"
+            title="최근 주요 이슈"
+            description="정책/실측 불일치, 연결 실패, 정책 만료"
             action={
               <Link href="/network/connectivity" className="text-[9px] font-medium text-[#5750f1] hover:underline">
-                View All ({network.filter((s) => s.overall !== "NORMAL").length}) →
+                전체 보기 ({projectNetwork.filter((s) => s.overall !== "NORMAL").length}) →
               </Link>
             }
           />
-          <IssuesTable statuses={network} onSelect={setSelectedConnection} />
+          <IssuesTable statuses={projectNetwork} onSelect={setSelectedConnection} />
         </Card>
 
         <Card>
           <CardHeader
-            title="VM Status Summary"
-            description="Prioritizing warning/critical assets & high utilization"
+            title="자산 상태 요약"
+            description="경고/위험 자산 및 높은 사용률 우선 표시"
             action={
               <Link href="/infrastructure/vms" className="text-[9px] font-medium text-[#5750f1] hover:underline">
-                Full Inventory ({vms.length}) →
+                전체 인벤토리 ({projectVms.length}) →
               </Link>
             }
           />
-          <VmMiniTable vms={vms} onSelect={setSelectedVm} />
+          <VmMiniTable vms={projectVms} onSelect={setSelectedVm} />
         </Card>
       </div>
 
@@ -199,37 +298,37 @@ export function DashboardView({ vms, network, software, sops, trend }: Dashboard
       <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-[1fr_1fr]">
         <Card>
           <CardHeader
-            title="Expiring Network Policies"
-            description="Approved firewall requests expiring within 30 days or overdue"
+            title="만료 예정 네트워크 정책"
+            description="30일 이내 만료 예정 또는 기한 초과된 승인 방화벽 요청"
             action={
               <Link href="/network/connectivity" className="text-[9px] font-medium text-[#5750f1] hover:underline">
-                Policy & Connectivity →
+                정책 및 연결 상태 →
               </Link>
             }
           />
-          <ExpiringPolicies statuses={network} onSelect={setSelectedConnection} />
+          <ExpiringPolicies statuses={projectNetwork} onSelect={setSelectedConnection} />
         </Card>
 
         <Card>
           <CardHeader
-            title="EOSL Risk Summary"
-            description="Operating system & installed software approaching end-of-support"
+            title="EOSL 위험 요약"
+            description="지원 종료 임박한 운영체제 및 설치 소프트웨어"
             action={
               <Link href="/infrastructure/software" className="text-[9px] font-medium text-[#5750f1] hover:underline">
-                Software & EOSL →
+                소프트웨어 및 EOSL →
               </Link>
             }
           />
-          <EoslRiskSummary vms={vms} software={software} onSelectVm={setSelectedVm} />
+          <EoslRiskSummary vms={projectVms} software={projectSoftware} onSelectVm={setSelectedVm} />
         </Card>
       </div>
 
       {/* Sliding Drawers */}
       <VmDrawer
         vm={selectedVm}
-        network={network}
-        software={software}
-        sops={sops}
+        network={projectNetwork}
+        software={projectSoftware}
+        sops={projectSops}
         open={!!selectedVm}
         onClose={() => setSelectedVm(null)}
       />

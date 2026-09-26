@@ -4,10 +4,12 @@ import {
   getClusters,
   getNasAssets,
   getNetworkStatuses,
+  getRelations,
   getSoftware,
   getSoftwareProducts,
   getSoftwareReleases,
   getSops,
+  getTopologyGroups,
   getVmAssets,
 } from "@/services/api/infrastructure";
 
@@ -21,6 +23,8 @@ export default async function ArchitecturePage() {
     nasAssets,
     softwareReleases,
     softwareProducts,
+    relations,
+    topologyGroups,
   ] = await Promise.all([
     getVmAssets(),
     getNetworkStatuses(),
@@ -30,13 +34,15 @@ export default async function ArchitecturePage() {
     getNasAssets(),
     getSoftwareReleases(),
     getSoftwareProducts(),
+    getRelations(),
+    getTopologyGroups(),
   ]);
 
   return (
     <>
       <PageHeader
         title="Live Architecture"
-        description="Default view is intentionally grouped. Drill into a tier only when VM-level detail is required."
+        description="오버뷰에서 구성을 요약하고 전체보기에서 개별 자산을 확인합니다. 환경과 그룹을 선택해 범위를 좁힐 수 있습니다."
       />
       <ArchitectureCanvas
         vms={vms}
@@ -47,8 +53,9 @@ export default async function ArchitecturePage() {
         nasAssets={nasAssets}
         softwareReleases={softwareReleases}
         softwareProducts={softwareProducts}
+        relations={relations}
+        topologyGroups={topologyGroups}
       />
     </>
   );
 }
-

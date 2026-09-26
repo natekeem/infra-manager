@@ -7,8 +7,8 @@ export default async function Page() {
   return (
     <>
       <PageHeader
-        title="Policy & Connectivity"
-        description="Firewall policy is the baseline (Should Be). Source-side Telegraf Ping/TCP probes are joined as the observed state (Actual)."
+        title="정책 및 연결 상태"
+        description="방화벽 정책이 기준선(Should Be)이며, 출발지 Telegraf Ping/TCP 프로브가 실측 상태(Actual)로 결합됩니다."
       />
       <NetworkTable statuses={statuses} />
     </>

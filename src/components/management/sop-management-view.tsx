@@ -1,16 +1,25 @@
 "use client";
 
 import { useState } from "react";
-import type { SopDocument } from "@/domain/models";
+import type { Asset, SopDocument, TopologyGroup } from "@/domain/models";
 import { managementRepo } from "@/services/management/mock-repository";
 import { Badge } from "@/components/tailgrids/core/badge";
 import { SearchIcon } from "@/components/common/icons";
+import { SlideDrawer } from "@/components/common/slide-drawer";
 
-export function SopManagementView({ initialSops }: { initialSops: SopDocument[] }) {
+export function SopManagementView({
+  initialSops,
+  availableAssets = [],
+  availableGroups = [],
+}: {
+  initialSops: SopDocument[];
+  availableAssets?: Asset[];
+  availableGroups?: TopologyGroup[];
+}) {
   const [sops, setSops] = useState<SopDocument[]>(initialSops);
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("ALL");
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingSop, setEditingSop] = useState<SopDocument | null>(null);
 
   // Form state
@@ -25,6 +34,57 @@ export function SopManagementView({ initialSops }: { initialSops: SopDocument[] 
     updatedAt: new Date().toISOString().slice(0, 10),
   });
 
+  function addVm(vmId: string) {
+    if (!vmId) return;
+    setFormData((prev) => {
+      const current = prev.relatedVmIds ?? [];
+      if (current.includes(vmId)) return prev;
+      return { ...prev, relatedVmIds: [...current, vmId] };
+    });
+  }
+
+  function removeVm(vmId: string) {
+    setFormData((prev) => ({
+      ...prev,
+      relatedVmIds: (prev.relatedVmIds ?? []).filter((id) => id !== vmId),
+    }));
+  }
+
+  function addGroupVms(groupKey: string) {
+    if (!groupKey) return;
+    let targetVms: Asset[] = [];
+    if (groupKey === "ALL_PROD") {
+      targetVms = availableAssets.filter((a) => a.environment === "PROD");
+    } else if (groupKey === "ALL_QA") {
+      targetVms = availableAssets.filter((a) => a.environment === "QA");
+    } else if (groupKey === "ALL_DEV") {
+      targetVms = availableAssets.filter((a) => a.environment === "DEV");
+    } else if (groupKey === "ROLE_DB") {
+      targetVms = availableAssets.filter((a) => (a.role ?? "").includes("DB"));
+    } else if (groupKey === "ROLE_AP") {
+      targetVms = availableAssets.filter((a) => (a.role ?? "").includes("AP"));
+    } else {
+      const group = availableGroups.find((g) => g.id === groupKey);
+      if (group) {
+        targetVms = availableAssets.filter((a) =>
+          (group.domain && a.domain === group.domain) ||
+          (group.system && a.system === group.system) ||
+          (group.environment && a.environment === group.environment && (!group.domain || a.domain === group.domain))
+        );
+      }
+    }
+
+    const idsToAdd = targetVms.map((v) => v.id);
+    setFormData((prev) => {
+      const set = new Set([...(prev.relatedVmIds ?? []), ...idsToAdd]);
+      return { ...prev, relatedVmIds: Array.from(set) };
+    });
+  }
+
+  function clearVms() {
+    setFormData((prev) => ({ ...prev, relatedVmIds: [] }));
+  }
+
   const categories = Array.from(new Set(sops.map((s) => s.category)));
 
   const filtered = sops.filter((s) => {
@@ -38,7 +98,7 @@ export function SopManagementView({ initialSops }: { initialSops: SopDocument[] 
     return matchQ && matchCat;
   });
 
-  function openCreateModal() {
+  function openCreateDrawer() {
     setEditingSop(null);
     setFormData({
       title: "",
@@ -50,13 +110,13 @@ export function SopManagementView({ initialSops }: { initialSops: SopDocument[] 
       relatedVmIds: [],
       updatedAt: new Date().toISOString().slice(0, 10),
     });
-    setIsModalOpen(true);
+    setIsDrawerOpen(true);
   }
 
-  function openEditModal(sop: SopDocument) {
+  function openEditDrawer(sop: SopDocument) {
     setEditingSop(sop);
     setFormData({ ...sop });
-    setIsModalOpen(true);
+    setIsDrawerOpen(true);
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -70,7 +130,7 @@ export function SopManagementView({ initialSops }: { initialSops: SopDocument[] 
       const created = await managementRepo.createSop(formData as SopDocument);
       setSops((prev) => [created, ...prev]);
     }
-    setIsModalOpen(false);
+    setIsDrawerOpen(false);
   }
 
   async function handleDelete(id: string) {
@@ -90,7 +150,7 @@ export function SopManagementView({ initialSops }: { initialSops: SopDocument[] 
             aria-label="Filter category"
             className="h-7 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[10px] text-[var(--foreground)] outline-none"
           >
-            <option value="ALL">All Categories</option>
+            <option value="ALL">전체 분류</option>
             {categories.map((c) => (
               <option key={c} value={c}>
                 {c}
@@ -104,17 +164,17 @@ export function SopManagementView({ initialSops }: { initialSops: SopDocument[] 
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="w-full bg-transparent text-[10px] text-[var(--foreground)] outline-none"
-              placeholder="Search SOP title, summary, vm..."
+              placeholder="SOP 제목, 요약, VM 검색..."
             />
           </div>
         </div>
 
         <button
           type="button"
-          onClick={openCreateModal}
+          onClick={openCreateDrawer}
           className="flex h-7 items-center gap-1 rounded-md bg-[#5750f1] px-3 text-[10px] font-semibold text-white transition hover:bg-[#463fc9]"
         >
-          <span>+ Register SOP</span>
+          <span>+ SOP 등록</span>
         </button>
       </div>
 
@@ -124,13 +184,13 @@ export function SopManagementView({ initialSops }: { initialSops: SopDocument[] 
           <table className="w-full min-w-[960px] text-left text-[10px]">
             <thead>
               <tr className="border-b border-[var(--border)] bg-[var(--surface-2)] text-[9px] uppercase tracking-[0.04em] text-[var(--muted)]">
-                <Th>Title</Th>
-                <Th>Category</Th>
-                <Th>Severity</Th>
-                <Th>Summary</Th>
-                <Th>Target / Linked VMs</Th>
-                <Th>Updated Date</Th>
-                <Th className="text-right">Actions</Th>
+                <Th>제목</Th>
+                <Th>분류</Th>
+                <Th>중요도</Th>
+                <Th>요약</Th>
+                <Th>대상 / 연결된 VM</Th>
+                <Th>수정일</Th>
+                <Th className="text-right">관리</Th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border)]">
@@ -142,12 +202,17 @@ export function SopManagementView({ initialSops }: { initialSops: SopDocument[] 
                 </tr>
               ) : (
                 filtered.map((s) => (
-                  <tr key={s.id} className="hover:bg-[var(--surface-2)] transition-colors">
+                  <tr
+                    key={s.id}
+                    onClick={() => openEditDrawer(s)}
+                    className="cursor-pointer hover:bg-[var(--surface-2)] transition-colors"
+                  >
                     <Td>
                       <a
                         href={s.url ?? "#"}
                         target="_blank"
                         rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
                         className="font-bold text-[#5750f1] hover:underline"
                       >
                         {s.title}
@@ -189,20 +254,16 @@ export function SopManagementView({ initialSops }: { initialSops: SopDocument[] 
                         {s.updatedAt ?? "-"}
                       </span>
                     </Td>
-                    <Td className="text-right space-x-1.5">
+                    <Td className="text-right">
                       <button
                         type="button"
-                        onClick={() => openEditModal(s)}
-                        className="rounded border border-[var(--border)] px-2 py-0.5 text-[9px] hover:border-[#5750f1] hover:text-[#5750f1] transition-colors"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(s.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDelete(s.id);
+                        }}
                         className="rounded border border-[var(--border)] px-2 py-0.5 text-[9px] text-[var(--danger)] hover:border-[var(--danger)] hover:bg-[var(--danger-surface)] transition-colors"
                       >
-                        Delete
+                        삭제
                       </button>
                     </Td>
                   </tr>
@@ -213,128 +274,233 @@ export function SopManagementView({ initialSops }: { initialSops: SopDocument[] 
         </div>
       </div>
 
-      {/* Modal Form */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 shadow-xl">
-            <div className="mb-3 flex items-center justify-between border-b border-[var(--border)] pb-2">
-              <h3 className="text-sm font-bold text-[var(--foreground)]">
-                {editingSop ? "Edit SOP Document" : "Register New SOP"}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setIsModalOpen(false)}
-                className="text-xs text-[var(--muted)] hover:text-[var(--foreground)]"
+      <SlideDrawer
+        open={isDrawerOpen}
+        onClose={() => setIsDrawerOpen(false)}
+        title={editingSop ? "SOP 수정" : "SOP 등록"}
+        width={460}
+      >
+        <form onSubmit={handleSave} className="space-y-2.5 text-[10px] p-4">
+          <div>
+            <label className="mb-1 block font-medium text-[var(--muted)]">SOP 제목 *</label>
+            <input
+              required
+              value={formData.title}
+              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+              placeholder="e.g. MSSQL Failover Recovery Procedure"
+              className="h-7 w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 outline-none text-[var(--foreground)]"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="mb-1 block font-medium text-[var(--muted)]">분류</label>
+              <select
+                value={formData.category}
+                onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                className="h-7 w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 outline-none text-[var(--foreground)]"
               >
-                ✕
-              </button>
+                <option value="RECOVERY">RECOVERY</option>
+                <option value="MAINTENANCE">MAINTENANCE</option>
+                <option value="NETWORK">NETWORK</option>
+                <option value="SECURITY">SECURITY</option>
+                <option value="MONITORING">MONITORING</option>
+              </select>
             </div>
+            <div>
+              <label className="mb-1 block font-medium text-[var(--muted)]">중요도</label>
+              <select
+                value={formData.severity}
+                onChange={(e) => setFormData({ ...formData, severity: e.target.value as any })}
+                className="h-7 w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 outline-none text-[var(--foreground)]"
+              >
+                <option value="CRITICAL">CRITICAL</option>
+                <option value="HIGH">HIGH</option>
+                <option value="MEDIUM">MEDIUM</option>
+                <option value="LOW">LOW</option>
+              </select>
+            </div>
+          </div>
 
-            <form onSubmit={handleSave} className="space-y-2.5 text-[10px]">
-              <div>
-                <label className="mb-1 block font-medium text-[var(--muted)]">SOP Title *</label>
-                <input
-                  required
-                  value={formData.title}
-                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                  placeholder="e.g. MSSQL Failover Recovery Procedure"
-                  className="h-7 w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 outline-none text-[var(--foreground)]"
-                />
-              </div>
+          <div>
+            <label className="mb-1 block font-medium text-[var(--muted)]">요약 *</label>
+            <textarea
+              required
+              rows={3}
+              value={formData.summary}
+              onChange={(e) => setFormData({ ...formData, summary: e.target.value })}
+              placeholder="절차 요약 및 초기 조치사항을 입력하세요..."
+              className="w-full rounded border border-[var(--border)] bg-[var(--surface)] p-2 outline-none text-[var(--foreground)]"
+            />
+          </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="mb-1 block font-medium text-[var(--muted)]">Category</label>
-                  <select
-                    value={formData.category}
-                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                    className="h-7 w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 outline-none text-[var(--foreground)]"
-                  >
-                    <option value="RECOVERY">RECOVERY</option>
-                    <option value="MAINTENANCE">MAINTENANCE</option>
-                    <option value="NETWORK">NETWORK</option>
-                    <option value="SECURITY">SECURITY</option>
-                    <option value="MONITORING">MONITORING</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block font-medium text-[var(--muted)]">Severity</label>
-                  <select
-                    value={formData.severity}
-                    onChange={(e) => setFormData({ ...formData, severity: e.target.value as any })}
-                    className="h-7 w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 outline-none text-[var(--foreground)]"
-                  >
-                    <option value="CRITICAL">CRITICAL</option>
-                    <option value="HIGH">HIGH</option>
-                    <option value="MEDIUM">MEDIUM</option>
-                    <option value="LOW">LOW</option>
-                  </select>
-                </div>
-              </div>
+          <div>
+            <label className="mb-1 block font-medium text-[var(--muted)]">문서 URL</label>
+            <input
+              type="url"
+              value={formData.url ?? ""}
+              onChange={(e) => setFormData({ ...formData, url: e.target.value })}
+              placeholder="https://wiki.internal/ops/sop-123"
+              className="h-7 w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 font-mono outline-none text-[var(--foreground)]"
+            />
+          </div>
 
-              <div>
-                <label className="mb-1 block font-medium text-[var(--muted)]">Summary *</label>
-                <textarea
-                  required
-                  rows={3}
-                  value={formData.summary}
-                  onChange={(e) => setFormData({ ...formData, summary: e.target.value })}
-                  placeholder="Brief summary of procedure and first action..."
-                  className="w-full rounded border border-[var(--border)] bg-[var(--surface)] p-2 outline-none text-[var(--foreground)]"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block font-medium text-[var(--muted)]">Document URL</label>
-                <input
-                  type="url"
-                  value={formData.url ?? ""}
-                  onChange={(e) => setFormData({ ...formData, url: e.target.value })}
-                  placeholder="https://wiki.internal/ops/sop-123"
-                  className="h-7 w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 font-mono outline-none text-[var(--foreground)]"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block font-medium text-[var(--muted)]">
-                  Linked VM IDs (comma separated)
-                </label>
-                <input
-                  value={
-                    Array.isArray(formData.relatedVmIds)
-                      ? formData.relatedVmIds.join(", ")
-                      : formData.relatedVmIds ?? ""
-                  }
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      relatedVmIds: e.target.value.split(",").map((s) => s.trim()).filter(Boolean),
-                    })
-                  }
-                  placeholder="e.g. vm-db01, vm-db02"
-                  className="h-7 w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 font-mono outline-none text-[var(--foreground)]"
-                />
-              </div>
-
-              <div className="mt-4 flex justify-end gap-2 border-t border-[var(--border)] pt-3">
+          <div className="space-y-2 rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-2.5">
+            <div className="flex items-center justify-between">
+              <label className="font-semibold text-[var(--foreground)]">
+                연결 대상 VM ({formData.relatedVmIds?.length ?? 0}대 선택됨)
+              </label>
+              {(formData.relatedVmIds?.length ?? 0) > 0 && (
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="h-7 rounded border border-[var(--border)] px-3 text-[10px] text-[var(--muted)] hover:bg-[var(--surface-2)]"
+                  onClick={clearVms}
+                  className="text-[9px] text-rose-600 hover:underline"
                 >
-                  Cancel
+                  선택 전체 해제
                 </button>
-                <button
-                  type="submit"
-                  className="h-7 rounded bg-[#5750f1] px-4 text-[10px] font-semibold text-white hover:bg-[#463fc9]"
+              )}
+            </div>
+
+            {/* Quick selectors: Group and Individual VM */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <span className="mb-1 block text-[9px] text-[var(--muted)]">그룹 단위 일괄 추가</span>
+                <select
+                  defaultValue=""
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      addGroupVms(e.target.value);
+                      e.target.value = "";
+                    }
+                  }}
+                  className="h-7 w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 outline-none text-[var(--foreground)]"
                 >
-                  Save SOP
-                </button>
+                  <option value="">+ 그룹 일괄 선택...</option>
+                  <optgroup label="환경별 전체">
+                    <option value="ALL_PROD">PROD 환경 전체 VM</option>
+                    <option value="ALL_QA">QA 환경 전체 VM</option>
+                    <option value="ALL_DEV">DEV 환경 전체 VM</option>
+                  </optgroup>
+                  <optgroup label="역할별 전체">
+                    <option value="ROLE_DB">모든 DB 서버</option>
+                    <option value="ROLE_AP">모든 AP 서버</option>
+                  </optgroup>
+                  {availableGroups.length > 0 && (
+                    <optgroup label="토폴로지 그룹">
+                      {availableGroups.map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.name} ({g.environment})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
               </div>
-            </form>
+
+              <div>
+                <span className="mb-1 block text-[9px] text-[var(--muted)]">개별 VM 추가</span>
+                <select
+                  defaultValue=""
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      addVm(e.target.value);
+                      e.target.value = "";
+                    }
+                  }}
+                  className="h-7 w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 outline-none text-[var(--foreground)]"
+                >
+                  <option value="">+ 개별 VM 선택...</option>
+                  {availableAssets
+                    .filter((a) => !formData.relatedVmIds?.includes(a.id))
+                    .map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.hostname} ({a.ipAddress} · {a.role})
+                      </option>
+                    ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Selected VM Tags */}
+            <div className="min-h-[46px] max-h-36 overflow-y-auto rounded border border-[var(--border)] bg-[var(--surface)] p-1.5 flex flex-wrap gap-1">
+              {!formData.relatedVmIds || formData.relatedVmIds.length === 0 ? (
+                <div className="w-full py-2 text-center text-[9px] text-[var(--muted)]">
+                  연결된 VM이 없습니다. 위의 그룹 또는 개별 VM 목록에서 선택해 주세요.
+                </div>
+              ) : (
+                formData.relatedVmIds.map((vmId) => {
+                  const vm = availableAssets.find((a) => a.id === vmId || a.hostname === vmId);
+                  return (
+                    <span
+                      key={vmId}
+                      className="inline-flex items-center gap-1 rounded border border-[#5750f1]/30 bg-[#5750f1]/10 px-1.5 py-0.5 font-mono text-[9px] text-[#5750f1]"
+                    >
+                      <span className="font-semibold">{vm?.hostname ?? vmId}</span>
+                      {vm?.role && <span className="text-[7.5px] text-[var(--muted)] font-sans">({vm.role})</span>}
+                      <button
+                        type="button"
+                        onClick={() => removeVm(vmId)}
+                        className="ml-0.5 rounded text-[10px] text-[var(--muted)] hover:text-rose-600 font-bold"
+                        title="제거"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Manual entry fallback */}
+            <div className="flex items-center gap-1 pt-0.5">
+              <input
+                id="sop-manual-vm"
+                placeholder="직접 VM ID/호스트명 입력 (예: vm-ext01)"
+                className="h-6 flex-1 rounded border border-[var(--border)] bg-[var(--surface)] px-2 font-mono text-[9px] outline-none text-[var(--foreground)]"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    const val = (e.target as HTMLInputElement).value.trim();
+                    if (val) {
+                      addVm(val);
+                      (e.target as HTMLInputElement).value = "";
+                    }
+                  }
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const el = document.getElementById("sop-manual-vm") as HTMLInputElement;
+                  if (el && el.value.trim()) {
+                    addVm(el.value.trim());
+                    el.value = "";
+                  }
+                }}
+                className="h-6 rounded border border-[var(--border)] px-2 text-[9px] text-[var(--muted)] hover:bg-[var(--surface-3)]"
+              >
+                + 직접 추가
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+
+          <div className="mt-4 flex justify-end gap-2 border-t border-[var(--border)] pt-3">
+            <button
+              type="button"
+              onClick={() => setIsDrawerOpen(false)}
+              className="h-7 rounded border border-[var(--border)] px-3 text-[10px] text-[var(--muted)] hover:bg-[var(--surface-2)]"
+            >
+              취소
+            </button>
+            <button
+              type="submit"
+              className="h-7 rounded bg-[#5750f1] px-4 text-[10px] font-semibold text-white hover:bg-[#463fc9]"
+            >
+              저장
+            </button>
+          </div>
+        </form>
+      </SlideDrawer>
     </div>
   );
 }

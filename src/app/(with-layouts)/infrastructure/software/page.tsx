@@ -20,8 +20,8 @@ export default async function SoftwarePage() {
   return (
     <>
       <PageHeader
-        title="Software & EOSL Lifecycle"
-        description="3-tier software product catalog, release matching rules, and asset installation lifecycle tracking."
+        title="소프트웨어 및 EOSL 수명주기"
+        description="3계층 소프트웨어 제품 카탈로그, 릴리스 매칭 규칙 및 자산 설치 수명주기를 추적합니다."
       />
       <SoftwareView
         software={software}

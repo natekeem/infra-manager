@@ -47,14 +47,14 @@ export function TierDrawer({
     <SlideDrawer
       open={open}
       onClose={onClose}
-      title={isExternal ? `External Dependency: ${tierName}` : `${tierName} Tier Overview`}
-      subtitle={isExternal ? "External system dependency and firewall policies" : `Overview of ${vms.length} VMs in this architectural tier`}
+      title={isExternal ? `외부 시스템 의존성: ${tierName}` : `${tierName} 계층 개요`}
+      subtitle={isExternal ? "외부 시스템 의존성 및 방화벽 정책" : `이 아키텍처 계층에 속한 ${vms.length}개 VM 개요`}
     >
       <div className="p-4 space-y-4">
         {/* Top Action & Badge Bar */}
         <div className="flex items-center justify-between">
           <Badge tone={critical > 0 ? "danger" : warning > 0 ? "warning" : "success"}>
-            {isExternal ? "EXTERNAL" : `${vms.length} VMs`}
+            {isExternal ? "외부 시스템" : `${vms.length}개 VM`}
           </Badge>
           {!isExternal && onDrillDown && (
             <button
@@ -64,7 +64,7 @@ export function TierDrawer({
               }}
               className="flex h-7 items-center gap-1 rounded bg-[#5750f1] px-2.5 text-[9px] font-medium text-white transition hover:bg-[#4938d6]"
             >
-              Drill into {tierName} View →
+              {tierName} 상세 보기 →
             </button>
           )}
         </div>
@@ -72,15 +72,15 @@ export function TierDrawer({
         {!isExternal && (
           <div className="grid grid-cols-3 gap-2">
             <div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-2 text-center">
-              <div className="text-[9px] text-[var(--muted)]">Healthy</div>
+              <div className="text-[9px] text-[var(--muted)]">정상</div>
               <div className="text-[14px] font-semibold text-emerald-600 dark:text-emerald-400">{healthy}</div>
             </div>
             <div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-2 text-center">
-              <div className="text-[9px] text-[var(--muted)]">Warning</div>
+              <div className="text-[9px] text-[var(--muted)]">주의</div>
               <div className="text-[14px] font-semibold text-amber-600 dark:text-amber-400">{warning}</div>
             </div>
             <div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-2 text-center">
-              <div className="text-[9px] text-[var(--muted)]">Critical</div>
+              <div className="text-[9px] text-[var(--muted)]">위험</div>
               <div className="text-[14px] font-semibold text-rose-600 dark:text-rose-400">{critical}</div>
             </div>
           </div>
@@ -91,9 +91,9 @@ export function TierDrawer({
           <section>
             <div className="mb-2 flex items-center justify-between">
               <h4 className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-                Member Virtual Machines ({vms.length})
+                소속 가상 머신 ({vms.length}대)
               </h4>
-              <span className="text-[8px] text-[var(--muted-2)]">Click VM for full inventory drawer</span>
+              <span className="text-[8px] text-[var(--muted-2)]">VM 클릭 시 상세 서랍 열림</span>
             </div>
             <div className="divide-y divide-[var(--border)] rounded-md border border-[var(--border)] bg-[var(--surface)]">
               {vms.map((vm) => (
@@ -130,15 +130,15 @@ export function TierDrawer({
         <section>
           <div className="mb-2 flex items-center justify-between">
             <h4 className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-              Network Flows ({relevantStatuses.length})
+              네트워크 흐름 ({relevantStatuses.length}개)
             </h4>
             {issueStatuses.length > 0 && (
-              <Badge tone="danger">{issueStatuses.length} Attention Needed</Badge>
+              <Badge tone="danger">{issueStatuses.length}건 주의 필요</Badge>
             )}
           </div>
           <div className="max-h-[260px] divide-y divide-[var(--border)] overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--surface)] text-[9px]">
             {relevantStatuses.length === 0 ? (
-              <div className="p-3 text-center text-[var(--muted)]">No active policies found for this tier.</div>
+              <div className="p-3 text-center text-[var(--muted)]">이 계층에 등록된 활성 정책이 없습니다.</div>
             ) : (
               relevantStatuses.map((s) => (
                 <div key={s.policy.id} className="p-2">

@@ -11,8 +11,8 @@ export default async function SoftwareManagementPage() {
   return (
     <>
       <PageHeader
-        title="Software Catalog Management"
-        description="Maintain software products, release lifecycle definitions, and version match rules (exact, prefix, regex, range)."
+        title="소프트웨어 카탈로그 관리"
+        description="소프트웨어 제품, 릴리스 수명주기 정의 및 버전 매칭 규칙(정확, 접두어, 정규식, 범위)을 관리합니다."
       />
       <SoftwareManagementView initialProducts={products} initialReleases={releases} />
     </>

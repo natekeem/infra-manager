@@ -176,7 +176,7 @@ export function BatchImportView() {
     <div className="space-y-4">
       {/* Top Banner */}
       <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 text-[10px] text-[var(--muted)] leading-relaxed">
-        <b className="text-[var(--foreground)]">Data Integration Order:</b> 표준 JSON 형식(Normalized Shape)으로 정제된 인프라 자산, 방화벽 정책(방향성 포함), 소프트웨어 릴리스 및 SOP를 일괄 검증하고 내부 레포지토리에 반영합니다. 누락된 데이터는 절대 임의 추정하지 않고 <span className="font-mono text-[var(--foreground)]">UNKNOWN / null</span>로 유지됩니다.
+        <b className="text-[var(--foreground)]">데이터 연계 순서:</b> 표준 JSON 형식(Normalized Shape)으로 정제된 인프라 자산, 방화벽 정책(방향성 포함), 소프트웨어 릴리스 및 SOP를 일괄 검증하고 내부 레포지토리에 반영합니다. 누락된 데이터는 절대 임의 추정하지 않고 <span className="font-mono text-[var(--foreground)]">UNKNOWN / null</span>로 유지됩니다.
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -184,7 +184,7 @@ export function BatchImportView() {
         <div className="lg:col-span-2 space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-semibold text-[var(--foreground)]">
-              Raw JSON Input Payload
+              JSON 입력 데이터
             </span>
             <div className="flex gap-2">
               <button
@@ -192,14 +192,14 @@ export function BatchImportView() {
                 onClick={() => setJsonText(SAMPLE_PAYLOAD)}
                 className="h-6 rounded border border-[var(--border)] px-2 text-[9px] text-[var(--muted)] hover:bg-[var(--surface-2)]"
               >
-                Reset to Sample
+                샘플 초기화
               </button>
               <button
                 type="button"
                 onClick={() => setJsonText("{}")}
                 className="h-6 rounded border border-[var(--border)] px-2 text-[9px] text-[var(--muted)] hover:bg-[var(--surface-2)]"
               >
-                Clear
+                초기화
               </button>
             </div>
           </div>
@@ -217,7 +217,7 @@ export function BatchImportView() {
               onClick={handleValidate}
               className="h-8 rounded border border-[var(--border)] bg-[var(--surface)] px-4 text-[10.5px] font-semibold text-[var(--foreground)] hover:bg-[var(--surface-2)] transition"
             >
-              Validate & Dry Run
+              검증 및 시뮬레이션
             </button>
             <button
               type="button"
@@ -225,7 +225,7 @@ export function BatchImportView() {
               onClick={handleImport}
               className="h-8 rounded bg-[#5750f1] px-5 text-[10.5px] font-semibold text-white hover:bg-[#463fc9] disabled:opacity-50 transition"
             >
-              {isProcessing ? "Importing..." : "Execute Batch Import"}
+              {isProcessing ? "가져오는 중..." : "일괄 가져오기 실행"}
             </button>
           </div>
         </div>
@@ -235,7 +235,7 @@ export function BatchImportView() {
           {/* Validation Box */}
           <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 space-y-2">
             <div className="flex items-center justify-between border-b border-[var(--border)] pb-2">
-              <span className="text-[11px] font-bold text-[var(--foreground)]">Validation Result</span>
+              <span className="text-[11px] font-bold text-[var(--foreground)]">검증 결과</span>
               {validationResult && (
                 <Badge tone={validationResult.valid ? "success" : "danger"}>
                   {validationResult.valid ? "PASSED" : "FAILED"}
@@ -247,16 +247,16 @@ export function BatchImportView() {
               <div className="space-y-2 text-[10px]">
                 {validationResult.counts && (
                   <div className="grid grid-cols-2 gap-1.5 rounded border border-[var(--border)] bg-[var(--surface-2)] p-2 font-mono">
-                    <div>Assets: {validationResult.counts.assets}</div>
-                    <div>Policies: {validationResult.counts.policies}</div>
-                    <div>Releases: {validationResult.counts.releases}</div>
-                    <div>SOPs: {validationResult.counts.sops}</div>
+                    <div>자산: {validationResult.counts.assets}</div>
+                    <div>정책: {validationResult.counts.policies}</div>
+                    <div>릴리스: {validationResult.counts.releases}</div>
+                    <div>SOP: {validationResult.counts.sops}</div>
                   </div>
                 )}
 
                 {validationResult.errors.length > 0 ? (
                   <div className="rounded border border-[var(--danger)]/30 bg-[var(--danger-surface)] p-2 text-[9.5px] text-[var(--danger)] space-y-1">
-                    <div className="font-semibold">Validation Errors ({validationResult.errors.length}):</div>
+                    <div className="font-semibold">검증 오류 ({validationResult.errors.length}건):</div>
                     <ul className="list-disc pl-4 space-y-0.5">
                       {validationResult.errors.map((err, i) => (
                         <li key={i}>{err}</li>
@@ -265,13 +265,13 @@ export function BatchImportView() {
                   </div>
                 ) : (
                   <div className="text-[9.5px] text-[#12b76a]">
-                    All schema checks passed. The payload is valid and ready for batch ingestion.
+                    모든 스키마 검증을 통과했습니다. 데이터가 유효하며 일괄 반영 준비가 완료되었습니다.
                   </div>
                 )}
               </div>
             ) : (
               <div className="text-[10px] text-[var(--muted)]">
-                Click &apos;Validate & Dry Run&apos; to inspect schema compliance and detect missing required fields.
+                &apos;검증 및 시뮬레이션&apos;을 클릭하여 스키마 적합성을 확인하고 누락된 필수 필드를 감지합니다.
               </div>
             )}
           </div>
@@ -280,7 +280,7 @@ export function BatchImportView() {
           {importResult && (
             <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 space-y-2">
               <div className="flex items-center justify-between border-b border-[var(--border)] pb-2">
-                <span className="text-[11px] font-bold text-[var(--foreground)]">Execution Report</span>
+                <span className="text-[11px] font-bold text-[var(--foreground)]">실행 결과</span>
                 <Badge tone={importResult.importedCount > 0 ? "success" : "danger"}>
                   {importResult.importedCount > 0 ? "SUCCESS" : "NO ITEMS"}
                 </Badge>
@@ -288,18 +288,18 @@ export function BatchImportView() {
 
               <div className="space-y-2 text-[10px]">
                 <div className="font-semibold text-[var(--foreground)]">
-                  Total Items Ingested: <span className="font-mono text-[#5750f1]">{importResult.importedCount}</span>
+                  총 반영 건수: <span className="font-mono text-[#5750f1]">{importResult.importedCount}</span>
                 </div>
                 <div className="grid grid-cols-2 gap-1.5 rounded border border-[var(--border)] bg-[var(--surface-2)] p-2 font-mono text-[9px]">
-                  <div>Assets: +{importResult.assetsCount}</div>
-                  <div>Policies: +{importResult.policiesCount}</div>
-                  <div>Releases: +{importResult.releasesCount}</div>
-                  <div>SOPs: +{importResult.sopsCount}</div>
+                  <div>자산: +{importResult.assetsCount}</div>
+                  <div>정책: +{importResult.policiesCount}</div>
+                  <div>릴리스: +{importResult.releasesCount}</div>
+                  <div>SOP: +{importResult.sopsCount}</div>
                 </div>
 
                 {importResult.errors.length > 0 && (
                   <div className="rounded border border-[var(--warning)]/30 bg-[var(--warning-surface)] p-2 text-[9px] text-[var(--warning)]">
-                    <div className="font-semibold">Skipped Records:</div>
+                    <div className="font-semibold">건너뛴 레코드:</div>
                     <ul className="list-disc pl-4">
                       {importResult.errors.map((e, idx) => (
                         <li key={idx}>{e}</li>

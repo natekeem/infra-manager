@@ -15,12 +15,12 @@ export function VmMiniTable({ vms, onSelect }: { vms: VmAsset[]; onSelect?: (vm:
       <table className="w-full min-w-[620px] text-left text-[10px]">
         <thead>
           <tr className="border-b border-[var(--border)] bg-[var(--surface-2)] text-[9px] uppercase tracking-[0.04em] text-[var(--muted)]">
-            <th className="px-3 py-2 font-medium">Hostname</th>
-            <th className="px-3 py-2 font-medium">Role</th>
+            <th className="px-3 py-2 font-medium">호스트명</th>
+            <th className="px-3 py-2 font-medium">역할</th>
             <th className="px-3 py-2 font-medium">CPU</th>
             <th className="px-3 py-2 font-medium">MEM</th>
             <th className="px-3 py-2 font-medium">DISK</th>
-            <th className="px-3 py-2 font-medium">State</th>
+            <th className="px-3 py-2 font-medium">상태</th>
           </tr>
         </thead>
         <tbody>

@@ -43,14 +43,14 @@ export function ClusterDrawer({
         {/* Cluster Information */}
         <section>
           <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--muted)]">
-            Cluster Specification
+            클러스터 상세 사양
           </h3>
           <div className="text-[10px]">
-            <KV k="Cluster Type" v={cluster.type} />
+            <KV k="클러스터 유형" v={cluster.type} />
             <KV k="Virtual IP (VIP)" v={<span className="font-mono font-bold text-[var(--primary)]">{cluster.vip}</span>} />
-            <KV k="Environment" v={cluster.environment} />
-            <KV k="Zone" v={cluster.zone} />
-            <KV k="Owner" v={cluster.owner ?? "-"} />
+            <KV k="환경" v={cluster.environment} />
+            <KV k="영역" v={cluster.zone} />
+            <KV k="담당자" v={cluster.owner ?? "-"} />
           </div>
         </section>
 
@@ -58,9 +58,9 @@ export function ClusterDrawer({
         <section>
           <div className="mb-2 flex items-center justify-between">
             <h3 className="text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--muted)]">
-              Member Nodes ({cluster.members.length})
+              멤버 노드 ({cluster.members.length}대)
             </h3>
-            <span className="text-[9px] text-[var(--muted)]">Active / Passive Model</span>
+            <span className="text-[9px] text-[var(--muted)]">Active / Passive 모델</span>
           </div>
 
           <div className="space-y-2">

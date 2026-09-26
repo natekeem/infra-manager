@@ -86,10 +86,10 @@ export function EoslRiskSummary({
       <table className="w-full min-w-[500px] text-left text-[10px]">
         <thead>
           <tr className="border-b border-[var(--border)] bg-[var(--surface-2)] text-[9px] uppercase tracking-[0.04em] text-[var(--muted)]">
-            <th className="px-3 py-2 font-medium">Type / Component</th>
-            <th className="px-3 py-2 font-medium">VM Host</th>
-            <th className="px-3 py-2 font-medium">Risk Status</th>
-            <th className="px-3 py-2 font-medium">EOSL Date</th>
+            <th className="px-3 py-2 font-medium">유형 / 구성요소</th>
+            <th className="px-3 py-2 font-medium">VM 호스트</th>
+            <th className="px-3 py-2 font-medium">위험 상태</th>
+            <th className="px-3 py-2 font-medium">EOSL 일자</th>
           </tr>
         </thead>
         <tbody>

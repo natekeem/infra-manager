@@ -12,6 +12,7 @@ import { Badge } from "@/components/tailgrids/core/badge";
 import { SearchIcon } from "@/components/common/icons";
 import { SoftwareDetailDrawer } from "./software-detail-drawer";
 import { daysUntil } from "@/domain/network-status";
+import { useProjectGroup } from "@/context/project-group-context";
 
 type TabMode = "by-asset" | "catalog" | "lifecycle";
 
@@ -28,13 +29,20 @@ export function SoftwareView({
   releases?: SoftwareRelease[];
   installations?: AssetSoftwareInstallation[];
 }) {
+  const { activeProject } = useProjectGroup();
   const [tab, setTab] = useState<TabMode>("by-asset");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [selectedRelease, setSelectedRelease] = useState<SoftwareRelease | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<SoftwareProduct | null>(null);
 
-  const vmMap = useMemo(() => Object.fromEntries(vms.map((v) => [v.id, v])), [vms]);
+  const projectVms = useMemo(
+    () => vms.filter((v) => !v.projectGroupId || v.projectGroupId === activeProject.id),
+    [vms, activeProject.id]
+  );
+  const projectVmIds = useMemo(() => new Set(projectVms.map((v) => v.id)), [projectVms]);
+
+  const vmMap = useMemo(() => Object.fromEntries(projectVms.map((v) => [v.id, v])), [projectVms]);
 
   // Merge installations with legacy software if installations array is provided
   const combinedInstallations = useMemo(() => {
@@ -69,8 +77,8 @@ export function SoftwareView({
         vendor: s.vendor,
         category: s.category,
       } as AssetSoftwareInstallation;
-    });
-  }, [installations, software]);
+    }).filter((i) => projectVmIds.has(i.assetId));
+  }, [installations, software, projectVmIds]);
 
   // Filtered by-asset
   const filteredInstallations = useMemo(() => {
@@ -151,12 +159,12 @@ export function SoftwareView({
     <div className="space-y-3">
       {/* Top Metric Strip */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-        <MetricCard label="Total Installed" value={stats.total} tone="neutral" />
-        <MetricCard label="Supported" value={stats.supportedCount} tone="success" />
-        <MetricCard label="D-180 / D-90 Warning" value={stats.d180Count + stats.d90Count} tone="warning" />
-        <MetricCard label="D-30 Urgent" value={stats.d30Count} tone="warning" highlight />
-        <MetricCard label="EOSL Expired" value={stats.eolCount} tone="danger" highlight />
-        <MetricCard label="Unmapped / Unrecognized" value={stats.unmappedCount} tone="neutral" />
+        <MetricCard label="전체 설치 소프트웨어" value={stats.total} tone="neutral" />
+        <MetricCard label="지원 중" value={stats.supportedCount} tone="success" />
+        <MetricCard label="D-180 / D-90 주의" value={stats.d180Count + stats.d90Count} tone="warning" />
+        <MetricCard label="D-30 만료 임박" value={stats.d30Count} tone="warning" highlight />
+        <MetricCard label="EOSL 만료됨" value={stats.eolCount} tone="danger" highlight />
+        <MetricCard label="미매핑 / 미인식" value={stats.unmappedCount} tone="neutral" />
       </div>
 
       {/* Control Bar: Tabs + Filters */}
@@ -172,7 +180,7 @@ export function SoftwareView({
                 : "text-[var(--muted)] hover:text-[var(--foreground)]"
             }`}
           >
-            By Asset ({combinedInstallations.length})
+            자산별 현황 ({combinedInstallations.length})
           </button>
           <button
             type="button"
@@ -183,7 +191,7 @@ export function SoftwareView({
                 : "text-[var(--muted)] hover:text-[var(--foreground)]"
             }`}
           >
-            Software Catalog ({releases.length})
+            소프트웨어 카탈로그 ({releases.length})
           </button>
           <button
             type="button"
@@ -194,7 +202,7 @@ export function SoftwareView({
                 : "text-[var(--muted)] hover:text-[var(--foreground)]"
             }`}
           >
-            Lifecycle Matrix
+            수명주기 매트릭스
           </button>
         </div>
 
@@ -207,7 +215,7 @@ export function SoftwareView({
               aria-label="Filter software by status"
               className="h-7 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[10px] outline-none text-[var(--foreground)]"
             >
-              <option value="ALL">All Statuses</option>
+              <option value="ALL">전체 상태</option>
               <option value="SUPPORTED">SUPPORTED</option>
               <option value="D180">D-180</option>
               <option value="D90">D-90</option>
@@ -223,7 +231,7 @@ export function SoftwareView({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="w-full bg-transparent text-[10px] outline-none text-[var(--foreground)]"
-              placeholder="Search software, version, host..."
+              placeholder="소프트웨어, 버전, 호스트 검색..."
             />
           </div>
         </div>
@@ -236,13 +244,13 @@ export function SoftwareView({
             <table className="w-full min-w-[960px] text-left text-[10px]">
               <thead>
                 <tr className="border-b border-[var(--border)] bg-[var(--surface-2)] text-[9px] uppercase tracking-[0.04em] text-[var(--muted)]">
-                  <Th>Asset / Host</Th>
-                  <Th>Software</Th>
-                  <Th>Detected Version</Th>
-                  <Th>Vendor</Th>
-                  <Th>Category</Th>
-                  <Th>Lifecycle Status</Th>
-                  <Th>EOSL Date</Th>
+                  <Th>자산 / 호스트</Th>
+                  <Th>소프트웨어</Th>
+                  <Th>감지된 버전</Th>
+                  <Th>벤더</Th>
+                  <Th>분류</Th>
+                  <Th>수명주기 상태</Th>
+                  <Th>EOSL 일자</Th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
@@ -326,15 +334,15 @@ export function SoftwareView({
             <table className="w-full min-w-[960px] text-left text-[10px]">
               <thead>
                 <tr className="border-b border-[var(--border)] bg-[var(--surface-2)] text-[9px] uppercase tracking-[0.04em] text-[var(--muted)]">
-                  <Th>Product</Th>
-                  <Th>Release Version</Th>
-                  <Th>Vendor</Th>
-                  <Th>Match Rule</Th>
-                  <Th>Match Pattern</Th>
-                  <Th>Support End</Th>
-                  <Th>EOSL Date</Th>
-                  <Th>Status</Th>
-                  <Th>Installed</Th>
+                  <Th>제품</Th>
+                  <Th>릴리스 버전</Th>
+                  <Th>벤더</Th>
+                  <Th>매칭 규칙</Th>
+                  <Th>매칭 패턴</Th>
+                  <Th>지원 종료</Th>
+                  <Th>EOSL 일자</Th>
+                  <Th>상태</Th>
+                  <Th>설치 수</Th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
@@ -413,10 +421,10 @@ export function SoftwareView({
               <div className="mb-2 flex items-center justify-between border-b border-[var(--border)] pb-2">
                 <div className="flex items-center gap-1.5">
                   <span className="h-2 w-2 rounded-full bg-[var(--danger)]" />
-                  <h3 className="text-[11px] font-bold text-[var(--foreground)]">Immediate Risk (EOSL & D-30)</h3>
+                  <h3 className="text-[11px] font-bold text-[var(--foreground)]">긴급 조치 필요 (EOSL & D-30)</h3>
                 </div>
                 <span className="font-mono text-[10px] font-bold text-[var(--danger)]">
-                  {stats.eolCount + stats.d30Count} Assets
+                  {stats.eolCount + stats.d30Count}개 자산
                 </span>
               </div>
               <div className="space-y-2 max-h-80 overflow-y-auto">
@@ -447,10 +455,10 @@ export function SoftwareView({
               <div className="mb-2 flex items-center justify-between border-b border-[var(--border)] pb-2">
                 <div className="flex items-center gap-1.5">
                   <span className="h-2 w-2 rounded-full bg-[var(--warning)]" />
-                  <h3 className="text-[11px] font-bold text-[var(--foreground)]">Upcoming Expiry (D-90 & D-180)</h3>
+                  <h3 className="text-[11px] font-bold text-[var(--foreground)]">만료 도래 예정 (D-90 & D-180)</h3>
                 </div>
                 <span className="font-mono text-[10px] font-bold text-[var(--warning)]">
-                  {stats.d90Count + stats.d180Count} Assets
+                  {stats.d90Count + stats.d180Count}개 자산
                 </span>
               </div>
               <div className="space-y-2 max-h-80 overflow-y-auto">
@@ -479,10 +487,10 @@ export function SoftwareView({
               <div className="mb-2 flex items-center justify-between border-b border-[var(--border)] pb-2">
                 <div className="flex items-center gap-1.5">
                   <span className="h-2 w-2 rounded-full bg-[var(--muted)]" />
-                  <h3 className="text-[11px] font-bold text-[var(--foreground)]">Unmapped / Catalog Review</h3>
+                  <h3 className="text-[11px] font-bold text-[var(--foreground)]">미매핑 / 카탈로그 검토 필요</h3>
                 </div>
                 <span className="font-mono text-[10px] font-bold text-[var(--muted)]">
-                  {stats.unmappedCount} Assets
+                  {stats.unmappedCount}개 자산
                 </span>
               </div>
               <div className="space-y-2 max-h-80 overflow-y-auto">

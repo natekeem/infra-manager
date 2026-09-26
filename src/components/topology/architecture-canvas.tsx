@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Background,
   BaseEdge,
@@ -21,25 +21,30 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import type {
+  ArchitectureRelation,
+  Asset,
   ClusterEntity,
   NasAsset,
   NetworkStatus,
+  RelationType,
   SoftwareInstall,
   SoftwareProduct,
   SoftwareRelease,
   SopDocument,
-  VmAsset,
+  TopologyGroup,
 } from "@/domain/models";
 import { VmDrawer } from "@/components/infrastructure/vm-drawer";
 import { ConnectionDrawer } from "@/components/network/connection-drawer";
 import { ClusterDrawer } from "@/components/cluster/cluster-drawer";
 import { NasDrawer } from "@/components/storage/nas-drawer";
-import { TierDrawer, type TierDrawerData } from "@/components/topology/tier-drawer";
+import { GroupDrawer, type GroupDrawerData } from "@/components/topology/group-drawer";
 import { SoftwareDetailDrawer } from "@/components/software/software-detail-drawer";
-import { MaximizeIcon, SearchIcon } from "@/components/common/icons";
+import { SearchIcon } from "@/components/common/icons";
 import { matchLegacySoftwareRelease } from "@/domain/software-lifecycle";
+import { useProjectGroup } from "@/context/project-group-context";
 
-type ViewMode = "overview" | "service" | "vm";
+type ViewMode = "overview" | "asset";
+
 type OverlayMode = "policy" | "live";
 
 export type TopologyNodeData = {
@@ -53,7 +58,16 @@ export type TopologyNodeData = {
   criticalCount?: number;
   connectionsCount?: number;
   issueCount?: number;
-  vm?: VmAsset;
+  apCount?: number;
+  dbCount?: number;
+  nasCount?: number;
+  k8sCount?: number;
+  environment?: string;
+  domain?: string;
+  system?: string;
+  groupType?: string;
+  description?: string;
+  vm?: Asset;
   cluster?: ClusterEntity;
   nas?: NasAsset;
 };
@@ -70,18 +84,7 @@ export type TopologyEdgeData = {
   edgeIndex?: number;
   totalEdges?: number;
   lineStyle?: "bezier" | "smoothstep";
-};
-
-const zoneOrder = ["WEB", "APP", "DB", "CONTROL", "BOT", "VDI", "SUPPORT", "EXTERNAL"];
-const zonePos: Record<string, { x: number; y: number }> = {
-  WEB: { x: 420, y: 60 },
-  APP: { x: 420, y: 260 },
-  DB: { x: 420, y: 470 },
-  CONTROL: { x: 60, y: 150 },
-  BOT: { x: 60, y: 350 },
-  VDI: { x: 60, y: 530 },
-  SUPPORT: { x: 780, y: 470 },
-  EXTERNAL: { x: 780, y: 180 },
+  relationType?: RelationType;
 };
 
 function statusColor(issueCount: number, status?: NetworkStatus) {
@@ -94,7 +97,6 @@ function statusColor(issueCount: number, status?: NetworkStatus) {
 function NodeHandles({ color = "!bg-[#98a2b3]" }: { color?: string }) {
   return (
     <>
-      {/* 4-Way Source & Target Handles */}
       <Handle id="t-src" type="source" position={Position.Top} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
       <Handle id="t-tgt" type="target" position={Position.Top} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
       <Handle id="b-src" type="source" position={Position.Bottom} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
@@ -103,28 +105,27 @@ function NodeHandles({ color = "!bg-[#98a2b3]" }: { color?: string }) {
       <Handle id="l-tgt" type="target" position={Position.Left} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
       <Handle id="r-src" type="source" position={Position.Right} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
       <Handle id="r-tgt" type="target" position={Position.Right} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
-
-      {/* Aliases for backwards compatibility */}
-      <Handle id="t" type="target" position={Position.Top} style={{ opacity: 0, pointerEvents: "none" }} />
-      <Handle id="b" type="source" position={Position.Bottom} style={{ opacity: 0, pointerEvents: "none" }} />
-      <Handle id="l" type="target" position={Position.Left} style={{ opacity: 0, pointerEvents: "none" }} />
-      <Handle id="r" type="source" position={Position.Right} style={{ opacity: 0, pointerEvents: "none" }} />
     </>
   );
 }
 
+// Compact Group Card
 function GroupNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
   const isExternal = data.kind === "external";
   return (
     <div
-      className={`h-[116px] w-[200px] rounded-md border bg-[var(--surface)] p-2.5 shadow-sm transition ${
+      className={`min-h-[120px] w-[220px] rounded-md border bg-[var(--surface)] p-2.5 shadow-sm transition flex flex-col justify-between ${
         selected ? "border-[#5750f1] ring-1 ring-[#5750f1]/20" : "border-[var(--border-strong)]"
       }`}
     >
       <NodeHandles />
 
+      {/* Row 1: Group Name & Issue Dot */}
       <div className="flex items-center justify-between gap-1 border-b border-[var(--border)] pb-1.5">
-        <span className="truncate text-[11px] font-bold tracking-tight text-[var(--foreground)]">{data.label}</span>
+        <div className="truncate">
+          <div className="truncate text-[11px] font-bold tracking-tight text-[var(--foreground)]">{data.label}</div>
+          {data.sublabel && <div className="text-[8px] text-[var(--muted)]">{data.sublabel}</div>}
+        </div>
         {data.issueCount ? (
           <span className="rounded bg-[var(--danger-soft)] px-1.5 py-0.5 text-[8px] font-semibold text-[#b42318]">
             {data.issueCount} issue
@@ -134,39 +135,68 @@ function GroupNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
         )}
       </div>
 
-      {isExternal ? (
-        <div className="mt-2 flex items-center justify-between text-[10px] text-[var(--muted)]">
-          <span>{data.count ?? 1} External Target(s)</span>
-          <span className="text-[9px] uppercase tracking-wider text-[var(--muted-2)]">External</span>
+      {/* Row 2: Breakdown Counters (AP, DB, NAS, K8s) */}
+      {!isExternal ? (
+        <div className="my-1.5 grid grid-cols-3 gap-1 text-center text-[8px]">
+          {data.apCount !== undefined && data.apCount > 0 && (
+            <div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-1">
+              <div className="text-[7px] text-[var(--muted)]">AP</div>
+              <div className="font-bold text-[10px] text-[var(--foreground)]">{data.apCount}</div>
+            </div>
+          )}
+          {data.dbCount !== undefined && data.dbCount > 0 && (
+            <div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-1">
+              <div className="text-[7px] text-[var(--muted)]">DB</div>
+              <div className="font-bold text-[10px] text-[var(--foreground)]">{data.dbCount}</div>
+            </div>
+          )}
+          {data.nasCount !== undefined && data.nasCount > 0 && (
+            <div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-1">
+              <div className="text-[7px] text-[var(--muted)]">NAS</div>
+              <div className="font-bold text-[10px] text-[var(--foreground)]">{data.nasCount}</div>
+            </div>
+          )}
+          {data.k8sCount !== undefined && data.k8sCount > 0 && (
+            <div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-1 col-span-2">
+              <div className="text-[7px] text-[var(--muted)]">K8s Workloads</div>
+              <div className="font-bold text-[10px] text-[var(--foreground)]">{data.k8sCount} pods</div>
+            </div>
+          )}
+          {(!data.apCount && !data.dbCount && !data.nasCount && !data.k8sCount) && (
+            <div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-1 col-span-3">
+              <div className="text-[7px] text-[var(--muted)]">Total Assets</div>
+              <div className="font-bold text-[10px] text-[var(--foreground)]">{data.count ?? 0}</div>
+            </div>
+          )}
         </div>
       ) : (
-        <div className="mt-2 space-y-1 text-[10px]">
-          <div className="flex items-center justify-between font-semibold">
-            <span className="text-[12px] tabular-nums">{data.count ?? 0} VMs</span>
-            <span className="text-[9px] font-normal text-[var(--muted)]">{data.connectionsCount ?? 0} Connections</span>
-          </div>
-          <div className="flex items-center gap-2 text-[9px]">
-            <span className="text-[#067647] dark:text-[#75e0aa]">{data.healthyCount ?? 0} Healthy</span>
-            {(data.warningCount ?? 0) > 0 && (
-              <span className="text-[#b54708] dark:text-[#fdbf5a] font-medium">{data.warningCount} Warning</span>
-            )}
-            {(data.criticalCount ?? 0) > 0 && (
-              <span className="text-[#b42318] dark:text-[#ff8a82] font-semibold">{data.criticalCount} Critical</span>
-            )}
-          </div>
+        <div className="my-2 text-[10px] text-[var(--muted)]">
+          {data.count ?? 1} External Dependencies
         </div>
       )}
 
-      <div className="mt-2 flex items-center justify-between border-t border-[var(--border)] pt-1 text-[8px] text-[var(--muted-2)]">
-        <span>{isExternal ? "Dependency" : "Click: Overview · Double-click: Expand"}</span>
-        <span>→</span>
+      {/* Row 3: Health & Actions */}
+      <div className="flex items-center justify-between border-t border-[var(--border)] pt-1 text-[8.5px]">
+        <div className="flex items-center gap-1.5">
+          <span className="text-emerald-600 dark:text-emerald-400 font-medium">{data.healthyCount ?? data.count ?? 0} OK</span>
+          {(data.warningCount ?? 0) > 0 && (
+            <span className="text-amber-600 font-medium">{data.warningCount} W</span>
+          )}
+        </div>
+        <span className="text-[7.5px] text-[var(--muted)] hover:text-[#5750f1]">
+          Click: Info · 2x: Expand →
+        </span>
       </div>
     </div>
   );
 }
 
+// Compute / VM / Workload Node
 function VmNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
   const vm = data.vm!;
+  const isK8s = vm.assetType === "K8S_WORKLOAD";
+  const isDbaas = vm.assetType === "DBAAS";
+
   return (
     <div
       className={`w-[230px] h-[125px] rounded-md border bg-[var(--surface)] p-2.5 shadow-sm transition flex flex-col justify-between ${
@@ -182,7 +212,7 @@ function VmNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
         </span>
         <div className="flex items-center gap-1.5">
           <span className="rounded bg-[var(--surface-2)] px-1 py-0.5 font-mono text-[8px] text-[var(--muted)]">
-            {vm.role}
+            {isK8s ? "K8S" : isDbaas ? "DBAAS" : vm.role}
           </span>
           <span
             className={`h-2 w-2 rounded-full ${
@@ -197,7 +227,7 @@ function VmNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
         <span className="font-mono text-[var(--foreground)]">{vm.ipAddress}</span>
         <div className="flex items-center gap-1 font-mono text-[8px]">
           <span className="rounded border border-[var(--border)] px-1 py-0.2">{vm.environment}</span>
-          <span className="rounded bg-[var(--surface-2)] px-1 py-0.2">{vm.zone}</span>
+          {vm.domain && <span className="rounded bg-[var(--surface-2)] px-1 py-0.2">{vm.domain}</span>}
         </div>
       </div>
 
@@ -210,7 +240,7 @@ function VmNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
 
       {/* Row 4: OS Summary */}
       <div className="flex items-center justify-between border-t border-[var(--border)] pt-1 text-[8px] text-[var(--muted-2)]">
-        <span className="truncate">{vm.osName}</span>
+        <span className="truncate">{vm.osName || vm.assetType || "Compute Node"}</span>
         <span className="font-mono text-[7.5px]">{vm.service}</span>
       </div>
     </div>
@@ -245,7 +275,7 @@ function ClusterNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
         <span className="text-[var(--muted)]">VIP:</span>
         <span className="font-mono font-bold text-[#5750f1]">{cluster.vip}</span>
         <span className="rounded bg-[var(--surface-2)] px-1 py-0.2 font-mono text-[8px] text-[var(--muted)]">
-          {cluster.zone}
+          {cluster.domain || cluster.environment}
         </span>
       </div>
 
@@ -255,7 +285,7 @@ function ClusterNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
           <span>Active / Passive Nodes:</span>
           <span>{cluster.members.length} nodes</span>
         </div>
-        <div className="flex gap-1">
+        <div className="flex gap-1 flex-wrap">
           {cluster.members.map((m) => (
             <span
               key={m.assetId}
@@ -330,7 +360,7 @@ function NasNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
       {/* Row 4: Mount targets */}
       <div className="flex items-center justify-between border-t border-[var(--border)] pt-1 text-[8px] text-[var(--muted-2)]">
         <span>{nas.vendor} {nas.model ?? ""}</span>
-        <span>{nas.targetVms?.length ?? 0} VMs mounted</span>
+        <span>{nas.domain || nas.environment}</span>
       </div>
     </div>
   );
@@ -348,110 +378,58 @@ function Metric({ k, v }: { k: string; v?: number }) {
 }
 
 function FlowEdge(props: EdgeProps<Edge<TopologyEdgeData>>) {
-  const { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition } = props;
-  const data = props.data!;
-  const isBezier = data.lineStyle !== "smoothstep";
-  const [path] = isBezier
-    ? getBezierPath({
-        sourceX,
-        sourceY,
-        sourcePosition,
-        targetX,
-        targetY,
-        targetPosition,
-        curvature: 0.25,
-      })
-    : getSmoothStepPath({
-        sourceX,
-        sourceY,
-        sourcePosition,
-        targetX,
-        targetY,
-        targetPosition,
-        borderRadius: 8,
-      });
+  const { id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, selected } = props;
+  const lineStyle = data?.lineStyle ?? "bezier";
+  const pathFn = lineStyle === "smoothstep" ? getSmoothStepPath : getBezierPath;
 
-  const color = statusColor(data.issueCount, data.status);
-  const isTcpUp = data.status?.observation?.tcp === "UP";
-  const isBidi = data.status?.isBidirectional;
-  const isReverseUp = isBidi && data.status?.reverseObservation?.tcp === "UP";
-  const flowActive = data.flowActive ?? true;
+  const [edgePath, labelX, labelY] = pathFn({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+    borderRadius: 8,
+  });
 
-  // Source-anchored sticky badge positioning with orientation-aware stagger:
-  const edgeIdx = data.edgeIndex ?? 0;
-  const totalEdg = data.totalEdges ?? 1;
-  const stagger = (edgeIdx - (totalEdg - 1) / 2) * 20;
-
-  let labelX = sourceX;
-  let labelY = sourceY;
-
-  if (sourcePosition === Position.Top) {
-    labelX = sourceX + stagger;
-    labelY = sourceY - 32;
-  } else if (sourcePosition === Position.Bottom) {
-    labelX = sourceX + stagger;
-    labelY = sourceY + 32;
-  } else if (sourcePosition === Position.Left) {
-    labelX = sourceX - 44;
-    labelY = sourceY + stagger;
-  } else {
-    // Position.Right or default
-    labelX = sourceX + 44;
-    labelY = sourceY + stagger;
-  }
+  const strokeColor = statusColor(data?.issueCount ?? 0, data?.status);
+  const showLabel = data?.showLabel ?? true;
 
   return (
     <>
       <BaseEdge
-        path={path}
-        markerStart={props.markerStart}
-        markerEnd={props.markerEnd}
-        interactionWidth={18}
+        id={id}
+        path={edgePath}
         style={{
-          stroke: color,
-          strokeWidth: data.issueCount ? 1.8 : 1.2,
-          strokeDasharray: data.status?.observation?.tcp === "DOWN" ? "5 4" : undefined,
+          stroke: strokeColor,
+          strokeWidth: selected ? 2.5 : 1.5,
+          opacity: 0.85,
         }}
       />
-
-      {/* SVG Probe Flow Particle Animation */}
-      {flowActive && isTcpUp && (
-        <circle r="3" fill={color}>
-          <animateMotion dur="2.4s" repeatCount="indefinite" path={path} />
+      {data?.flowActive && (
+        <circle r={3} fill="#5750f1">
+          <animateMotion dur="2.4s" repeatCount="indefinite" path={edgePath} />
         </circle>
       )}
-      {flowActive && isReverseUp && (
-        <circle r="2.5" fill="#12b76a">
-          <animateMotion dur="2.4s" repeatCount="indefinite" path={path} keyPoints="1;0" keyTimes="0;1" calcMode="linear" />
-        </circle>
-      )}
-
-      {data.showLabel && (
+      {showLabel && (
         <EdgeLabelRenderer>
-          <button
+          <div
+            style={{
+              position: "absolute",
+              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+              pointerEvents: "all",
+              zIndex: 20,
+            }}
             onClick={(e) => {
               e.stopPropagation();
-              data.onSelect?.();
+              data?.onSelect?.();
             }}
-            style={{ transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)` }}
-            className={`nodrag nopan group absolute z-20 flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-left shadow-sm backdrop-blur-sm transition-all hover:scale-105 hover:z-30 ${
-              data.issueCount > 0
-                ? "border-rose-500/40 bg-[var(--surface)] text-rose-500 hover:border-rose-500 dark:bg-[#182331]"
-                : "border-[var(--border)] bg-[var(--surface)]/95 text-[var(--foreground)] hover:border-[#5750f1] hover:text-[#5750f1] dark:bg-[#182331]"
+            className={`nodrag nopan cursor-pointer rounded border border-[var(--border)] bg-[var(--surface)] px-1.5 py-0.5 text-[8px] font-mono shadow-sm hover:border-[#5750f1] transition ${
+              data?.issueCount ? "text-amber-600 font-bold" : "text-[var(--foreground)]"
             }`}
           >
-            <span
-              className={`h-1.5 w-1.5 rounded-full shrink-0 ${
-                data.issueCount > 0 ? "bg-rose-500" : isTcpUp ? "bg-emerald-500" : "bg-slate-400"
-              }`}
-            />
-            <span className="font-mono text-[8.5px] font-semibold">{data.label}</span>
-            {data.secondary && (
-              <span className="text-[7.5px] text-[var(--muted)] group-hover:text-[var(--foreground)]">
-                {data.secondary}
-              </span>
-            )}
-          </button>
+            {data?.label}
+          </div>
         </EdgeLabelRenderer>
       )}
     </>
@@ -464,7 +442,10 @@ const nodeTypes = {
   cluster: ClusterNode,
   nas: NasNode,
 };
-const edgeTypes = { flow: FlowEdge };
+
+const edgeTypes = {
+  flow: FlowEdge,
+};
 
 export type HandleDirection = "t" | "b" | "l" | "r";
 
@@ -511,8 +492,10 @@ export function ArchitectureCanvas({
   nasAssets = [],
   softwareReleases = [],
   softwareProducts = [],
+  relations = [],
+  topologyGroups = [],
 }: {
-  vms: VmAsset[];
+  vms: Asset[];
   statuses: NetworkStatus[];
   software: SoftwareInstall[];
   sops: SopDocument[];
@@ -520,55 +503,86 @@ export function ArchitectureCanvas({
   nasAssets?: NasAsset[];
   softwareReleases?: SoftwareRelease[];
   softwareProducts?: SoftwareProduct[];
+  relations?: ArchitectureRelation[];
+  topologyGroups?: TopologyGroup[];
 }) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const { activeProject } = useProjectGroup();
+
+  // Navigation & Filter States
   const [mode, setMode] = useState<ViewMode>("overview");
+
   const [envFilter, setEnvFilter] = useState("ALL");
-  const [zone, setZone] = useState("ALL");
+  const [drillGroup, setDrillGroup] = useState<string | null>(null);
   const [overlay, setOverlay] = useState<OverlayMode>("live");
   const [issuesOnly, setIssuesOnly] = useState(false);
   const [flowAnimation, setFlowAnimation] = useState(false);
-  const [lineStyle, setLineStyle] = useState<"bezier" | "smoothstep">("bezier");
   const [showEdgeLabels, setShowEdgeLabels] = useState(true);
   const [layoutEditMode, setLayoutEditMode] = useState(false);
+  const [lineStyle, setLineStyle] = useState<"bezier" | "smoothstep">("bezier");
   const [positionOverrides, setPositionOverrides] = useState<Record<string, { x: number; y: number }>>({});
-  const [edgeHandleOverrides, setEdgeHandleOverrides] = useState<
-    Record<string, { source?: HandleDirection; target?: HandleDirection }>
-  >({});
+  const [edgeHandleOverrides, setEdgeHandleOverrides] = useState<Record<string, { source?: HandleDirection; target?: HandleDirection }>>({});
   const [canvasRevision, setCanvasRevision] = useState(0);
   const [query, setQuery] = useState("");
 
-  // Drawers
-  const [selectedVm, setSelectedVm] = useState<VmAsset | null>(null);
+  // Relation Filters (APM Monitoring default OFF)
+  const [relationFilters, setRelationFilters] = useState<Record<string, boolean>>({
+    SERVICE: true,
+    DATABASE: true,
+    STORAGE: true,
+    MONITORING: false,
+    MANAGEMENT: true,
+  });
+
+  // Slide Drawers State
+  const [selectedVm, setSelectedVm] = useState<Asset | null>(null);
   const [selectedConnection, setSelectedConnection] = useState<NetworkStatus | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [selectedRelatedStatuses, setSelectedRelatedStatuses] = useState<NetworkStatus[]>([]);
-  const [selectedTier, setSelectedTier] = useState<TierDrawerData | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<GroupDrawerData | null>(null);
   const [selectedCluster, setSelectedCluster] = useState<ClusterEntity | null>(null);
   const [selectedNas, setSelectedNas] = useState<NasAsset | null>(null);
   const [selectedRelease, setSelectedRelease] = useState<SoftwareRelease | null>(null);
 
-  // Filter VMs by environment
-  const envVms = useMemo(
-    () => vms.filter((v) => envFilter === "ALL" || v.environment === envFilter),
-    [vms, envFilter]
+  // Scoped project assets
+  const projectVms = useMemo(
+    () => vms.filter((v) => !v.projectGroupId || v.projectGroupId === activeProject.id),
+    [vms, activeProject.id]
   );
+  const projectClusters = useMemo(
+    () => clusters.filter((c) => !c.projectGroupId || c.projectGroupId === activeProject.id),
+    [clusters, activeProject.id]
+  );
+  const projectNas = useMemo(
+    () => nasAssets.filter((n) => !n.projectGroupId || n.projectGroupId === activeProject.id),
+    [nasAssets, activeProject.id]
+  );
+  const projectRelations = useMemo(
+    () => relations.filter((r) => !r.projectGroupId || r.projectGroupId === activeProject.id),
+    [relations, activeProject.id]
+  );
+  const projectStatuses = useMemo(
+    () => statuses.filter((s) => !s.policy.projectGroupId || s.policy.projectGroupId === activeProject.id),
+    [statuses, activeProject.id]
+  );
+
+  const availableGroups = useMemo(() => {
+    const registered = topologyGroups.filter((g) => g.projectGroupId === activeProject.id);
+    const domains = Array.from(new Set(projectVms.map((v) => v.domain || v.zone || "UNMAPPED")));
+    return [...registered, ...domains.filter((d) => !registered.some((g) => g.domain === d)).map((d) => ({ id: "domain:" + d, name: d, domain: d, projectGroupId: activeProject.id } as TopologyGroup))];
+  }, [topologyGroups, projectVms, activeProject.id]);
+  const selectedFilterGroup = availableGroups.find((g) => g.id === drillGroup);
+  const envVms = useMemo(() => projectVms.filter((v) => {
+    if (envFilter !== "ALL" && v.environment !== envFilter) return false;
+    const g = selectedFilterGroup;
+    if (!g) return true;
+    if (g.assetIds) return g.assetIds.includes(v.id);
+    return !!(g.domain || g.system || g.environment) && (!g.domain || (v.domain || v.zone || "UNMAPPED") === g.domain) && (!g.system || v.system === g.system) && (!g.environment || v.environment === g.environment);
+  }), [projectVms, envFilter, selectedFilterGroup]);
   const envVmIds = useMemo(() => new Set(envVms.map((v) => v.id)), [envVms]);
 
-  // Filter statuses matching filtered VMs
   const envStatuses = useMemo(
-    () => statuses.filter((s) => envVmIds.has(s.policy.sourceVmId)),
-    [statuses, envVmIds]
-  );
-
-  const issueVmIds = useMemo(
-    () =>
-      new Set(
-        envStatuses
-          .filter((s) => s.overall !== "NORMAL")
-          .flatMap((s) => [s.policy.sourceVmId, s.policy.targetVmId].filter(Boolean) as string[])
-      ),
-    [envStatuses]
+    () => projectStatuses.filter((s) => envVmIds.has(s.policy.sourceVmId)),
+    [projectStatuses, envVmIds]
   );
 
   const handleSelectConnection = useCallback(
@@ -580,42 +594,59 @@ export function ArchitectureCanvas({
     []
   );
 
+  // Build Topology based on View Mode
   const { nodes, edges } = useMemo(() => {
     if (mode === "overview") {
-      return buildOverview(envVms, envStatuses, issuesOnly, overlay, query, flowAnimation, handleSelectConnection);
+      return buildOverview(
+        envVms,
+        envStatuses,
+        projectRelations,
+        relationFilters,
+        issuesOnly,
+        overlay,
+        query,
+        flowAnimation,
+        showEdgeLabels,
+        handleSelectConnection
+      );
     }
-    if (mode === "service") {
-      return buildServices(envVms, envStatuses, issuesOnly, overlay, query, flowAnimation, handleSelectConnection);
-    }
-    return buildVms(
+    return buildAssets(
       envVms,
       envStatuses,
-      zone,
+      projectClusters.filter((c) => (envFilter === "ALL" || c.environment === envFilter) && (!drillGroup || c.members.some((m) => envVmIds.has(m.assetId)))),
+      projectNas.filter((n) => (envFilter === "ALL" || n.environment === envFilter) && (!selectedFilterGroup?.environment || n.environment === selectedFilterGroup.environment) && (!drillGroup || envVms.some((v) => v.id === n.id || v.hostname === n.hostname || v.ipAddress === n.ipAddress))),
+      null,
+      relationFilters,
       issuesOnly,
-      issueVmIds,
       overlay,
       query,
       flowAnimation,
-      clusters,
-      nasAssets,
+      showEdgeLabels,
       handleSelectConnection
     );
   }, [
     mode,
+    envFilter,
+    envVmIds,
+    selectedFilterGroup,
+    drillGroup,
+    projectVms,
     envVms,
     envStatuses,
-    zone,
+    projectStatuses,
+    projectClusters,
+    projectNas,
+    projectRelations,
+    relationFilters,
     issuesOnly,
-    issueVmIds,
     overlay,
     query,
     flowAnimation,
-    clusters,
-    nasAssets,
+    showEdgeLabels,
     handleSelectConnection,
   ]);
 
-  const layoutStorageKey = `rpa-topology-layout:v2:${mode}:${envFilter}:${zone}`;
+  const layoutStorageKey = `rpa-topology-layout:v3:${activeProject.id}:${mode}:${envFilter}:${drillGroup ?? "ALL"}`;
 
   useEffect(() => {
     try {
@@ -628,18 +659,18 @@ export function ArchitectureCanvas({
 
   useEffect(() => {
     try {
-      const savedHandles = window.localStorage.getItem("rpa-topology-handles:v1");
-      if (savedHandles) setEdgeHandleOverrides(JSON.parse(savedHandles));
+      const savedHandles = window.localStorage.getItem(`rpa-topology-handles:v2:${activeProject.id}`);
+      setEdgeHandleOverrides(savedHandles ? JSON.parse(savedHandles) : {});
     } catch {
       setEdgeHandleOverrides({});
     }
-  }, []);
+  }, [activeProject.id]);
 
   function updateEdgeHandles(edgeId: string, handles: { source?: HandleDirection; target?: HandleDirection }) {
     setEdgeHandleOverrides((prev) => {
       const next = { ...prev, [edgeId]: handles };
       try {
-        window.localStorage.setItem("rpa-topology-handles:v1", JSON.stringify(next));
+        window.localStorage.setItem(`rpa-topology-handles:v2:${activeProject.id}`, JSON.stringify(next));
       } catch {}
       return next;
     });
@@ -647,7 +678,7 @@ export function ArchitectureCanvas({
 
   // Real-time smooth dragging state with ghost twin preview
   const [liveNodes, setLiveNodes] = useState<Node<TopologyNodeData>[]>([]);
-  const [dragOrigin, setDragOrigin] = useState<{ id: string; position: { x: number; y: number } } | null>(null);
+
 
   useEffect(() => {
     setLiveNodes(
@@ -666,52 +697,18 @@ export function ArchitectureCanvas({
     const snapped = { x: Math.round(position.x / 20) * 20, y: Math.round(position.y / 20) * 20 };
     setPositionOverrides((current) => {
       const next = { ...current, [nodeId]: snapped };
-      window.localStorage.setItem(layoutStorageKey, JSON.stringify(next));
+      try { window.localStorage.setItem(layoutStorageKey, JSON.stringify(next)); } catch {}
       return next;
     });
   }
 
-  const onNodeDragStart = useCallback((_: any, node: Node) => {
-    setDragOrigin({ id: node.id, position: { ...node.position } });
-  }, []);
-
-  const onNodeDragStop = useCallback((_: any, node: Node) => {
-    setDragOrigin(null);
-    saveNodePosition(node.id, node.position);
-  }, [layoutStorageKey]);
+  function onNodeDragStop(_: unknown, node: Node) { saveNodePosition(node.id, node.position); }
 
   function resetLayout() {
-    window.localStorage.removeItem(layoutStorageKey);
+    try { window.localStorage.removeItem(layoutStorageKey); } catch {}
     setPositionOverrides({});
     setCanvasRevision((value) => value + 1);
   }
-
-  const displayNodes = useMemo(() => {
-    if (!dragOrigin) return liveNodes;
-    const originNode = liveNodes.find((n) => n.id === dragOrigin.id);
-    if (!originNode) return liveNodes;
-
-    const ghostNode: Node<TopologyNodeData> = {
-      id: `${dragOrigin.id}-ghost`,
-      type: originNode.type,
-      position: dragOrigin.position,
-      style: {
-        ...originNode.style,
-        opacity: 0.38,
-        pointerEvents: "none",
-        filter: "grayscale(60%)",
-      },
-      className: "react-flow__node-ghost",
-      data: {
-        ...originNode.data,
-        label: `${originNode.data.label} (Original)`,
-      },
-      draggable: false,
-      selectable: false,
-    };
-
-    return [ghostNode, ...liveNodes];
-  }, [liveNodes, dragOrigin]);
 
   // Dynamically resolve edge connection handles (4-way) and properties
   const resolvedEdges = useMemo(() => {
@@ -753,172 +750,162 @@ export function ArchitectureCanvas({
     });
   }, [edges, liveNodes, edgeHandleOverrides, lineStyle, showEdgeLabels]);
 
-  function handleSearch(val: string) {
-    setQuery(val);
-    const q = val.trim().toLowerCase();
-    if (!q) return;
-
-    // Check if query directly matches a VM hostname or IP
-    const hit = envVms.find((v) => `${v.hostname} ${v.ipAddress}`.toLowerCase().includes(q));
-    if (hit) {
-      setMode("vm");
-      setZone(hit.zone);
-      setSelectedVm(hit);
-    }
-  }
-
-  function toggleFullscreen() {
-    if (!containerRef.current) return;
-    if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen?.().catch(() => {});
-    } else {
-      document.exitFullscreen?.().catch(() => {});
-    }
-  }
-
   return (
-    <div ref={containerRef} className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)]">
-      {/* Top Architecture Controls Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] p-2">
-        {/* Left side: View Mode, Environment, and Zone */}
-        <div className="flex items-center gap-2">
-          {/* View: Overview / Service / VM */}
-          <Segment value={mode} setValue={setMode} />
+    <div className="space-y-2">
+      {/* Top Breadcrumb Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-[10px]">
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => {
+              setMode("overview");
+              setDrillGroup(null);
+            }}
+            className="font-bold text-[#5750f1] hover:underline"
+          >
+            {activeProject.name}
+          </button>
+          <span className="text-[var(--muted)]">&gt;</span>
+          <button
+            onClick={() => setDrillGroup(null)}
+            className={`capitalize ${!drillGroup ? "font-semibold text-[var(--foreground)]" : "text-[var(--muted)] hover:underline"}`}
+          >
+            {mode === "overview" ? "오버뷰" : "전체보기"}
+          </button>
+          {drillGroup && (
+            <>
+              <span className="text-[var(--muted)]">&gt;</span>
+              <span className="font-bold text-[var(--foreground)]">{selectedFilterGroup?.name ?? drillGroup}</span>
+              <button
+                onClick={() => setDrillGroup(null)}
+                className="ml-2 rounded bg-[var(--surface-2)] px-1.5 py-0.5 text-[8.5px] text-[var(--muted)] hover:text-[var(--foreground)]"
+              >
+                Reset Drill-down ✕
+              </button>
+            </>
+          )}
+        </div>
 
+        <div className="flex items-center gap-2">
+          {/* Relation Type Checkboxes */}
+          <div className="flex flex-wrap items-center gap-2 text-[9px]">
+            <span className="text-[var(--muted)] font-medium">Relations:</span>
+            {(["SERVICE", "DATABASE", "STORAGE", "MONITORING", "MANAGEMENT"] as RelationType[]).map((rt) => (
+              <label key={rt} className="flex cursor-pointer items-center gap-1 text-[9px]">
+                <input
+                  type="checkbox"
+                  checked={!!relationFilters[rt]}
+                  onChange={(e) =>
+                    setRelationFilters((prev) => ({ ...prev, [rt]: e.target.checked }))
+                  }
+                  className="rounded h-3 w-3 accent-[#5750f1]"
+                />
+                <span className={relationFilters[rt] ? "font-medium text-[var(--foreground)]" : "text-[var(--muted)]"}>
+                  {rt.charAt(0) + rt.slice(1).toLowerCase()}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Main Filter & Action Toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2">
+        {/* Left: View Mode Segment + Sub-selectors */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Summary and individual assets */}
+          <div className="flex rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-0.5">
+            {(["overview", "asset"] as ViewMode[]).map((v) => (
+              <button
+                key={v}
+                onClick={() => {
+                  setMode(v);
+                }}
+                className={`h-6 rounded px-2.5 text-[9px] font-medium transition capitalize ${
+                  mode === v ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm font-bold" : "text-[var(--muted)]"
+                }`}
+              >
+                {v === "overview" ? "오버뷰" : "전체보기"}
+              </button>
+            ))}
+          </div>
+
+          <label className="flex items-center gap-1 text-[10px] text-[var(--muted)]">그룹:
+            <select aria-label="그룹" value={selectedFilterGroup?.id ?? "ALL"} onChange={(e) => setDrillGroup(e.target.value === "ALL" ? null : e.target.value)} className="h-7 max-w-48 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[9.5px]">
+              <option value="ALL">전체 그룹</option>
+              {availableGroups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+            </select>
+          </label>
           {/* Environment Filter */}
-          <div className="flex items-center gap-1 text-[9px] text-[var(--muted)]">
-            <span>Env:</span>
+          <div className="flex items-center gap-1 text-[10px] text-[var(--muted)]">
+            <span>환경:</span>
             <select
+              aria-label="환경"
               value={envFilter}
               onChange={(e) => setEnvFilter(e.target.value)}
-              className="h-7 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[9px] outline-none"
+              className="h-7 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[9.5px] outline-none"
             >
               <option value="ALL">ALL</option>
               <option value="PROD">PROD</option>
-              <option value="STG">STG</option>
+              <option value="QA">QA</option>
               <option value="DEV">DEV</option>
             </select>
           </div>
 
-          {/* Tier Zone Filter (VM drill-down mode) */}
-          {mode === "vm" && (
-            <div className="flex items-center gap-1 text-[9px] text-[var(--muted)]">
-              <span>Tier:</span>
-              <select
-                value={zone}
-                onChange={(e) => setZone(e.target.value)}
-                className="h-7 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[9px] outline-none"
-              >
-                <option value="ALL">All tiers</option>
-                {zoneOrder
-                  .filter((z) => z !== "EXTERNAL")
-                  .map((z) => (
-                    <option key={z} value={z}>{z}</option>
-                  ))}
-              </select>
-            </div>
-          )}
-        </div>
-
-        {/* Right side: Overlay Toggle, Line Style Toggle, Flow Animation Toggle, Labels Toggle, Search, Issues Only, Fullscreen */}
-        <div className="flex items-center gap-2">
-          {/* Overlay: Policy / Live */}
+          {/* Overlay Mode */}
           <div className="flex rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-0.5">
             <button
               onClick={() => setOverlay("policy")}
-              className={`h-6 rounded px-2 text-[9px] font-medium transition ${
+              className={`h-6 rounded px-2 text-[9px] font-medium ${
                 overlay === "policy" ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]"
               }`}
             >
-              Policy
+              정책 (Policy)
             </button>
             <button
               onClick={() => setOverlay("live")}
-              className={`h-6 rounded px-2 text-[9px] font-medium transition ${
+              className={`h-6 rounded px-2 text-[9px] font-medium ${
                 overlay === "live" ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]"
               }`}
             >
-              Live
+              실측 프로브 (Actual)
             </button>
           </div>
+        </div>
 
-          {/* Line Style Toggle: Curved / Step */}
-          <div className="flex rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-0.5">
-            <button
-              onClick={() => setLineStyle("bezier")}
-              className={`h-6 rounded px-2 text-[9px] font-medium transition ${
-                lineStyle === "bezier" ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]"
-              }`}
-              title="Smooth Curved (Bezier) Lines"
-            >
-              Curved
-            </button>
-            <button
-              onClick={() => setLineStyle("smoothstep")}
-              className={`h-6 rounded px-2 text-[9px] font-medium transition ${
-                lineStyle === "smoothstep" ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]"
-              }`}
-              title="Orthogonal (Step) Lines"
-            >
-              Step
-            </button>
-          </div>
-
-          {/* Flow Animation Toggle */}
+        {/* Right: Search, Toggles, Actions */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Probe Flow Animation */}
           <button
-            onClick={() => setFlowAnimation((prev) => !prev)}
-            title="Toggle Probe Flow Particle Animation"
-            className={`flex h-7 items-center gap-1 rounded-md border px-2 text-[9px] font-medium transition ${
-              flowAnimation
-                ? "border-[#5750f1] bg-[#5750f1]/10 text-[#5750f1]"
-                : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]"
-            }`}
-          >
-            <span className={`h-1.5 w-1.5 rounded-full ${flowAnimation ? "bg-[#5750f1] animate-pulse" : "bg-[var(--muted)]"}`} />
-            <span>Flow</span>
-          </button>
-
-          <button
-            onClick={() => setShowEdgeLabels((value) => !value)}
-            title="토폴로지 연결선의 포트 및 프로토콜 라벨 표시/숨김 (ON/OFF)"
+            onClick={() => setFlowAnimation((v) => !v)}
             className={`flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[9px] font-medium transition ${
-              showEdgeLabels
-                ? "border-[#5750f1] bg-[#5750f1]/10 text-[#5750f1]"
-                : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]"
+              flowAnimation ? "border-[#5750f1] bg-[#5750f1]/10 text-[#5750f1]" : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]"
             }`}
           >
-            <span className={`h-1.5 w-1.5 rounded-full ${showEdgeLabels ? "bg-[#5750f1]" : "bg-[var(--muted)]"}`} />
-            <span>Labels: {showEdgeLabels ? "ON" : "OFF"}</span>
+            <span className={`h-1.5 w-1.5 rounded-full ${flowAnimation ? "bg-[#5750f1]" : "bg-[var(--muted)]"}`} />
+            <span>프로브 플로우</span>
           </button>
 
+          {/* Labels Toggle */}
           <button
-            onClick={() => setLayoutEditMode((value) => !value)}
-            title="Allow manual node movement. Dragging snaps to a 20px grid."
-            className={`flex h-7 items-center gap-1 rounded-md border px-2 text-[9px] font-medium transition ${
-              layoutEditMode
-                ? "border-[#5750f1] bg-[#5750f1]/10 text-[#5750f1]"
-                : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]"
+            onClick={() => setShowEdgeLabels((v) => !v)}
+            className={`flex h-7 items-center gap-1.5 rounded-md border px-2 text-[9px] font-medium transition ${
+              showEdgeLabels ? "border-[#5750f1] bg-[#5750f1]/10 text-[#5750f1]" : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]"
             }`}
           >
-            {layoutEditMode ? "Editing layout" : "Edit layout"}
+            <span>라벨: {showEdgeLabels ? "ON" : "OFF"}</span>
           </button>
 
-          <button
-            onClick={resetLayout}
-            title="Discard manual positions and restore the automatic hierarchical layout."
-            className="flex h-7 items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[9px] text-[var(--muted)] transition hover:text-[var(--foreground)]"
-          >
-            Auto layout
-          </button>
-
-          {/* Search: hostname / IP / port */}
-          <div className="flex h-7 w-[200px] items-center gap-1.5 rounded-md border border-[var(--border)] px-2">
-            <SearchIcon className="h-3.5 w-3.5 shrink-0 text-[var(--muted)]" />
+          <button aria-pressed={layoutEditMode} onClick={() => setLayoutEditMode((v) => !v)} className="h-7 rounded-md border border-[var(--border)] px-2 text-[9px]">{layoutEditMode ? "편집 완료" : "레이아웃 편집"}</button>
+          <button onClick={resetLayout} className="h-7 rounded-md border border-[var(--border)] px-2 text-[9px]">자동 배치</button>
+          <button onClick={() => setLineStyle((v) => v === "bezier" ? "smoothstep" : "bezier")} className="h-7 rounded-md border border-[var(--border)] px-2 text-[9px]">{lineStyle === "bezier" ? "곡선 연결" : "직각 연결"}</button>
+          {/* Search */}
+          <div className="flex h-7 w-[180px] items-center gap-1.5 rounded-md border border-[var(--border)] px-2">
+            <SearchIcon className="h-3 w-3 shrink-0 text-[var(--muted)]" />
             <input
               value={query}
-              onChange={(e) => handleSearch(e.target.value)}
+              onChange={(e) => setQuery(e.target.value)}
               className="w-full bg-transparent text-[9px] outline-none"
-              placeholder="Search hostname, IP, port..."
+              placeholder="호스트명, IP, 포트 검색..."
             />
           </div>
 
@@ -928,43 +915,31 @@ export function ArchitectureCanvas({
               type="checkbox"
               checked={issuesOnly}
               onChange={(e) => setIssuesOnly(e.target.checked)}
-              className="rounded"
+              className="rounded h-3 w-3 accent-[#5750f1]"
             />
-            <span>Issues only</span>
+            <span>이슈 항목만</span>
           </label>
-
-          {/* Fullscreen Button */}
-          <button
-            onClick={toggleFullscreen}
-            title="Toggle fullscreen"
-            className="flex h-7 items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[9px] text-[var(--muted)] transition hover:text-[var(--foreground)]"
-          >
-            <MaximizeIcon className="h-3.5 w-3.5" />
-            <span>Fullscreen</span>
-          </button>
         </div>
       </div>
 
-      {/* React Flow Canvas - Reduced height to prevent vertical viewport scrolling */}
-      <div className="relative h-[calc(100vh-215px)] min-h-[480px]">
+      {/* Canvas Area */}
+      <div className="relative h-[calc(100vh-235px)] min-h-[500px] rounded-lg border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
         <ReactFlow
-          key={`${mode}-${envFilter}-${zone}-${canvasRevision}`}
-          nodes={displayNodes}
+          key={`${mode}-${envFilter}-${drillGroup}-${activeProject.id}-${canvasRevision}`}
+          nodes={liveNodes}
           edges={resolvedEdges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           fitView
-          fitViewOptions={{ padding: 0.16 }}
-          minZoom={0.25}
-          maxZoom={1.8}
+          fitViewOptions={{ padding: 0.18 }}
+          minZoom={0.2}
+          maxZoom={1.6}
           nodesDraggable={layoutEditMode}
           nodesConnectable={false}
           snapToGrid
           snapGrid={[20, 20]}
-          elevateEdgesOnSelect
-          onNodesChange={onNodesChange}
-          onNodeDragStart={onNodeDragStart}
           onNodeDragStop={onNodeDragStop}
+          onNodesChange={onNodesChange}
           onNodeClick={(_, node) => {
             const d = node.data as TopologyNodeData;
             if (d.vm) {
@@ -974,43 +949,40 @@ export function ArchitectureCanvas({
             } else if (d.nas) {
               setSelectedNas(d.nas);
             } else if (d.kind === "group" || d.kind === "external") {
-              const tierVms = envVms.filter((v) => d.kind === "group" && (v.zone === d.key || v.service === d.key));
-              const tierStatuses = envStatuses.filter((s) => {
-                const srcVm = envVms.find((v) => v.id === s.policy.sourceVmId);
-                const tgtVm = envVms.find((v) => v.id === s.policy.targetVmId);
-                if (d.kind === "external") {
-                  return !s.policy.targetVmId && s.policy.targetName === d.key;
-                }
-                return (
-                  (srcVm && (srcVm.zone === d.key || srcVm.service === d.key)) ||
-                  (tgtVm && (tgtVm.zone === d.key || tgtVm.service === d.key))
+              // Group node clicked -> open GroupDrawer
+              const groupAssets = envVms.filter((v) => {
+                if (d.environment && v.environment !== d.environment) return false;
+                if (d.domain) return v.domain === d.domain;
+                if (d.system) return v.system === d.system;
+                if (d.environment) return v.environment === d.environment;
+                return v.service === d.key || v.zone === d.key;
+              });
+              const groupStatuses = projectStatuses.filter((s) => {
+                return groupAssets.some(
+                  (a) => a.id === s.policy.sourceVmId || a.id === s.policy.targetVmId
                 );
               });
-
-              setSelectedTier({
-                tierName: d.label,
-                kind: d.kind,
-                vms: tierVms,
-                statuses: tierStatuses,
-                healthyCount: d.healthyCount,
-                warningCount: d.warningCount,
-                criticalCount: d.criticalCount,
-                issueCount: d.issueCount,
+              setSelectedGroup({
+                groupName: d.label,
+                groupType: d.groupType,
+                environment: d.environment,
+                domain: d.domain,
+                system: d.system,
+                description: d.description,
+                assets: groupAssets,
+                statuses: groupStatuses,
+                software,
+                sops,
               });
             }
           }}
           onNodeDoubleClick={(_, node) => {
             const d = node.data as TopologyNodeData;
-            if (d.kind !== "group") return;
-            if (zoneOrder.includes(d.key)) {
-              setMode("vm");
-              setZone(d.key);
-              return;
-            }
-            const hit = envVms.find((v) => v.service === d.key);
-            if (hit) {
-              setMode("vm");
-              setZone(hit.zone);
+            if (d.kind === "group") {
+              setMode("asset");
+              setDrillGroup(availableGroups.find((g) => (d.domain && g.domain === d.domain) || (d.system && g.system === d.system))?.id ?? null);
+              if (d.environment) setEnvFilter(d.environment);
+              setSelectedGroup(null);
             }
           }}
           onEdgeClick={(_, edge) => {
@@ -1018,7 +990,7 @@ export function ArchitectureCanvas({
             setSelectedEdgeId(edge.id);
             if (d?.status) {
               setSelectedConnection(d.status);
-              setSelectedRelatedStatuses(d.relatedStatuses ?? (d.status ? [d.status] : []));
+              setSelectedRelatedStatuses(d.relatedStatuses ?? [d.status]);
             }
           }}
         >
@@ -1028,40 +1000,48 @@ export function ArchitectureCanvas({
             pannable
             zoomable
             nodeColor={(n) => {
-              if (n.id.endsWith("-ghost")) return "transparent";
               if (n.type === "cluster") return "#a855f7";
               if (n.type === "nas") return "#0ea5e9";
-              const d = n.data as any;
-              if (d?.issueCount > 0 || d?.vm?.health === "critical") return "#f04438";
+              const d = n.data as TopologyNodeData;
+              if ((d.issueCount ?? 0) > 0 || d?.vm?.health === "critical") return "#f04438";
               if (d?.vm?.health === "warning") return "#f79009";
-              if (n.type === "tier") return "#64748b";
               return "#5750f1";
             }}
-            nodeStrokeWidth={1}
-            nodeBorderRadius={3}
-            maskColor="rgba(15, 23, 42, 0.35)"
-            maskStrokeColor="#5750f1"
-            maskStrokeWidth={1.5}
             className="!border-[var(--border)] !bg-[var(--surface)] shadow-md"
           />
         </ReactFlow>
 
-        {/* Informative Legend Overlay - Centered bottom to prevent overlapping left zoom controls */}
+        {nodes.length === 0 && <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-[var(--muted)]">선택한 환경·그룹에 표시할 자산이 없습니다.</div>}
+        {/* Legend Overlay at bottom center */}
         <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 max-w-[90vw] rounded-md border border-[var(--border)] bg-[var(--surface)]/95 px-3 py-1.5 text-center text-[8px] text-[var(--muted)] shadow-sm backdrop-blur-sm">
           <div>
-            <b className="text-[var(--foreground)]">Policy (Should Be)</b>: 승인/만료 ·{" "}
-            <b className="text-[var(--foreground)]">Actual</b>: Source→Target Telegraf TCP probe (양방향 지원)
+            <b className="text-[var(--foreground)]">선언 정책 (Should Be)</b> vs.{" "}
+            <b className="text-[var(--foreground)]">Telegraf TCP 프로브 (Actual)</b>
           </div>
-          <div className="mt-0.5">
-            더블클릭 → 티어 드릴다운 · 노드/연결 클릭 → 우측 슬라이드 서랍 상세 · Labels → 포트 라벨 ON/OFF · Curved/Step → 곡선/직각 선택 · Edit layout → 20px 격자 스냅
+          <div className="mt-0.5 text-[7.5px]">
+            클릭 → 상세 / 연결 접점 변경 · 더블클릭 → 그룹 전체보기 · 레이아웃 편집 → 이동 (이 브라우저에 저장)
           </div>
         </div>
       </div>
 
-      {/* Slide Drawers (All slide from Right, width 460px) */}
+      {/* Slide Drawers (All sliding in from the right: right-0, width 460px) */}
+      <GroupDrawer
+        data={selectedGroup}
+        open={!!selectedGroup}
+        onClose={() => setSelectedGroup(null)}
+        onSelectAsset={(asset) => {
+          setSelectedVm(asset);
+        }}
+        onDrillDown={(groupName) => {
+          setMode("asset");
+          setDrillGroup(availableGroups.find((g) => g.name === groupName || (!!g.domain && g.domain === selectedGroup?.domain) || (!!g.system && g.system === selectedGroup?.system))?.id ?? null);
+          if (selectedGroup?.environment) setEnvFilter(selectedGroup.environment);
+          setSelectedGroup(null);
+        }}
+      />
       <VmDrawer
         vm={selectedVm}
-        network={statuses}
+        network={projectStatuses}
         software={software}
         sops={sops}
         open={!!selectedVm}
@@ -1072,38 +1052,16 @@ export function ArchitectureCanvas({
         }}
       />
       <ConnectionDrawer
-        status={selectedConnection}
-        relatedStatuses={selectedRelatedStatuses}
         sourceHandle={edgeHandleOverrides[selectedEdgeId ?? ""]?.source}
         targetHandle={edgeHandleOverrides[selectedEdgeId ?? ""]?.target}
-        onUpdateHandles={(handles) => {
-          if (selectedEdgeId) {
-            updateEdgeHandles(selectedEdgeId, handles);
-          }
-        }}
+        onUpdateHandles={(handles) => { if (selectedEdgeId) updateEdgeHandles(selectedEdgeId, handles); }}
+        status={selectedConnection}
+        relatedStatuses={selectedRelatedStatuses}
         open={!!selectedConnection}
         onClose={() => {
           setSelectedConnection(null);
           setSelectedEdgeId(null);
           setSelectedRelatedStatuses([]);
-        }}
-      />
-      <TierDrawer
-        data={selectedTier}
-        open={!!selectedTier}
-        onClose={() => setSelectedTier(null)}
-        onDrillDown={(tierName) => {
-          setMode("vm");
-          const cleanZone = tierName.replace(" TIER", "").trim();
-          if (zoneOrder.includes(cleanZone)) {
-            setZone(cleanZone);
-          } else {
-            setZone("ALL");
-          }
-        }}
-        onSelectVm={(vm) => {
-          setSelectedTier(null);
-          setSelectedVm(vm);
         }}
       />
       <ClusterDrawer
@@ -1116,7 +1074,7 @@ export function ArchitectureCanvas({
         open={!!selectedNas}
         onClose={() => setSelectedNas(null)}
         onSelectVm={(hostname) => {
-          const hit = vms.find((v) => v.hostname === hostname);
+          const hit = projectVms.find((v) => v.hostname === hostname);
           if (hit) {
             setSelectedNas(null);
             setSelectedVm(hit);
@@ -1132,402 +1090,318 @@ export function ArchitectureCanvas({
   );
 }
 
-function Segment({ value, setValue }: { value: ViewMode; setValue: (v: ViewMode) => void }) {
-  return (
-    <div className="flex rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-0.5">
-      {(["overview", "service", "vm"] as ViewMode[]).map((v) => (
-        <button
-          key={v}
-          onClick={() => setValue(v)}
-          className={`h-6 rounded px-2.5 text-[9px] font-medium transition ${
-            value === v ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]"
-          }`}
-        >
-          {v === "overview" ? "Overview" : v === "service" ? "Service" : "VM"}
-        </button>
-      ))}
-    </div>
-  );
-}
-
+// -------------------------------------------------------------
+// BUILD 1: OVERVIEW ARCHITECTURE (Executive single-screen view)
+// -------------------------------------------------------------
 function buildOverview(
-  vms: VmAsset[],
+  vms: Asset[],
   statuses: NetworkStatus[],
+  relations: ArchitectureRelation[],
+  relationFilters: Record<string, boolean>,
   issuesOnly: boolean,
   overlay: OverlayMode,
   query: string,
   flowActive: boolean,
-  onSelectConnection: (edgeId: string, status: NetworkStatus, relatedStatuses: NetworkStatus[]) => void
+  showLabels: boolean,
+  onSelectConnection: (id: string, s: NetworkStatus, all: NetworkStatus[]) => void
 ) {
   const q = query.trim().toLowerCase();
-  const issueIds = new Set(
-    statuses
-      .filter((s) => s.overall !== "NORMAL")
-      .flatMap((s) => [s.policy.sourceVmId, s.policy.targetVmId].filter(Boolean) as string[])
-  );
+  if (q) vms = vms.filter((v) => `${v.hostname} ${v.ipAddress} ${v.service} ${v.domain ?? ""}`.toLowerCase().includes(q));
+  // Aggregate entities for the overview canvas
+  const portalAssets = vms.filter((v) => v.system === "RPA Portal" || v.domain === "PORTAL");
+  const memProdAssets = vms.filter((v) => v.domain === "MEMORY" && v.environment === "PROD");
+  const fndProdAssets = vms.filter((v) => v.domain === "FOUNDRY" && v.environment === "PROD");
+  const comProdAssets = vms.filter((v) => v.domain === "COMMON" && v.environment === "PROD");
+  const qaAssets = vms.filter((v) => v.environment === "QA");
+  const devAssets = vms.filter((v) => v.environment === "DEV");
+  const apmAssets = vms.filter((v) => v.system === "APM" || v.domain === "APM");
+  const commonFuncAssets = vms.filter((v) => v.system === "Common Function" || v.domain === "COMMON_FUNCTION");
 
-  const groups = zoneOrder
-    .filter((z) => z !== "EXTERNAL")
-    .map((z) => {
-      const list = vms.filter((v) => v.zone === z);
-      const healthy = list.filter((v) => v.health === "healthy").length;
-      const warning = list.filter((v) => v.health === "warning").length;
-      const critical = list.filter((v) => v.health === "critical").length;
-      const issues = list.filter((v) => issueIds.has(v.id)).length + warning + critical;
-      const connCount = statuses.filter(
-        (s) =>
-          list.some((v) => v.id === s.policy.sourceVmId) ||
-          list.some((v) => v.id === s.policy.targetVmId)
-      ).length;
-
-      return {
-        z,
-        list,
-        healthy,
-        warning,
-        critical,
-        connCount,
-        issues,
-      };
-    })
-    .filter((g) => g.list.length > 0 && (issuesOnly ? g.issues > 0 : true));
-
-  const externalNames = Array.from(
-    new Set(statuses.filter((s) => !s.policy.targetVmId).map((s) => s.policy.targetName))
-  );
+  function makeGroupData(label: string, sublabel: string, assets: Asset[], domain?: string, system?: string, env?: string) {
+    const apCount = assets.filter((a) => a.role === "AP").length;
+    const dbCount = assets.filter((a) => a.role === "DB").length;
+    const nasCount = assets.filter((a) => a.assetType === "NAS").length;
+    const k8sCount = assets.filter((a) => a.assetType === "K8S_WORKLOAD").length;
+    const healthy = assets.filter((a) => a.health === "healthy").length;
+    const warning = assets.filter((a) => a.health === "warning").length;
+    const critical = assets.filter((a) => a.health === "critical").length;
+    return {
+      kind: "group" as const,
+      key: label,
+      label,
+      sublabel,
+      count: assets.length,
+      apCount,
+      dbCount,
+      nasCount,
+      k8sCount,
+      healthyCount: healthy,
+      warningCount: warning,
+      criticalCount: critical,
+      issueCount: warning + critical,
+      domain,
+      system,
+      environment: env,
+    };
+  }
 
   const nodes: Node<TopologyNodeData>[] = [
-    ...groups.map((g) => ({
-      id: `zone-${g.z}`,
+    // Top Center: RPA Portal (Kubernetes)
+    {
+      id: "overview-portal",
       type: "tier",
-      position: zonePos[g.z] ?? { x: 0, y: 0 },
-      style: { width: 200, height: 116 },
-      data: {
-        kind: "group" as const,
-        key: g.z,
-        label: `${g.z} TIER`,
-        count: g.list.length,
-        healthyCount: g.healthy,
-        warningCount: g.warning,
-        criticalCount: g.critical,
-        connectionsCount: g.connCount,
-        issueCount: g.issues,
-      },
-    })),
-    ...(externalNames.length && (!issuesOnly || statuses.some((s) => !s.policy.targetVmId && s.overall !== "NORMAL"))
-      ? [
-          {
-            id: "zone-EXTERNAL",
-            type: "tier",
-            position: zonePos.EXTERNAL,
-            style: { width: 200, height: 116 },
-            data: {
-              kind: "external" as const,
-              key: "EXTERNAL",
-              label: "EXTERNAL",
-              count: externalNames.length,
-              issueCount: statuses.filter((s) => !s.policy.targetVmId && s.overall !== "NORMAL").length,
-            },
-          },
-        ]
-      : []),
+      position: { x: 440, y: 30 },
+      data: makeGroupData("RPA PORTAL", "Kubernetes Runtime · PROD", portalAssets, "PORTAL", "RPA Portal", "PROD"),
+    },
+    // Top Right: APM Monitoring
+    {
+      id: "overview-apm",
+      type: "tier",
+      position: { x: 1040, y: 30 },
+      data: makeGroupData("APM MONITOR", "Telemetry Fleet · PROD", apmAssets, "APM", "APM", "PROD"),
+    },
+    // Middle Row: 3 A360 PROD Domains + Common Function
+    {
+      id: "overview-mem-prod",
+      type: "tier",
+      position: { x: 80, y: 220 },
+      data: makeGroupData("MEMORY PROD", "A360 Platform", memProdAssets, "MEMORY", "A360", "PROD"),
+    },
+    {
+      id: "overview-fnd-prod",
+      type: "tier",
+      position: { x: 440, y: 220 },
+      data: makeGroupData("FOUNDRY PROD", "A360 Platform", fndProdAssets, "FOUNDRY", "A360", "PROD"),
+    },
+    {
+      id: "overview-com-prod",
+      type: "tier",
+      position: { x: 740, y: 220 },
+      data: makeGroupData("COMMON PROD", "A360 Platform", comProdAssets, "COMMON", "A360", "PROD"),
+    },
+    {
+      id: "overview-common-func",
+      type: "tier",
+      position: { x: 1040, y: 220 },
+      data: makeGroupData("COMMON FUNCTION", "Shared Auth & Services", commonFuncAssets, "COMMON_FUNCTION", "Common Function", "PROD"),
+    },
+    // Bottom Row: QA and DEV
+    {
+      id: "overview-qa",
+      type: "tier",
+      position: { x: 80, y: 410 },
+      data: makeGroupData("QA ENVIRONMENT", "Memory / Foundry / Common QA", qaAssets, undefined, "A360", "QA"),
+    },
+    {
+      id: "overview-dev",
+      type: "tier",
+      position: { x: 440, y: 410 },
+      data: makeGroupData("DEV ENVIRONMENT", "Single AP & Standalone DB", devAssets, "DEV", "A360", "DEV"),
+    },
   ];
 
-  const vmZone = Object.fromEntries(vms.map((v) => [v.id, v.zone]));
-  const agg = new Map<string, { source: string; target: string; count: number; issues: number; sample?: NetworkStatus; all: NetworkStatus[] }>();
+  // High-Level Clean Connective Edges
+  const rawEdges: {
+    id: string;
+    source: string;
+    target: string;
+    label: string;
+    secondary: string;
+    relType: RelationType;
+    issues?: number;
+    sample?: NetworkStatus;
+  }[] = [
+    {
+      id: "edge-portal-mem",
+      source: "overview-portal",
+      target: "overview-mem-prod",
+      label: "HTTPS/443",
+      secondary: "Management",
+      relType: "MANAGEMENT",
+      sample: statuses.find((s) => s.policy.port === 443),
+    },
+    {
+      id: "edge-portal-fnd",
+      source: "overview-portal",
+      target: "overview-fnd-prod",
+      label: "HTTPS/443",
+      secondary: "Management",
+      relType: "MANAGEMENT",
+    },
+    {
+      id: "edge-portal-com",
+      source: "overview-portal",
+      target: "overview-com-prod",
+      label: "HTTPS/443",
+      secondary: "Management",
+      relType: "MANAGEMENT",
+    },
+    {
+      id: "edge-com-common-func",
+      source: "overview-com-prod",
+      target: "overview-common-func",
+      label: "Service API",
+      secondary: "Common Sync",
+      relType: "SERVICE",
+    },
+    {
+      id: "edge-apm-mem",
+      source: "overview-apm",
+      target: "overview-mem-prod",
+      label: "TCP/10050",
+      secondary: "APM Probe",
+      relType: "MONITORING",
+      sample: statuses.find((s) => s.policy.port === 10050),
+    },
+    {
+      id: "edge-apm-fnd",
+      source: "overview-apm",
+      target: "overview-fnd-prod",
+      label: "TCP/10050",
+      secondary: "APM Probe",
+      relType: "MONITORING",
+    },
+    {
+      id: "edge-apm-com",
+      source: "overview-apm",
+      target: "overview-com-prod",
+      label: "TCP/10050",
+      secondary: "APM Probe",
+      relType: "MONITORING",
+    },
+  ];
 
-  for (const s of statuses) {
-    if (issuesOnly && s.overall === "NORMAL") continue;
-    if (q && !`${s.policy.port} ${s.policy.sourceName} ${s.policy.targetName}`.toLowerCase().includes(q)) {
-      continue;
-    }
-    const src = vmZone[s.policy.sourceVmId];
-    const tgt = s.policy.targetVmId ? vmZone[s.policy.targetVmId] : "EXTERNAL";
-    if (!src || !tgt || src === tgt) continue;
-    const key = `${src}->${tgt}`;
-    const cur = agg.get(key) ?? { source: src, target: tgt, count: 0, issues: 0, sample: s, all: [] };
-    cur.count++;
-    cur.all.push(s);
-    if (s.overall !== "NORMAL") cur.issues++;
-    agg.set(key, cur);
-  }
-
-  const aggEntries = [...agg.entries()];
-  const sourceEdgeCount = new Map<string, number>();
-  for (const [, a] of aggEntries) {
-    sourceEdgeCount.set(a.source, (sourceEdgeCount.get(a.source) || 0) + 1);
-  }
-  const sourceEdgeIdx = new Map<string, number>();
-
-  const edges: Edge<TopologyEdgeData>[] = aggEntries.map(([id, a]) => {
-    const label = overlay === "policy" ? `${a.count} Policies` : `${a.count} Flows`;
-    const secondary =
-      overlay === "policy"
-        ? a.issues
-          ? `${a.issues} Expiring/Issue`
-          : "All Approved"
-        : a.issues
-          ? `${a.issues} TCP Attention`
-          : "All Reachable";
-
-    const idx = sourceEdgeIdx.get(a.source) || 0;
-    sourceEdgeIdx.set(a.source, idx + 1);
-    const total = sourceEdgeCount.get(a.source) || 1;
-
-    return {
-      id,
+  const edges: Edge<TopologyEdgeData>[] = rawEdges
+    .filter((e) => relationFilters[e.relType] !== false)
+    .map((e) => ({
+      id: e.id,
       type: "flow",
-      source: `zone-${a.source}`,
-      target: `zone-${a.target}`,
+      source: e.source,
+      target: e.target,
       markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
       data: {
-        label,
-        secondary,
-        issueCount: a.issues,
-        status: a.sample,
-        relatedStatuses: a.all,
+        label: e.label,
+        secondary: e.secondary,
+        issueCount: e.issues ?? 0,
+        status: e.sample,
+        relatedStatuses: e.sample ? [e.sample] : [],
         flowActive,
-        edgeIndex: idx,
-        totalEdges: total,
-        onSelect: () => a.sample && onSelectConnection(id, a.sample, a.all),
+        showLabel: showLabels,
+        relationType: e.relType,
+        onSelect: () => e.sample && onSelectConnection(e.id, e.sample, [e.sample]),
       },
-    };
-  });
+    }));
 
-  return { nodes, edges };
+  const shownNodes = nodes.filter((n) => n.data.kind !== "group" || ((n.data.count ?? 0) > 0 && (!issuesOnly || (n.data.issueCount ?? 0) > 0)));
+  const ids = new Set(shownNodes.map((n) => n.id));
+  return { nodes: shownNodes, edges: edges.filter((e) => ids.has(e.source) && ids.has(e.target)) };
 }
 
-function buildServices(
-  vms: VmAsset[],
+// -------------------------------------------------------------
+// BUILD 4: ASSET VIEW (Detailed nodes: VMs, DBaaS, K8s, NAS, Clusters)
+// -------------------------------------------------------------
+function buildAssets(
+  vms: Asset[],
   statuses: NetworkStatus[],
-  issuesOnly: boolean,
-  overlay: OverlayMode,
-  query: string,
-  flowActive: boolean,
-  onSelectConnection: (edgeId: string, status: NetworkStatus, relatedStatuses: NetworkStatus[]) => void
-) {
-  const q = query.trim().toLowerCase();
-  const services = Array.from(new Set(vms.map((v) => v.service)));
-  const vmService = Object.fromEntries(vms.map((v) => [v.id, v.service]));
-
-  const issueByService = new Map<string, number>();
-  for (const s of statuses.filter((s) => s.overall !== "NORMAL")) {
-    const a = vmService[s.policy.sourceVmId];
-    if (a) issueByService.set(a, (issueByService.get(a) || 0) + 1);
-    if (s.policy.targetVmId) {
-      const b = vmService[s.policy.targetVmId];
-      if (b) issueByService.set(b, (issueByService.get(b) || 0) + 1);
-    }
-  }
-
-  const visible = services.filter((s) => !issuesOnly || (issueByService.get(s) || 0) > 0);
-  const nodes: Node<TopologyNodeData>[] = visible.map((service, i) => {
-    const sVms = vms.filter((v) => v.service === service);
-    return {
-      id: `svc-${service}`,
-      type: "tier",
-      position: { x: (i % 3) * 280 + 80, y: Math.floor(i / 3) * 170 + 90 },
-      style: { width: 200, height: 116 },
-      data: {
-        kind: "group" as const,
-        key: service,
-        label: service,
-        count: sVms.length,
-        healthyCount: sVms.filter((v) => v.health === "healthy").length,
-        warningCount: sVms.filter((v) => v.health === "warning").length,
-        criticalCount: sVms.filter((v) => v.health === "critical").length,
-        connectionsCount: statuses.filter(
-          (s) =>
-            sVms.some((v) => v.id === s.policy.sourceVmId) ||
-            sVms.some((v) => v.id === s.policy.targetVmId)
-        ).length,
-        issueCount: issueByService.get(service) || 0,
-      },
-    };
-  });
-
-  const externals = Array.from(
-    new Set(statuses.filter((s) => !s.policy.targetVmId && (issuesOnly ? s.overall !== "NORMAL" : true)).map((s) => s.policy.targetName))
-  );
-  externals.forEach((name, i) =>
-    nodes.push({
-      id: `ext-${name}`,
-      type: "tier",
-      position: { x: 940, y: 90 + i * 150 },
-      style: { width: 200, height: 116 },
-      data: {
-        kind: "external" as const,
-        key: name,
-        label: name,
-        sublabel: "External dependency",
-        issueCount: statuses.filter((s) => s.policy.targetName === name && s.overall !== "NORMAL").length,
-      },
-    })
-  );
-
-  const agg = new Map<string, { src: string; tgt: string; count: number; issues: number; sample?: NetworkStatus; all: NetworkStatus[] }>();
-  for (const s of statuses) {
-    if (issuesOnly && s.overall === "NORMAL") continue;
-    if (q && !`${s.policy.port} ${s.policy.sourceName} ${s.policy.targetName}`.toLowerCase().includes(q)) {
-      continue;
-    }
-    const src = vmService[s.policy.sourceVmId];
-    const tgt = s.policy.targetVmId ? vmService[s.policy.targetVmId] : s.policy.targetName;
-    if (!src || !tgt || src === tgt) continue;
-    const k = `${src}->${tgt}`;
-    const a = agg.get(k) ?? { src, tgt, count: 0, issues: 0, sample: s, all: [] };
-    a.count++;
-    a.all.push(s);
-    if (s.overall !== "NORMAL") a.issues++;
-    agg.set(k, a);
-  }
-
-  const aggEntries = [...agg.entries()];
-  const sourceEdgeCount = new Map<string, number>();
-  for (const [, a] of aggEntries) {
-    sourceEdgeCount.set(a.src, (sourceEdgeCount.get(a.src) || 0) + 1);
-  }
-  const sourceEdgeIdx = new Map<string, number>();
-
-  const edges: Edge<TopologyEdgeData>[] = aggEntries.map(([id, a]) => {
-    const idx = sourceEdgeIdx.get(a.src) || 0;
-    sourceEdgeIdx.set(a.src, idx + 1);
-    const total = sourceEdgeCount.get(a.src) || 1;
-
-    return {
-      id,
-      type: "flow",
-      source: `svc-${a.src}`,
-      target: services.includes(a.tgt) ? `svc-${a.tgt}` : `ext-${a.tgt}`,
-      markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
-      data: {
-        label: overlay === "policy" ? `${a.count} Policies` : `${a.count} Flows`,
-        secondary: a.issues ? `${a.issues} Issues` : overlay === "policy" ? "Approved" : "Reachable",
-        issueCount: a.issues,
-        status: a.sample,
-        relatedStatuses: a.all,
-        flowActive,
-        edgeIndex: idx,
-        totalEdges: total,
-        onSelect: () => a.sample && onSelectConnection(id, a.sample, a.all),
-      },
-    };
-  });
-
-  return { nodes, edges };
-}
-
-function buildVms(
-  vms: VmAsset[],
-  statuses: NetworkStatus[],
-  zone: string,
-  issuesOnly: boolean,
-  issueVmIds: Set<string>,
-  overlay: OverlayMode,
-  query: string,
-  flowActive: boolean,
   clusters: ClusterEntity[],
   nasAssets: NasAsset[],
-  onSelectConnection: (edgeId: string, status: NetworkStatus, relatedStatuses: NetworkStatus[]) => void
+  drillGroup: string | null,
+  relationFilters: Record<string, boolean>,
+  issuesOnly: boolean,
+  overlay: OverlayMode,
+  query: string,
+  flowActive: boolean,
+  showLabels: boolean,
+  onSelectConnection: (id: string, s: NetworkStatus, all: NetworkStatus[]) => void
 ) {
   const q = query.trim().toLowerCase();
-  const visible = vms.filter(
-    (v) =>
-      (zone === "ALL" || v.zone === zone) &&
-      (!issuesOnly || issueVmIds.has(v.id)) &&
-      (!q || `${v.hostname} ${v.ipAddress} ${v.service}`.toLowerCase().includes(q))
-  );
-  const visibleIds = new Set(visible.map((v) => v.id));
 
-  // Automatic hierarchical/swim-lane layout.
-  // The default layout favors readable service flow; users can make small final adjustments in Edit layout mode.
-  const VM_W = 230;
-  const VM_H = 125;
-  const X_STEP = 270;
-  const Y_STEP = 165;
-
-  const zoneSpec: Record<string, { x: number; y: number; cols: number }> = {
-    WEB: { x: 520, y: 40, cols: 4 },
-    APP: { x: 260, y: 300, cols: 6 },
-    DB: { x: 520, y: 590, cols: 4 },
-    CONTROL: { x: -620, y: 300, cols: 2 },
-    BOT: { x: -880, y: 590, cols: 4 },
-    VDI: { x: -880, y: 930, cols: 4 },
-    SUPPORT: { x: 2240, y: 590, cols: 2 },
-  };
-
-  function positionForVm(vm: VmAsset, indexWithinZone: number, zoneCount: number) {
-    if (zone !== "ALL") {
-      const cols = Math.min(4, Math.max(1, zoneCount));
-      return {
-        x: (indexWithinZone % cols) * X_STEP + 80,
-        y: Math.floor(indexWithinZone / cols) * Y_STEP + 80,
-      };
+  // Filter visible assets
+  const visible = vms.filter((v) => {
+    if (v.assetType === "NAS" && nasAssets.some((n) => n.id === v.id || n.hostname === v.hostname)) return false;
+    if (drillGroup && v.domain !== drillGroup && v.system !== drillGroup && v.zone !== drillGroup) {
+      return false;
     }
-
-    const spec = zoneSpec[vm.zone] ?? { x: 520, y: 1180, cols: 4 };
-    return {
-      x: spec.x + (indexWithinZone % spec.cols) * X_STEP,
-      y: spec.y + Math.floor(indexWithinZone / spec.cols) * Y_STEP,
-    };
-  }
-
-  const zoneIndexes = new Map<string, number>();
-  const zoneCounts = new Map<string, number>();
-  for (const vm of visible) zoneCounts.set(vm.zone, (zoneCounts.get(vm.zone) ?? 0) + 1);
-
-  const nodes: Node<TopologyNodeData>[] = visible.map((vm) => {
-    const indexWithinZone = zoneIndexes.get(vm.zone) ?? 0;
-    zoneIndexes.set(vm.zone, indexWithinZone + 1);
-    return {
-      id: vm.id,
-      type: "vm",
-      position: positionForVm(vm, indexWithinZone, zoneCounts.get(vm.zone) ?? 1),
-      style: { width: VM_W, height: VM_H },
-      data: { kind: "vm" as const, key: vm.id, label: vm.hostname, vm },
-    };
+    if (issuesOnly && v.health === "healthy") return false;
+    if (q && !`${v.hostname} ${v.ipAddress} ${v.service} ${v.domain ?? ""}`.toLowerCase().includes(q)) {
+      return false;
+    }
+    return true;
   });
 
-  // Append logical cluster nodes close to the DB lane (or below a filtered tier).
+  const visibleIds = new Set(visible.map((v) => v.id));
+
+  // Layout arrangement by Domain / Zone Lanes
+  const X_STEP = 260;
+  const Y_STEP = 150;
+
+  // Domain groupings for clean layout
+  const domainOrder = ["MEMORY", "FOUNDRY", "COMMON", "PORTAL", "APM", "COMMON_FUNCTION", "DEV"];
+  const domainBuckets = new Map<string, Asset[]>();
+
+  for (const vm of visible) {
+    const d = vm.domain || "OTHER";
+    const b = domainBuckets.get(d) ?? [];
+    b.push(vm);
+    domainBuckets.set(d, b);
+  }
+
+  const nodes: Node<TopologyNodeData>[] = [];
+
+  let currentY = 50;
+
+  for (const dom of [...domainOrder, ...Array.from(domainBuckets.keys()).filter((d) => !domainOrder.includes(d))]) {
+    const items = domainBuckets.get(dom);
+    if (!items || items.length === 0) continue;
+
+    items.forEach((vm, idx) => {
+      nodes.push({
+        id: vm.id,
+        type: "vm",
+        position: { x: 80 + (idx % 4) * X_STEP, y: currentY + Math.floor(idx / 4) * Y_STEP },
+        data: {
+          kind: "vm" as const,
+          key: vm.id,
+          label: vm.hostname,
+          vm,
+        },
+      });
+    });
+
+    currentY += Math.ceil(items.length / 4) * Y_STEP + 40;
+  }
+
+  // Clusters
   const relevantClusters = clusters.filter(
-    (c) => (zone === "ALL" || c.zone === zone) && (!issuesOnly || c.status !== "HEALTHY")
+    (c) => !drillGroup || c.domain === drillGroup || c.name.includes(drillGroup)
   );
-  relevantClusters.forEach((cluster, index) => {
-    const position =
-      zone === "ALL"
-        ? { x: 760 + index * X_STEP, y: 805 }
-        : { x: (index % 4) * X_STEP + 80, y: Math.ceil(visible.length / 4) * Y_STEP + 110 };
+  relevantClusters.forEach((cl, idx) => {
     nodes.push({
-      id: `cluster-${cluster.id}`,
+      id: `cluster-${cl.id}`,
       type: "cluster",
-      position,
-      style: { width: 230, height: 135 },
+      position: { x: 80 + (idx % 3) * X_STEP, y: currentY },
       data: {
         kind: "cluster" as const,
-        key: cluster.id,
-        label: cluster.name,
-        cluster,
+        key: cl.id,
+        label: cl.name,
+        cluster: cl,
       },
     });
   });
 
-  // Append NAS assets near the support/data lane.
+  if (relevantClusters.length > 0) {
+    currentY += 170;
+  }
+
+  // NAS
   const relevantNas = nasAssets.filter(
-    (n) => (zone === "ALL" || n.zone === zone) && (!issuesOnly || n.status !== "ONLINE")
+    (n) => !drillGroup || n.domain === drillGroup || n.hostname.includes(drillGroup)
   );
-  relevantNas.forEach((nas, index) => {
-    const position =
-      zone === "ALL"
-        ? { x: 2240 + (index % 2) * X_STEP, y: 940 + Math.floor(index / 2) * Y_STEP }
-        : {
-            x: (index % 4) * X_STEP + 80,
-            y: (Math.ceil(visible.length / 4) + Math.ceil(relevantClusters.length / 4)) * Y_STEP + 110,
-          };
+  relevantNas.forEach((nas, idx) => {
     nodes.push({
       id: `nas-${nas.id}`,
       type: "nas",
-      position,
-      style: { width: 230, height: 135 },
+      position: { x: 80 + (idx % 3) * X_STEP, y: currentY },
       data: {
         kind: "nas" as const,
         key: nas.id,
@@ -1537,46 +1411,14 @@ function buildVms(
     });
   });
 
-  // External targets are kept in a dedicated lane to prevent them from cutting across VM cards.
-  const extMap = new Map<string, number>();
-  for (const s of statuses) {
-    if (visibleIds.has(s.policy.sourceVmId) && !s.policy.targetVmId && (!issuesOnly || s.overall !== "NORMAL")) {
-      extMap.set(s.policy.targetName, (extMap.get(s.policy.targetName) || 0) + (s.overall !== "NORMAL" ? 1 : 0));
-    }
-  }
-
-  let externalIndex = 0;
-  for (const [name, issues] of extMap) {
-    nodes.push({
-      id: `ext-${name}`,
-      type: "tier",
-      position: zone === "ALL"
-        ? { x: 2240, y: 120 + externalIndex++ * 150 }
-        : { x: 1180, y: 80 + externalIndex++ * 150 },
-      style: { width: 200, height: 116 },
-      data: {
-        kind: "external" as const,
-        key: name,
-        label: name,
-        sublabel: "External dependency",
-        issueCount: issues,
-      },
-    });
-  }
-
+  // Edges filtered by policy & relation filters
   const filteredStatuses = statuses.filter(
     (s) =>
       visibleIds.has(s.policy.sourceVmId) &&
       (s.policy.targetVmId ? visibleIds.has(s.policy.targetVmId) : true) &&
       (!issuesOnly || s.overall !== "NORMAL") &&
-      (!q || `${s.policy.port} ${s.policy.protocol} ${s.policy.requestId ?? ""}`.toLowerCase().includes(q))
+      (!q || `${s.policy.port} ${s.policy.protocol} ${s.policy.sourceName} ${s.policy.targetName}`.toLowerCase().includes(q))
   );
-
-  const sourceCounts = new Map<string, number>();
-  for (const s of filteredStatuses) {
-    sourceCounts.set(s.policy.sourceVmId, (sourceCounts.get(s.policy.sourceVmId) || 0) + 1);
-  }
-  const sourceIdxMap = new Map<string, number>();
 
   const edges: Edge<TopologyEdgeData>[] = filteredStatuses.map((s) => {
     const isBidi = s.isBidirectional || s.policy.direction === "BIDIRECTIONAL";
@@ -1590,24 +1432,14 @@ function buildVms(
           }`
         : s.overall === "RETURN_DIRECTION_FAILED"
           ? "RETURN FAILED"
-          : `TCP ${s.observation?.tcp ?? "NO DATA"}${
-              s.observation?.tcpLatencyMs != null ? ` (${s.observation.tcpLatencyMs}ms)` : ""
-            }`;
-
-    const sourceId = s.policy.sourceVmId;
-    const targetId = s.policy.targetVmId ?? `ext-${s.policy.targetName}`;
-
-    const edgeIdx = sourceIdxMap.get(sourceId) || 0;
-    sourceIdxMap.set(sourceId, edgeIdx + 1);
-    const totalEdg = sourceCounts.get(sourceId) || 1;
+          : `TCP ${s.observation?.tcp ?? "NO DATA"}`;
 
     return {
       id: s.policy.id,
       type: "flow",
-      source: sourceId,
-      target: targetId,
+      source: s.policy.sourceVmId,
+      target: s.policy.targetVmId ?? `ext-${s.policy.targetName}`,
       markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
-      markerStart: isBidi ? { type: MarkerType.ArrowClosed, width: 12, height: 12 } : undefined,
       data: {
         label,
         secondary,
@@ -1615,12 +1447,13 @@ function buildVms(
         status: s,
         relatedStatuses: [s],
         flowActive,
-        edgeIndex: edgeIdx,
-        totalEdges: totalEdg,
+        showLabel: showLabels,
         onSelect: () => onSelectConnection(s.policy.id, s, [s]),
       },
     };
   });
 
-  return { nodes, edges };
+  const shownNodes = nodes.filter((n) => n.data.kind !== "group" || ((n.data.count ?? 0) > 0 && (!issuesOnly || (n.data.issueCount ?? 0) > 0)));
+  const ids = new Set(shownNodes.map((n) => n.id));
+  return { nodes: shownNodes, edges: edges.filter((e) => ids.has(e.source) && ids.has(e.target)) };
 }

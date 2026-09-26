@@ -50,7 +50,7 @@ export function ConnectionDrawer({
         {relatedStatuses && relatedStatuses.length > 1 && (
           <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-2">
             <div className="mb-1 text-[9px] font-medium text-[var(--muted)]">
-              Aggregated Flows ({relatedStatuses.length}) — Click to view:
+              통합된 연결 흐름 ({relatedStatuses.length}개) — 클릭하여 전환:
             </div>
             <div className="flex flex-wrap gap-1">
               {relatedStatuses.map((s) => (
@@ -74,28 +74,28 @@ export function ConnectionDrawer({
           <StatusBadge state={activeStatus.overall} />
           <div className="flex items-center gap-2">
             <Badge tone={isBidi ? "info" : "neutral"}>{isBidi ? "BIDIRECTIONAL" : "ONE_WAY"}</Badge>
-            <span className="font-mono text-[9px] text-[var(--muted)]">{p.requestId ?? "NO REQUEST ID"}</span>
+            <span className="font-mono text-[9px] text-[var(--muted)]">{p.requestId ?? "요청 ID 없음"}</span>
           </div>
         </div>
 
-        <DrawerSection title="Policy / Should be">
-          <KV k="Approval" v={<Badge tone={p.approvalStatus === "APPROVED" ? "success" : p.approvalStatus === "PENDING" ? "warning" : "danger"}>{p.approvalStatus}</Badge>} />
-          <KV k="Direction" v={isBidi ? "양방향 (Bidirectional)" : "단방향 (One-way)"} />
-          <KV k="Source" v={`${p.sourceName} · ${p.sourceIp}`} />
-          <KV k="Target" v={`${p.targetName} · ${p.targetIp}`} />
-          <KV k="Protocol / Port" v={`${p.protocol} / ${p.port}`} />
-          <KV k="Expires" v={p.expiresAt ?? "-"} />
-          <KV k="Remaining" v={activeStatus.daysToExpiry == null ? "-" : activeStatus.daysToExpiry >= 0 ? `D-${activeStatus.daysToExpiry}` : `D+${Math.abs(activeStatus.daysToExpiry)}`} />
-          <KV k="Purpose" v={p.purpose ?? "-"} />
+        <DrawerSection title="방화벽 정책 기준 (Should Be)">
+          <KV k="승인 상태" v={<Badge tone={p.approvalStatus === "APPROVED" ? "success" : p.approvalStatus === "PENDING" ? "warning" : "danger"}>{p.approvalStatus}</Badge>} />
+          <KV k="방향" v={isBidi ? "양방향 (Bidirectional)" : "단방향 (One-way)"} />
+          <KV k="출발지" v={`${p.sourceName} · ${p.sourceIp}`} />
+          <KV k="목적지" v={`${p.targetName} · ${p.targetIp}`} />
+          <KV k="프로토콜 / 포트" v={`${p.protocol} / ${p.port}`} />
+          <KV k="만료일" v={p.expiresAt ?? "-"} />
+          <KV k="잔여 기간" v={activeStatus.daysToExpiry == null ? "-" : activeStatus.daysToExpiry >= 0 ? `D-${activeStatus.daysToExpiry}` : `D+${Math.abs(activeStatus.daysToExpiry)}`} />
+          <KV k="용도" v={p.purpose ?? "-"} />
         </DrawerSection>
 
         {observesReverse ? (
-          <DrawerSection title="Observed Probes (Bidirectional)">
+          <DrawerSection title="실측 프로브 (양방향)">
             <div className="space-y-2.5">
               {/* Forward Probe Card */}
               <div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-2.5">
                 <div className="mb-2 flex items-center justify-between">
-                  <span className="font-mono text-[10px] font-semibold text-[var(--foreground)]">Forward: {p.sourceName} → {p.targetName}</span>
+                  <span className="font-mono text-[10px] font-semibold text-[var(--foreground)]">정방향 (Forward): {p.sourceName} → {p.targetName}</span>
                   <ProbeBadge value={o?.tcp ?? "NO_DATA"} />
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-[10px]">
@@ -109,7 +109,7 @@ export function ConnectionDrawer({
               {/* Return Probe Card */}
               <div className={`rounded border p-2.5 ${reverse?.tcp === "DOWN" ? "border-[var(--danger)]/30 bg-[var(--danger-surface)]" : "border-[var(--border)] bg-[var(--surface-2)]"}`}>
                 <div className="mb-2 flex items-center justify-between">
-                  <span className="font-mono text-[10px] font-semibold text-[var(--foreground)]">Return: {p.targetName} → {p.sourceName}</span>
+                  <span className="font-mono text-[10px] font-semibold text-[var(--foreground)]">역방향 (Return): {p.targetName} → {p.sourceName}</span>
                   <ProbeBadge value={reverse?.tcp ?? "NO_DATA"} />
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-[10px]">
@@ -119,16 +119,16 @@ export function ConnectionDrawer({
                   <div><span className="text-[var(--muted)]">TCP RTT: </span><span className="font-mono">{reverse?.tcpLatencyMs != null ? `${reverse.tcpLatencyMs} ms` : "-"}</span></div>
                 </div>
               </div>
-              <div className="text-[9px] text-[var(--muted)]">Forward checked: {o?.checkedAt?.replace("T", " ").slice(0, 19) ?? "-"}<br/>Return checked: {reverse?.checkedAt?.replace("T", " ").slice(0, 19) ?? "-"}</div>
+              <div className="text-[9px] text-[var(--muted)]">정방향 확인: {o?.checkedAt?.replace("T", " ").slice(0, 19) ?? "-"}<br/>역방향 확인: {reverse?.checkedAt?.replace("T", " ").slice(0, 19) ?? "-"}</div>
             </div>
           </DrawerSection>
         ) : (
-          <DrawerSection title="Observed / Actual">
+          <DrawerSection title="실측 프로브 (Actual)">
             <KV k="Ping" v={<ProbeBadge value={o?.ping ?? "NO_DATA"} />} />
             <KV k="Ping RTT" v={o?.pingLatencyMs == null ? "-" : `${o.pingLatencyMs} ms`} />
             <KV k="TCP" v={<ProbeBadge value={o?.tcp ?? "NO_DATA"} />} />
             <KV k="TCP RTT" v={o?.tcpLatencyMs == null ? "-" : `${o.tcpLatencyMs} ms`} />
-            <KV k="Checked" v={o?.checkedAt?.replace("T", " ").slice(0, 19) ?? "-"} />
+            <KV k="확인 일시" v={o?.checkedAt?.replace("T", " ").slice(0, 19) ?? "-"} />
             {isBidi && !p.targetVmId && (
               <div className="mt-2 rounded border border-[var(--border)] bg-[var(--surface-2)] p-2 text-[9px] text-[var(--muted)]">
                 정책은 양방향이지만 Target이 관리 대상 VM이 아니어서 Target→Source Telegraf probe는 자동 수집 대상이 아닙니다.
@@ -137,7 +137,7 @@ export function ConnectionDrawer({
           </DrawerSection>
         )}
 
-        <DrawerSection title="Diagnosis">
+        <DrawerSection title="상태 진단">
           <div className={`rounded-md border p-3 text-[10px] leading-5 ${activeStatus.overall === "RETURN_DIRECTION_FAILED" ? "border-[var(--danger)]/40 bg-[var(--danger-surface)] text-[var(--danger)]" : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--muted)]"}`}>
             {activeStatus.diagnostic}
           </div>

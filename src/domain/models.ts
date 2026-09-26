@@ -14,27 +14,51 @@ export type NetworkOverallState =
   | "UNREACHABLE"
   | "UNKNOWN";
 
-export type AssetType = "VM" | "PHYSICAL_SERVER" | "NAS" | "NETWORK_APPLIANCE" | "OTHER";
-export type LogicalEntityType = "CLUSTER" | "SERVICE" | "EXTERNAL_ENDPOINT";
-
-export interface InfraAsset {
+// Top-Level Project Group Model
+export interface ProjectGroup {
   id: string;
+  name: string;
+  code: string;
+  description?: string;
+  owner?: string;
+  status: "ACTIVE" | "INACTIVE" | "ARCHIVED";
+}
+
+// Expanded Asset Types
+export type AssetType =
+  | "VM"
+  | "PHYSICAL_SERVER"
+  | "NAS"
+  | "DBAAS"
+  | "CONTAINER"
+  | "K8S_WORKLOAD"
+  | "NETWORK_APPLIANCE"
+  | "OTHER";
+
+export type LogicalEntityType = "CLUSTER" | "SERVICE" | "EXTERNAL_ENDPOINT" | "TOPOLOGY_GROUP";
+
+// Generalized Asset Model (Unifies InfraAsset and VmAsset)
+export interface Asset {
+  id: string;
+  projectGroupId?: string;
   assetType?: AssetType;
+  name?: string;
   hostname: string;
   ipAddress: string;
   environment: string;
+  domain?: string;
+  system?: string;
   role: string;
   service: string;
   zone: string;
   criticality: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   health: VmHealth;
   owner?: string;
+  description?: string;
   lastVerifiedAt?: string | null;
-}
 
-export interface VmAsset extends InfraAsset {
-  assetType?: "VM";
-  osName: string;
+  // OS & Compute metrics (retained for VM and Workload monitoring)
+  osName?: string;
   osVersion?: string;
   cpuCores?: number;
   memoryGb?: number;
@@ -44,11 +68,28 @@ export interface VmAsset extends InfraAsset {
   diskPct?: number;
   eoslDate?: string | null;
   grafanaPath?: string | null;
+
+  // Storage / NAS / Hardware optional attributes
+  capacityTb?: number;
+  usedCapacityTb?: number;
+  protocol?: string;
+  mountPath?: string;
+  status?: string;
+  targetVms?: string[];
+  vendor?: string;
+  model?: string;
+  hardwareModel?: string;
+  rackLocation?: string;
+  serialNumber?: string;
 }
 
-export interface NasAsset extends InfraAsset {
+// Compatibility Aliases
+export type InfraAsset = Asset;
+export type VmAsset = Asset;
+
+export interface NasAsset extends Asset {
   assetType: "NAS";
-  vendor: string;
+  vendor?: string;
   model?: string;
   capacityTb: number;
   usedCapacityTb: number;
@@ -58,16 +99,14 @@ export interface NasAsset extends InfraAsset {
   targetVms?: string[];
 }
 
-export interface PhysicalServerAsset extends InfraAsset {
+export interface PhysicalServerAsset extends Asset {
   assetType: "PHYSICAL_SERVER";
   hardwareModel?: string;
   rackLocation?: string;
   serialNumber?: string;
-  cpuCores?: number;
-  memoryGb?: number;
-  diskGb?: number;
 }
 
+// Cluster Member and Logical Cluster
 export interface ClusterMember {
   clusterId: string;
   assetId: string;
@@ -88,15 +127,68 @@ export interface ClusterServiceInstance {
 
 export interface ClusterEntity {
   id: string;
+  projectGroupId?: string;
   name: string;
   type: "MSCS" | "KUBERNETES" | "ORACLE_RAC" | "OTHER";
   vip: string;
   environment: string;
+  domain?: string;
+  system?: string;
   zone: string;
   status: "HEALTHY" | "DEGRADED" | "CRITICAL";
   members: ClusterMember[];
   services: ClusterServiceInstance[];
   owner?: string;
+  description?: string;
+}
+
+// Topology Group Model
+export type TopologyGroupType =
+  | "SYSTEM"
+  | "DOMAIN"
+  | "ENVIRONMENT"
+  | "STACK"
+  | "CLUSTER"
+  | "RUNTIME"
+  | "SERVICE_GROUP"
+  | "CUSTOM";
+
+export interface TopologyGroup {
+  id: string;
+  projectGroupId: string;
+  parentGroupId?: string | null;
+  name: string;
+  groupType: TopologyGroupType;
+  environment?: string;
+  domain?: string;
+  system?: string;
+  description?: string;
+  assetIds?: string[];
+}
+
+// Relation Model (Logical Architecture Dependencies)
+export type RelationType =
+  | "SERVICE"
+  | "DATABASE"
+  | "STORAGE"
+  | "MONITORING"
+  | "MANAGEMENT"
+  | "CLUSTER"
+  | "EXTERNAL"
+  | "OTHER";
+
+export interface ArchitectureRelation {
+  id: string;
+  projectGroupId: string;
+  sourceEntityType: "ASSET" | "CLUSTER" | "TOPOLOGY_GROUP" | "COMPONENT" | "EXTERNAL";
+  sourceEntityId: string;
+  targetEntityType: "ASSET" | "CLUSTER" | "TOPOLOGY_GROUP" | "COMPONENT" | "NAS" | "EXTERNAL";
+  targetEntityId: string;
+  relationType: RelationType;
+  protocol?: "TCP" | "UDP" | "HTTP" | "HTTPS" | "NFS" | "SMB" | string;
+  port?: number;
+  description?: string;
+  name?: string;
 }
 
 // 3-Tier Software Lifecycle Model
@@ -124,6 +216,7 @@ export interface SoftwareRelease {
 
 export interface AssetSoftwareInstallation {
   id: string;
+  projectGroupId?: string;
   assetId: string;
   productId: string;
   productName: string;
@@ -151,6 +244,7 @@ export interface SoftwareInstall {
 
 export interface NetworkPolicy {
   id: string;
+  projectGroupId?: string;
   sourceVmId: string;
   sourceName: string;
   sourceIp: string;
@@ -168,6 +262,8 @@ export interface NetworkPolicy {
   requestId?: string | null;
   purpose?: string | null;
   owner?: string | null;
+  domain?: string;
+  system?: string;
 }
 
 export interface ConnectivityObservation {
@@ -207,6 +303,7 @@ export interface NetworkStatus {
 
 export interface SopDocument {
   id: string;
+  projectGroupId?: string;
   title: string;
   category: string;
   owner: string;

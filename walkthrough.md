@@ -86,3 +86,72 @@ Remaining production tasks:
 - Add XLSX only if the company source cannot export CSV/JSON; no new parser dependency was added.
 - Map the actual company export column names and run owner reconciliation before production activation.
 - Global header search remains out of this EOSL scope.
+
+---
+
+# Architecture / Dependency / ELK Auto Layout
+
+## 1. Existing layout analysis (before implementation)
+
+The existing Architecture canvas has two builders inside `architecture-canvas.tsx`. `buildOverview()` creates eight RPA-specific aggregate cards with fixed `x/y` coordinates and hardcoded Memory, Foundry, Common, Portal, APM, QA, DEV, and Common Function buckets. `buildAssets()` groups assets by a hardcoded domain order and places them with row/column arithmetic (`x = 80 + column * 260`, `y = lane + row * 150`); clusters and NAS use similar fixed-grid coordinates. Edges select four-way React Flow handles from the relative node centers, but their paths are not produced by a graph layout engine.
+
+Manual positions are stored in `localStorage` under a versioned key containing project, view mode, environment, and selected group. Drag stop and edit completion snap positions to a 20px grid. Edge handle overrides are stored separately per project. The current “automatic layout” action only removes the saved manual override and returns to the fixed coordinates; it does not recalculate a relationship-aware layout.
+
+The replacement will keep the React Flow node cards, right-side VM/connection/cluster/NAS/software drawers, policy/actual overlays, Probe Flow, Issues Only, relation filters, and 20px manual correction workflow. Graph construction will move to semantic Overview and Dependency adapters, deterministic ordering and traversal; coordinates will come from an isolated ELK layered engine with a deterministic grid fallback. Layout sizes will use the same explicit dimensions as the rendered cards, and Overview/Dependency manual positions will be isolated by project, view, scope, and entity ID.
+
+## 2. ELK selection and dependency
+
+Added `elkjs@0.12.0`. ELK Layered supports hierarchy-aware deterministic placement and orthogonal routing without adding a second service or any AI coordinate generation. The existing Next.js deployment and React Flow rendering remain unchanged.
+
+## 3. Semantic layout pipeline
+
+The new modules under `src/architecture/layout/` separate graph meaning from coordinates: shared types and dimensions, stable presets and relation priorities, semantic entity/group membership, Overview scope projection, cycle-safe Dependency traversal, and the cached ELK adapter. The adapter returns deterministic positions and routed bend points; a deterministic simple grid is the error fallback.
+
+## 4. Overview layout and drill-down
+
+The root is derived from parentless `TopologyGroup` rows. Double-click or the explicit Drill down action moves through registered child groups on the same canvas; leaf groups render matching assets, clusters and NAS. Breadcrumbs navigate directly to any ancestor. The layout code contains no Memory/Foundry/Common branching or RPA domain coordinate constants.
+
+## 5. Dependency view and traversal
+
+The operator views are now exactly Overview and Dependency. Dependency search covers IDs, hostnames, IPs, asset names, group names, cluster names and services through catalog aliases. Impact, Dependencies and Both are computed by deterministic BFS with a visited set at depth 1/2/3/All; the default is Both/2. Group-source relations are expanded to relevant AP/workload members without mutating the original relation records.
+
+## 6. Impact, SOP, Policy/Actual and EOSL
+
+Blast-radius metrics are calculated from the active mock graph and de-duplicated impacted assets. Related policies and failed Actual links stay joined evidence rather than new architecture relations. SOP mappings use `relatedVmIds`; EOSL risk uses installed software records. TCP DOWN is presented through the existing connectivity state and is never relabeled as a firewall block. Dependency node clicks open the right 460px drawer with Overview, Impact, Network, Software and SOP tabs.
+
+## 7. Manual layout, grid snap and routing
+
+ELK is the default. Manual Edit enables drag and relation handles; drag stop rounds both axes to the 20px grid. Storage keys contain project, view and scope, while entity IDs remain the per-node keys. Auto Layout clears only the current scope override, recalculates ELK and refits after the asynchronous result arrives. Node DOM dimensions and ELK dimensions share `NODE_DIMENSIONS`. Edge labels default OFF; ELK orthogonal bend points are rendered by the custom edge.
+
+## 8. Performance and automated validation
+
+`npm run validate:architecture` exercised 60 assets and 120 relations, including a cyclic graph. Final result: 60 positioned nodes, 120 routed edges, finite traversal, 271 ms on this workstation. ELK results are cached by direction, scope and stable sorted graph identity.
+
+## 9. Build and TypeScript
+
+- `npx tsc --noEmit`: passed after the final source changes.
+- `npm run build`: passed after the final implementation with all 21 routes generated.
+- `git diff --check`: passed (Windows line-ending notices only).
+
+## 10. Browser QA
+
+Verified in `DATA_SOURCE=mock` on the live Next.js page:
+
+- RPA top Overview renders registered root groups with relationship-driven placement and Labels OFF.
+- A360 → PROD → MEMORY drill-down and clickable breadcrumbs work in one canvas.
+- MEMORY leaf shows AP assets, MSSQL cluster, DB members and NAS with no measured node overlap.
+- MSSQL Dependency Both/Depth 2 renders the selected cluster, three direct AP dependents and Portal Backend impact chain.
+- NAS Impact renders the same three direct Memory AP dependents.
+- Portal Backend Dependencies renders DBaaS plus Memory/Foundry/Common groups and their downstream cluster/NAS dependencies.
+- Impact/Dependencies/Both and Depth 1/2/All changed the visible graph deterministically.
+- Monitoring is OFF by default; Labels OFF produced no edge labels and ON rendered all visible protocol/port labels.
+- Policy/Actual and Probe Flow controls remain available.
+- Manual drag stored a snapped `x=760, y=540` position; Auto Layout replaced it with the ELK position and refit.
+- Dependency right drawer exposes Overview, Impact, Network, Software and SOP tabs without covering the left sidebar.
+- At 390×844 the existing fixed admin sidebar and right drawer remain structurally separate; the dense console remains horizontally scrollable at this legacy mobile shell breakpoint.
+
+## 11. Remaining TODO
+
+- Global header search remains outside Architecture scope.
+- Production MySQL/Influx mapping still follows the existing adapter migration plan; this task intentionally validated mock mode only.
+- The fixed-width global admin shell is horizontally scrollable on phone-width viewports. A repository-wide responsive sidebar redesign was not introduced because it is outside this Architecture scope and prohibited by the UI freeze rules.

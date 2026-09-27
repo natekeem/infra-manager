@@ -5,7 +5,7 @@
 The RPA Infrastructure Control Center architecture canvas visualizes multi-project enterprise deployments without initial visual clutter.
 In accordance with `AGENTS.md` and the multi-project generalization:
 - **Default Grouped View**: Never renders all 30+ VM nodes on first load. The default view aggregates infrastructure into high-level topology groups, domains, and systems with aggregate health indicators.
-- **Drill-Down Flow**: `Overview → Group → Service → Asset`. Double-clicking a group or selecting from breadcrumbs zooms smoothly into the targeted asset/VM or service view.
+- **Drill-Down Flow**: `Project → System → Environment → Domain/Runtime → Asset`. Double-clicking a group or selecting a breadcrumb changes scope in the same Overview canvas.
 - **Generic Engine (Zero Hardcoded Domain Logic)**: The canvas engine handles any project topology dynamically (`ProjectGroup` -> `TopologyGroup` -> `Asset` & `ArchitectureRelation`) without hardcoded RPA-specific conditional checks like `if (domain === "MEMORY")`.
 - **Density & Bounds Control**: Custom React Flow node cards use explicit compact bounding boxes (`GroupNode`: `w: 220px, min-h: 120px`, `VmNode`: `w: 230px, h: 125px`) with zero outer margins and orthogonal smoothstep / bezier edge routing (`borderRadius: 8`), preventing node clipping and label overlap.
 
@@ -65,20 +65,23 @@ Defines logical and functional dependencies between nodes:
 The current toolbar intentionally exposes two operator-facing modes:
 
 ```
-[ 오버뷰 ] [ 전체보기 ]
+[ Overview ] [ Dependency ]
 ```
 
-### 3.1. 오버뷰
-- Single-screen executive layout representing high-level subsystems, domains, and external integrations.
+### 3.1. Overview
+- Grouped relationship-first layout representing systems, environments, domains, runtimes and leaf assets.
 - Nodes represent `TopologyGroup` entities (or external systems) formatted as compact `GroupNode` cards.
 - Displays aggregate healthy / warning / critical counters, AP/DB/Storage composition, and cross-group connectivity health.
-- Double-clicking any group immediately switches view to that group's internal assets.
+- Double-clicking any group drills into direct child groups; a leaf group reveals its assets, clusters and NAS in the same canvas.
+- Breadcrumb items navigate to any ancestor scope.
 
-### 3.2. 전체보기
-- Detailed asset topology displaying individual `VmNode`, `NasNode`, and `ClusterNode` elements.
-- Can be scoped with the adjacent project group and environment selectors. Both filters intersect.
-- Includes 3-metric live resource mini-gauges (CPU, Memory, Disk), IP badges, OS badges, and status rings.
-- Layout edit mode supports 20px-snapped dragging, persisted positions, automatic-layout reset and manual source/target edge handles.
+### 3.2. Dependency
+- Searchable targets include assets, groups, clusters, NAS, DBaaS and external endpoints.
+- `Impact`, `Dependencies`, and `Both` modes use deterministic cycle-safe traversal with depth 1/2/3/All.
+- ELK lays out the selected target between impacted entities and its dependencies in the RIGHT direction.
+- A calculated blast-radius summary and the right context drawer combine related SOP, software/EOSL and policy/actual evidence without merging their source models.
+
+Both views support 20px-snapped manual correction, view/scope-isolated persistence, and explicit Auto Layout recalculation.
 
 ---
 
@@ -110,7 +113,7 @@ By defaulting `MONITORING` to OFF, the default canvas avoids edge crossing mesh 
 
 ---
 
-## 6. Realistic Enterprise RPA Architecture Layout
+## 6. Realistic Enterprise RPA Architecture Dataset
 
 The mock topology accurately models a major enterprise Automation Anywhere A360 production architecture:
 

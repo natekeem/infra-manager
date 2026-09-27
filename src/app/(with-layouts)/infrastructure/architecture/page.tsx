@@ -41,8 +41,8 @@ export default async function ArchitecturePage() {
   return (
     <>
       <PageHeader
-        title="Live Architecture"
-        description="오버뷰에서 구성을 요약하고 전체보기에서 개별 자산을 확인합니다. 환경과 그룹을 선택해 범위를 좁힐 수 있습니다."
+        title="Architecture"
+        description="Overview에서 계층을 탐색하고 Dependency에서 자산·그룹·클러스터의 의존성과 장애 영향 범위를 확인합니다."
       />
       <ArchitectureCanvas
         vms={vms}

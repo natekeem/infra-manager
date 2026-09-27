@@ -49,8 +49,11 @@ This repository intentionally follows the current NextAdmin v2 project philosoph
 
 ## Architecture UX
 
-- Overview: grouped tiers and external dependencies.
-- Double-click a tier: switch to VM view filtered to that tier.
+- Architecture has exactly two operator views: Overview and Dependency.
+- Group is not a separate view; Overview uses same-canvas drill-down with breadcrumbs.
+- The complete asset list belongs to Infrastructure > Assets.
+- Overview: grouped tiers and external dependencies. Never hardcode RPA domain names or layout coordinates in layout code.
+- Double-click a group: drill into its child groups or assets in the same canvas.
 - Click VM: right Drawer.
 - Click connection/edge: right Drawer with policy + actual + diagnosis (forward & return).
 - Click cluster: right ClusterDrawer (VIP, active/passive nodes).
@@ -58,6 +61,11 @@ This repository intentionally follows the current NextAdmin v2 project philosoph
 - Probe Flow toggle: renders subtle SVG particle animation on active TCP probe paths.
 - Issues-only toggle must remain available.
 - Search must accept hostname/IP; later extend to port/request ID without changing the layout.
+- Automatic coordinates come from the deterministic ELK layered engine; AI/LLM coordinate generation is prohibited.
+- Dependency traversal is deterministic BFS/DFS with cycle protection and defaults to depth 2.
+- Monitoring relations are disabled by default and have low layout priority.
+- Edge labels are disabled by default. Manual Edit is the final 20px-grid correction layer after Auto Layout.
+- Architecture Relation, Network Policy and Actual observations stay separate even when combined visually.
 
 ## Definition of done for internal migration
 

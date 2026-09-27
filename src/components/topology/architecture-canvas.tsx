@@ -1,42 +1,24 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Background,
-  BaseEdge,
-  Controls,
-  EdgeLabelRenderer,
-  Handle,
-  MiniMap,
-  MarkerType,
-  Position,
-  ReactFlow,
-  applyNodeChanges,
-  getBezierPath,
-  getSmoothStepPath,
-  ConnectionMode,
-  ConnectionLineType,
-  type Connection,
-  type Edge,
-  type EdgeProps,
-  type Node,
-  type NodeChange,
-  type NodeProps,
+  Background, BaseEdge, ConnectionLineType, ConnectionMode, Controls, EdgeLabelRenderer, Handle,
+  MarkerType, MiniMap, Position, ReactFlow, applyNodeChanges, getSmoothStepPath,
+  type Connection, type Edge, type EdgeProps, type Node, type NodeChange, type NodeProps,
 } from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
 import type {
-  ArchitectureRelation,
-  Asset,
-  ClusterEntity,
-  NasAsset,
-  NetworkStatus,
-  RelationType,
-  SoftwareInstall,
-  SoftwareProduct,
-  SoftwareRelease,
-  SopDocument,
-  TopologyGroup,
+  ArchitectureRelation, Asset, ClusterEntity, NasAsset, NetworkStatus, RelationType,
+  SoftwareInstall, SoftwareProduct, SoftwareRelease, SopDocument, TopologyGroup,
 } from "@/domain/models";
-import { managementRepo } from "@/services/management/mock-repository";
+import { elkLayoutEngine } from "@/architecture/layout/elk-layout";
+import { RELATION_LAYOUT_PRIORITY } from "@/architecture/layout/layout-presets";
+import { traverseDependencies, type DependencyDepth, type DependencyMode } from "@/architecture/layout/dependency-layout";
+import {
+  breadcrumbFor, buildEntityCatalog, groupAssets, nearestVisibleEntity,
+  overviewEntities, type SemanticEntity,
+} from "@/architecture/layout/semantic-layout";
+import { NODE_DIMENSIONS, type RoutedPoint } from "@/architecture/layout/types";
 import { VmDrawer } from "@/components/infrastructure/vm-drawer";
 import { ConnectionDrawer } from "@/components/network/connection-drawer";
 import { ClusterDrawer } from "@/components/cluster/cluster-drawer";
@@ -46,1958 +28,302 @@ import { SoftwareDetailDrawer } from "@/components/software/software-detail-draw
 import { SlideDrawer } from "@/components/common/slide-drawer";
 import { SearchIcon } from "@/components/common/icons";
 import { matchLegacySoftwareRelease } from "@/domain/software-lifecycle";
+import { managementRepo } from "@/services/management/mock-repository";
 import { useProjectGroup } from "@/context/project-group-context";
 
-type ViewMode = "overview" | "asset";
-
+type ViewMode = "overview" | "dependency";
 type OverlayMode = "policy" | "live";
-
-export type TopologyNodeData = {
-  kind: "group" | "vm" | "external" | "cluster" | "nas";
-  key: string;
-  label: string;
-  sublabel?: string;
-  isEditing?: boolean;
-  count?: number;
-  healthyCount?: number;
-  warningCount?: number;
-  criticalCount?: number;
-  connectionsCount?: number;
-  issueCount?: number;
-  apCount?: number;
-  dbCount?: number;
-  nasCount?: number;
-  k8sCount?: number;
-  environment?: string;
-  domain?: string;
-  system?: string;
-  groupType?: string;
-  description?: string;
-  vm?: Asset;
-  cluster?: ClusterEntity;
-  nas?: NasAsset;
-};
-
-export type TopologyEdgeData = {
-  label: string;
-  secondary: string;
-  issueCount: number;
-  status?: NetworkStatus;
-  relatedStatuses?: NetworkStatus[];
-  flowActive?: boolean;
-  showLabel?: boolean;
-  onSelect?: () => void;
-  edgeIndex?: number;
-  totalEdges?: number;
-  lineStyle?: "bezier" | "smoothstep";
-  relationType?: RelationType;
-};
-
-function statusColor(issueCount: number, status?: NetworkStatus) {
-  if (status?.overall === "RETURN_DIRECTION_FAILED") return "#d92d20";
-  if (status?.overall?.includes("UNREACHABLE") || status?.overall === "UNREACHABLE") return "#f04438";
-  if (status?.overall === "EXPIRING" || status?.overall?.includes("EXPIRED")) return "#f79009";
-  return issueCount > 0 ? "#f79009" : "#98a2b3";
-}
-
 export type HandleDirection = "t" | "b" | "l" | "r";
 
-function NodeHandles({ isEditing = false }: { isEditing?: boolean }) {
-  const baseClasses = isEditing
-    ? "!w-3 !h-3 !rounded-full !bg-[#5750f1] !border-2 !border-white shadow-md hover:!scale-150 transition-all cursor-crosshair z-30 ring-2 ring-[#5750f1]/40"
-    : "!w-1.5 !h-1.5 !rounded-full !border-0 opacity-0 group-hover:opacity-40 transition-opacity !bg-[#98a2b3]";
-
-  return (
-    <>
-      <Handle
-        id="t"
-        type="source"
-        position={Position.Top}
-        isConnectable={isEditing}
-        isConnectableStart={isEditing}
-        isConnectableEnd={isEditing}
-        className={baseClasses}
-        title={isEditing ? "상단 연결점 (끌어서 다른 노드로 연결)" : undefined}
-      />
-      <Handle
-        id="b"
-        type="source"
-        position={Position.Bottom}
-        isConnectable={isEditing}
-        isConnectableStart={isEditing}
-        isConnectableEnd={isEditing}
-        className={baseClasses}
-        title={isEditing ? "하단 연결점 (끌어서 다른 노드로 연결)" : undefined}
-      />
-      <Handle
-        id="l"
-        type="source"
-        position={Position.Left}
-        isConnectable={isEditing}
-        isConnectableStart={isEditing}
-        isConnectableEnd={isEditing}
-        className={baseClasses}
-        title={isEditing ? "좌측 연결점 (끌어서 다른 노드로 연결)" : undefined}
-      />
-      <Handle
-        id="r"
-        type="source"
-        position={Position.Right}
-        isConnectable={isEditing}
-        isConnectableStart={isEditing}
-        isConnectableEnd={isEditing}
-        className={baseClasses}
-        title={isEditing ? "우측 연결점 (끌어서 다른 노드로 연결)" : undefined}
-      />
-    </>
-  );
+export interface TopologyNodeData extends Record<string, unknown> {
+  kind: "group" | "asset" | "cluster" | "nas" | "dbaas" | "external";
+  key: string; label: string; sortKey: string; sublabel?: string; isEditing?: boolean;
+  selectedTarget?: boolean; dependencySide?: "impact" | "dependency" | "selected"; dependencyDepth?: number;
+  count?: number; healthyCount?: number; warningCount?: number; criticalCount?: number; issueCount?: number;
+  apCount?: number; dbCount?: number; nasCount?: number; k8sCount?: number;
+  environment?: string; domain?: string; system?: string; groupType?: string; description?: string;
+  group?: TopologyGroup; vm?: Asset; cluster?: ClusterEntity; nas?: NasAsset;
+  onDrillDown?: () => void;
 }
 
-// Compact Group Card
-function GroupNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
-  const isExternal = data.kind === "external";
-  return (
-    <div
-      className={`relative group min-h-[120px] w-[220px] rounded-md border bg-[var(--surface)] p-2.5 shadow-sm transition flex flex-col justify-between ${
-        selected ? "border-[#5750f1] ring-1 ring-[#5750f1]/20" : "border-[var(--border-strong)]"
-      }`}
-    >
-      <NodeHandles isEditing={data.isEditing} />
-
-      {/* Row 1: Group Name & Issue Dot */}
-      <div className="flex items-center justify-between gap-1 border-b border-[var(--border)] pb-1.5">
-        <div className="truncate">
-          <div className="truncate text-[11px] font-bold tracking-tight text-[var(--foreground)]">{data.label}</div>
-          {data.sublabel && <div className="text-[8px] text-[var(--muted)]">{data.sublabel}</div>}
-        </div>
-        {data.issueCount ? (
-          <span className="rounded bg-[var(--danger-soft)] px-1.5 py-0.5 text-[8px] font-semibold text-[#b42318]">
-            {data.issueCount} issue
-          </span>
-        ) : (
-          <span className="h-1.5 w-1.5 rounded-full bg-[#12b76a]" />
-        )}
-      </div>
-
-      {/* Row 2: Breakdown Counters (AP, DB, NAS, K8s) */}
-      {!isExternal ? (
-        <div className="my-1.5 grid grid-cols-3 gap-1 text-center text-[8px]">
-          {data.apCount !== undefined && data.apCount > 0 && (
-            <div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-1">
-              <div className="text-[7px] text-[var(--muted)]">AP</div>
-              <div className="font-bold text-[10px] text-[var(--foreground)]">{data.apCount}</div>
-            </div>
-          )}
-          {data.dbCount !== undefined && data.dbCount > 0 && (
-            <div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-1">
-              <div className="text-[7px] text-[var(--muted)]">DB</div>
-              <div className="font-bold text-[10px] text-[var(--foreground)]">{data.dbCount}</div>
-            </div>
-          )}
-          {data.nasCount !== undefined && data.nasCount > 0 && (
-            <div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-1">
-              <div className="text-[7px] text-[var(--muted)]">NAS</div>
-              <div className="font-bold text-[10px] text-[var(--foreground)]">{data.nasCount}</div>
-            </div>
-          )}
-          {data.k8sCount !== undefined && data.k8sCount > 0 && (
-            <div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-1 col-span-2">
-              <div className="text-[7px] text-[var(--muted)]">K8s Workloads</div>
-              <div className="font-bold text-[10px] text-[var(--foreground)]">{data.k8sCount} pods</div>
-            </div>
-          )}
-          {!data.apCount && !data.dbCount && !data.nasCount && !data.k8sCount && (
-            <div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-1 col-span-3">
-              <div className="text-[7px] text-[var(--muted)]">Total Assets</div>
-              <div className="font-bold text-[10px] text-[var(--foreground)]">{data.count ?? 0}</div>
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="my-2 text-[10px] text-[var(--muted)]">
-          {data.count ?? 1} External Dependencies
-        </div>
-      )}
-
-      {/* Row 3: Health & Actions */}
-      <div className="flex items-center justify-between border-t border-[var(--border)] pt-1 text-[8.5px]">
-        <div className="flex items-center gap-1.5">
-          <span className="text-emerald-600 dark:text-emerald-400 font-medium">{data.healthyCount ?? data.count ?? 0} OK</span>
-          {(data.warningCount ?? 0) > 0 && (
-            <span className="text-amber-600 font-medium">{data.warningCount} W</span>
-          )}
-        </div>
-        <span className="text-[7.5px] text-[var(--muted)] hover:text-[#5750f1]">
-          클릭: 정보 · 더블클릭: 상세 →
-        </span>
-      </div>
-    </div>
-  );
+export interface TopologyEdgeData extends Record<string, unknown> {
+  label: string; secondary: string; issueCount: number; status?: NetworkStatus;
+  relatedStatuses?: NetworkStatus[]; relation?: ArchitectureRelation; relationType?: RelationType;
+  flowActive?: boolean; showLabel?: boolean; routedPoints?: RoutedPoint[]; layoutPriority?: number;
 }
 
-// Compute / VM / Workload Node
-function VmNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
-  const vm = data.vm!;
-  const isK8s = vm.assetType === "K8S_WORKLOAD";
-  const isDbaas = vm.assetType === "DBAAS";
-
-  return (
-    <div
-      className={`relative group w-[230px] h-[125px] rounded-md border bg-[var(--surface)] p-2.5 shadow-sm transition flex flex-col justify-between ${
-        selected ? "border-[#5750f1] ring-1 ring-[#5750f1]/20" : "border-[var(--border)]"
-      }`}
-    >
-      <NodeHandles isEditing={data.isEditing} />
-
-      {/* Row 1: Hostname + Health dot */}
-      <div className="flex items-center justify-between gap-1">
-        <span className="truncate text-[11px] font-semibold text-[var(--foreground)]" title={vm.hostname}>
-          {vm.hostname}
-        </span>
-        <div className="flex items-center gap-1.5">
-          <span className="rounded bg-[var(--surface-2)] px-1 py-0.5 font-mono text-[8px] text-[var(--muted)]">
-            {isK8s ? "K8S" : isDbaas ? "DBAAS" : vm.role}
-          </span>
-          <span
-            className={`h-2 w-2 rounded-full ${
-              vm.health === "healthy" ? "bg-[#12b76a]" : vm.health === "critical" ? "bg-[#f04438]" : "bg-[#f79009]"
-            }`}
-          />
-        </div>
-      </div>
-
-      {/* Row 2: IP + Env / Zone */}
-      <div className="flex items-center justify-between text-[9px] text-[var(--muted)]">
-        <span className="font-mono text-[var(--foreground)]">{vm.ipAddress}</span>
-        <div className="flex items-center gap-1 font-mono text-[8px]">
-          <span className="rounded border border-[var(--border)] px-1 py-0.2">{vm.environment}</span>
-          {vm.domain && <span className="rounded bg-[var(--surface-2)] px-1 py-0.2">{vm.domain}</span>}
-        </div>
-      </div>
-
-      {/* Row 3: Compact Metrics */}
-      <div className="grid grid-cols-3 gap-1 text-center text-[8px]">
-        <Metric k="CPU" v={vm.cpuPct} />
-        <Metric k="MEM" v={vm.memoryPct} />
-        <Metric k="DISK" v={vm.diskPct} />
-      </div>
-
-      {/* Row 4: OS Summary */}
-      <div className="flex items-center justify-between border-t border-[var(--border)] pt-1 text-[8px] text-[var(--muted-2)]">
-        <span className="truncate">{vm.osName || vm.assetType || "Compute Node"}</span>
-        <span className="font-mono text-[7.5px]">{vm.service}</span>
-      </div>
-    </div>
-  );
+function NodeHandles({ editing }: { editing?: boolean }) {
+  const cls = editing
+    ? "!h-3 !w-3 !rounded-full !border-2 !border-white !bg-[#5750f1] shadow ring-2 ring-[#5750f1]/30"
+    : "!h-1.5 !w-1.5 !rounded-full !border-0 !bg-[#98a2b3] opacity-0 group-hover:opacity-40";
+  const items = [[Position.Top, "t"], [Position.Bottom, "b"], [Position.Left, "l"], [Position.Right, "r"]] as const;
+  return <>{items.flatMap(([position, id]) => [
+    <Handle key={`${id}-src`} id={`${id}-src`} type="source" position={position} isConnectable={editing} className={cls} />,
+    <Handle key={`${id}-tgt`} id={`${id}-tgt`} type="target" position={position} isConnectable={editing} className="!h-3 !w-3 !border-0 !bg-transparent" />,
+  ])}</>;
 }
 
-function ClusterNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
-  const cluster = data.cluster!;
-  return (
-    <div
-      className={`relative group w-[230px] h-[135px] rounded-md border bg-[var(--surface)] p-2.5 shadow-sm transition flex flex-col justify-between border-purple-500/40 ${
-        selected ? "border-purple-600 ring-1 ring-purple-500/20" : ""
-      }`}
-    >
-      <NodeHandles isEditing={data.isEditing} />
-
-      {/* Row 1: Cluster Name + Type Badge */}
-      <div className="flex items-center justify-between gap-1">
-        <div className="flex items-center gap-1.5">
-          <span className="rounded bg-purple-500/10 px-1.5 py-0.5 font-mono text-[8px] font-bold text-purple-600 dark:text-purple-400">
-            {cluster.type}
-          </span>
-          <span className="truncate text-[11px] font-bold text-[var(--foreground)]" title={cluster.name}>
-            {cluster.name}
-          </span>
-        </div>
-        <span className="h-2 w-2 rounded-full bg-[#12b76a]" />
-      </div>
-
-      {/* Row 2: Virtual IP */}
-      <div className="flex items-center justify-between text-[9px]">
-        <span className="text-[var(--muted)]">VIP:</span>
-        <span className="font-mono font-bold text-[#5750f1]">{cluster.vip}</span>
-        <span className="rounded bg-[var(--surface-2)] px-1 py-0.2 font-mono text-[8px] text-[var(--muted)]">
-          {cluster.domain || cluster.environment}
-        </span>
-      </div>
-
-      {/* Row 3: Cluster Members */}
-      <div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-1 text-[8px]">
-        <div className="flex justify-between text-[var(--muted)] mb-0.5">
-          <span>Active / Passive Nodes:</span>
-          <span>{cluster.members.length} nodes</span>
-        </div>
-        <div className="flex gap-1 flex-wrap">
-          {cluster.members.map((m) => (
-            <span
-              key={m.assetId}
-              className={`rounded px-1 py-0.5 font-mono font-medium ${
-                m.role === "ACTIVE"
-                  ? "bg-purple-600/15 text-purple-700 dark:text-purple-300"
-                  : "bg-[var(--surface-3)] text-[var(--muted)]"
-              }`}
-            >
-              {m.hostname} ({m.role.slice(0, 1)})
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {/* Row 4: Clustered Service */}
-      <div className="flex items-center justify-between border-t border-[var(--border)] pt-1 text-[8px] text-[var(--muted-2)]">
-        <span>HA Database Cluster</span>
-        <span className="font-mono text-[7.5px]">Port 1433</span>
-      </div>
-    </div>
-  );
+function CardShell({ data, selected, children, accent = "border-[var(--border)]" }: NodeProps<Node<TopologyNodeData>> & { children: React.ReactNode; accent?: string }) {
+  const size = NODE_DIMENSIONS[data.kind];
+  return <div style={{ width: size.width, height: size.height }} className={`group relative flex flex-col justify-between rounded-md border bg-[var(--surface)] p-2.5 shadow-sm ${data.selectedTarget || selected ? "border-[#5750f1] ring-1 ring-[#5750f1]/25" : accent}`}><NodeHandles editing={data.isEditing} />{children}</div>;
 }
 
-function NasNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
-  const nas = data.nas!;
-  const usedPct = nas.capacityTb > 0 ? Math.round((nas.usedCapacityTb / nas.capacityTb) * 100) : 0;
-
-  return (
-    <div
-      className={`relative group w-[220px] h-[120px] rounded-md border bg-[var(--surface)] p-2.5 shadow-sm transition flex flex-col justify-between border-cyan-500/40 ${
-        selected ? "border-cyan-600 ring-1 ring-cyan-500/20" : ""
-      }`}
-    >
-      <NodeHandles isEditing={data.isEditing} />
-
-      {/* Row 1: Hostname + Protocol */}
-      <div className="flex items-center justify-between gap-1">
-        <div className="flex items-center gap-1.5">
-          <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[8px] font-bold text-cyan-700 dark:text-cyan-300">
-            NAS
-          </span>
-          <span className="truncate text-[11px] font-semibold text-[var(--foreground)]" title={nas.hostname}>
-            {nas.hostname}
-          </span>
-        </div>
-        <span className="h-2 w-2 rounded-full bg-[#12b76a]" />
-      </div>
-
-      {/* Row 2: IP + Protocol */}
-      <div className="flex items-center justify-between text-[9px] text-[var(--muted)]">
-        <span className="font-mono text-[var(--foreground)]">{nas.ipAddress}</span>
-        <span className="rounded border border-[var(--border)] px-1 py-0.2 font-mono text-[8px]">{nas.protocol}</span>
-      </div>
-
-      {/* Row 3: Capacity Bar */}
-      <div className="space-y-1 text-[8px]">
-        <div className="flex justify-between text-[var(--muted)]">
-          <span>Capacity:</span>
-          <span className="font-mono">{nas.usedCapacityTb} / {nas.capacityTb} TB ({usedPct}%)</span>
-        </div>
-        <div className="h-1.5 w-full overflow-hidden rounded bg-[var(--surface-3)]">
-          <div
-            className={`h-full rounded transition-all ${
-              usedPct >= 90 ? "bg-[var(--danger)]" : usedPct >= 75 ? "bg-[var(--warning)]" : "bg-cyan-500"
-            }`}
-            style={{ width: `${Math.min(100, usedPct)}%` }}
-          />
-        </div>
-      </div>
-
-      {/* Row 4: Mount targets */}
-      <div className="flex items-center justify-between border-t border-[var(--border)] pt-1 text-[8px] text-[var(--muted-2)]">
-        <span>{nas.vendor} {nas.model ?? ""}</span>
-        <span>{nas.domain || nas.environment}</span>
-      </div>
-    </div>
-  );
+function Metric({ label, value }: { label: string; value?: number }) {
+  return <div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-1"><div className="text-[7px] text-[var(--muted)]">{label}</div><div className="text-[10px] font-bold">{value ?? 0}</div></div>;
 }
 
-function Metric({ k, v }: { k: string; v?: number }) {
-  const val = v ?? 0;
-  const isHigh = val >= 85;
-  return (
-    <div className={`rounded px-1 py-0.5 ${isHigh ? "bg-[var(--warning-soft)] text-[#b54708]" : "bg-[var(--surface-2)]"}`}>
-      <div className="text-[7px] text-[var(--muted)]">{k}</div>
-      <div className="font-semibold tabular-nums">{val}%</div>
-    </div>
-  );
+function ScopeNode(props: NodeProps<Node<TopologyNodeData>>) {
+  const { data } = props;
+  return <div onClick={(event) => { if (event.detail === 2) { event.stopPropagation(); data.onDrillDown?.(); } }} onDoubleClick={(event) => { event.stopPropagation(); data.onDrillDown?.(); }}><CardShell {...props}>
+    <div className="flex items-start justify-between gap-2 border-b border-[var(--border)] pb-1.5"><div className="min-w-0"><div className="truncate text-[11px] font-bold">{data.label}</div><div className="truncate text-[8px] text-[var(--muted)]">{data.sublabel}</div></div>{data.selectedTarget ? <span className="rounded bg-[#5750f1]/10 px-1.5 py-0.5 text-[7px] font-bold text-[#5750f1]">SELECTED</span> : data.issueCount ? <span className="rounded bg-[var(--danger-soft)] px-1.5 py-0.5 text-[8px] text-[#b42318]">{data.issueCount} issue</span> : <span className="mt-1 h-1.5 w-1.5 rounded-full bg-[#12b76a]" />}</div>
+    <div className="grid grid-cols-3 gap-1 text-center text-[8px]"><Metric label="AP" value={data.apCount} /><Metric label="DB" value={data.dbCount} /><Metric label="NAS" value={data.nasCount} /></div>
+    <div className="flex items-center justify-between border-t border-[var(--border)] pt-1 text-[8px]"><span className="text-emerald-600">{data.healthyCount ?? 0} Healthy</span>{data.onDrillDown ? <button type="button" onClick={(event) => { event.stopPropagation(); data.onDrillDown?.(); }} className="nodrag text-[#5750f1] hover:underline">Drill down →</button> : <span className="text-[var(--muted)]">{data.dependencySide && data.dependencySide !== "selected" ? `${data.dependencySide === "impact" ? "IMPACT" : "DEPENDS"} · DEPTH ${data.dependencyDepth}` : `${data.count ?? 0} assets`}</span>}</div>
+  </CardShell></div>;
+}
+
+function AssetNode(props: NodeProps<Node<TopologyNodeData>>) {
+  const vm = props.data.vm!;
+  return <CardShell {...props} accent={vm.health === "critical" ? "border-red-500/50" : vm.health === "warning" ? "border-amber-500/50" : "border-[var(--border)]"}>
+    <div className="flex items-center justify-between gap-2"><span className="truncate text-[11px] font-semibold">{vm.hostname}</span><span className="rounded bg-[var(--surface-2)] px-1 text-[8px]">{props.data.selectedTarget ? "SELECTED" : vm.role}</span></div>
+    <div className="flex items-center justify-between text-[9px]"><span className="font-mono">{vm.ipAddress}</span><span className="text-[var(--muted)]">{vm.environment} · {vm.domain ?? "UNMAPPED"}</span></div>
+    <div className="grid grid-cols-3 gap-1 text-center text-[8px]"><Metric label="CPU" value={vm.cpuPct} /><Metric label="MEM" value={vm.memoryPct} /><Metric label="DISK" value={vm.diskPct} /></div>
+    <div className="flex justify-between border-t border-[var(--border)] pt-1 text-[8px] text-[var(--muted)]"><span className="truncate">{vm.service}</span>{props.data.dependencySide && props.data.dependencySide !== "selected" && <span>{props.data.dependencySide === "impact" ? "IMPACT" : "DEPENDS"} D{props.data.dependencyDepth}</span>}</div>
+  </CardShell>;
+}
+
+function ClusterNode(props: NodeProps<Node<TopologyNodeData>>) {
+  const c = props.data.cluster!;
+  return <CardShell {...props} accent="border-purple-500/40"><div className="flex justify-between"><span className="text-[8px] font-bold text-purple-600">{c.type}</span>{props.data.selectedTarget ? <span className="text-[7px] font-bold text-[#5750f1]">SELECTED</span> : props.data.dependencySide && <span className="text-[7px] text-[var(--muted)]">{props.data.dependencySide.toUpperCase()} D{props.data.dependencyDepth}</span>}</div><div className="truncate text-[11px] font-bold">{c.name}</div><div className="font-mono text-[9px] text-[#5750f1]">VIP {c.vip}</div><div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-1 text-[8px]">{c.members.map((m) => `${m.hostname} ${m.role}`).join(" · ")}</div></CardShell>;
+}
+
+function NasNode(props: NodeProps<Node<TopologyNodeData>>) {
+  const n = props.data.nas!; const pct = n.capacityTb ? Math.round(n.usedCapacityTb / n.capacityTb * 100) : 0;
+  return <CardShell {...props} accent="border-cyan-500/40"><div className="flex justify-between"><span className="text-[8px] font-bold text-cyan-600">NAS · {n.protocol}</span>{props.data.selectedTarget ? <span className="text-[7px] font-bold text-[#5750f1]">SELECTED</span> : props.data.dependencySide && <span className="text-[7px] text-[var(--muted)]">{props.data.dependencySide.toUpperCase()} D{props.data.dependencyDepth}</span>}</div><div className="truncate text-[11px] font-semibold">{n.hostname}</div><div className="font-mono text-[9px]">{n.ipAddress}</div><div><div className="mb-1 flex justify-between text-[8px] text-[var(--muted)]"><span>Capacity</span><span>{n.usedCapacityTb}/{n.capacityTb} TB</span></div><div className="h-1.5 rounded bg-[var(--surface-3)]"><div className="h-full rounded bg-cyan-500" style={{ width: `${Math.min(100, pct)}%` }} /></div></div></CardShell>;
 }
 
 function FlowEdge(props: EdgeProps<Edge<TopologyEdgeData>>) {
   const { id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, selected } = props;
-  const lineStyle = data?.lineStyle ?? "bezier";
-  const pathFn = lineStyle === "smoothstep" ? getSmoothStepPath : getBezierPath;
-
-  const [edgePath, labelX, labelY] = pathFn({
-    sourceX,
-    sourceY,
-    sourcePosition,
-    targetX,
-    targetY,
-    targetPosition,
-    borderRadius: 8,
-  });
-
-  const strokeColor = statusColor(data?.issueCount ?? 0, data?.status);
-  const showLabel = data?.showLabel ?? true;
-
-  return (
-    <>
-      <BaseEdge
-        id={id}
-        path={edgePath}
-        style={{
-          stroke: strokeColor,
-          strokeWidth: selected ? 2.5 : 1.5,
-          opacity: 0.85,
-        }}
-      />
-      {data?.flowActive && (
-        <circle r={3} fill="#5750f1">
-          <animateMotion dur="2.4s" repeatCount="indefinite" path={edgePath} />
-        </circle>
-      )}
-      {showLabel && (
-        <EdgeLabelRenderer>
-          <div
-            style={{
-              position: "absolute",
-              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-              pointerEvents: "all",
-              zIndex: 20,
-            }}
-            onClick={(e) => {
-              e.stopPropagation();
-              data?.onSelect?.();
-            }}
-            className={`nodrag nopan cursor-pointer rounded border border-[var(--border)] bg-[var(--surface)] px-1.5 py-0.5 text-[8px] font-mono shadow-sm hover:border-[#5750f1] transition ${
-              data?.issueCount ? "text-amber-600 font-bold" : "text-[var(--foreground)]"
-            }`}
-          >
-            {data?.label}
-          </div>
-        </EdgeLabelRenderer>
-      )}
-    </>
-  );
+  const routed = data?.routedPoints;
+  const [fallback, lx, ly] = getSmoothStepPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, borderRadius: 8 });
+  const path = routed && routed.length > 1 ? routed.map((point, index) => `${index ? "L" : "M"}${point.x},${point.y}`).join(" ") : fallback;
+  const middle = routed?.[Math.floor(routed.length / 2)];
+  const color = data?.status?.overall === "RETURN_DIRECTION_FAILED" || data?.status?.overall.includes("UNREACHABLE") ? "#f04438" : data?.issueCount ? "#f79009" : "#98a2b3";
+  return <><BaseEdge id={id} path={path} style={{ stroke: color, strokeWidth: selected ? 2.5 : 1.5 }} />{data?.flowActive && !data.issueCount && <circle r={3} fill="#5750f1"><animateMotion dur="2.4s" repeatCount="indefinite" path={path} /></circle>}{data?.showLabel && <EdgeLabelRenderer><div style={{ position: "absolute", transform: `translate(-50%, -50%) translate(${middle?.x ?? lx}px,${middle?.y ?? ly}px)`, pointerEvents: "all" }} className="nodrag nopan rounded border border-[var(--border)] bg-[var(--surface)] px-1.5 py-0.5 font-mono text-[8px] shadow-sm">{data.label}</div></EdgeLabelRenderer>}</>;
 }
 
-const nodeTypes = {
-  tier: GroupNode,
-  vm: VmNode,
-  cluster: ClusterNode,
-  nas: NasNode,
-};
+const nodeTypes = { scopeCard: ScopeNode, assetCard: AssetNode, dbaasCard: AssetNode, externalCard: ScopeNode, clusterCard: ClusterNode, nasCard: NasNode };
+const edgeTypes = { flow: FlowEdge };
 
-const edgeTypes = {
-  flow: FlowEdge,
-};
-
-function getSmartHandlePair(
-  sourcePos?: { x: number; y: number },
-  targetPos?: { x: number; y: number },
-  sourceDim = { w: 200, h: 116 },
-  targetDim = { w: 200, h: 116 }
-): { sourceHandle: HandleDirection; targetHandle: HandleDirection } {
-  if (!sourcePos || !targetPos) {
-    return { sourceHandle: "r", targetHandle: "l" };
+function entityNode(entity: SemanticEntity, assets: Asset[], selectedId?: string, side?: TopologyNodeData["dependencySide"], depth?: number): Node<TopologyNodeData> {
+  if (entity.group) {
+    const members = groupAssets(entity.group, assets);
+    return { id: entity.id, type: "scopeCard", position: { x: 0, y: 0 }, data: { kind: "group", key: entity.id, label: entity.label, sortKey: `${entity.group.groupType}:${entity.label}:${entity.id}`, sublabel: [entity.group.system, entity.group.environment, entity.group.domain].filter(Boolean).join(" · "), count: members.length, healthyCount: members.filter((a) => a.health === "healthy").length, warningCount: members.filter((a) => a.health === "warning").length, criticalCount: members.filter((a) => a.health === "critical").length, issueCount: members.filter((a) => a.health === "warning" || a.health === "critical").length, apCount: members.filter((a) => a.role === "AP").length, dbCount: members.filter((a) => a.role === "DB").length, nasCount: members.filter((a) => a.assetType === "NAS").length, environment: entity.group.environment, domain: entity.group.domain, system: entity.group.system, groupType: entity.group.groupType, description: entity.group.description, group: entity.group, selectedTarget: entity.id === selectedId, dependencySide: side, dependencyDepth: depth } };
   }
-
-  const scx = sourcePos.x + sourceDim.w / 2;
-  const scy = sourcePos.y + sourceDim.h / 2;
-  const tcx = targetPos.x + targetDim.w / 2;
-  const tcy = targetPos.y + targetDim.h / 2;
-
-  const dx = tcx - scx;
-  const dy = tcy - scy;
-
-  // Decide dominant orientation based on delta
-  if (Math.abs(dx) >= Math.abs(dy)) {
-    if (dx >= 0) {
-      return { sourceHandle: "r", targetHandle: "l" };
-    } else {
-      return { sourceHandle: "l", targetHandle: "r" };
-    }
-  } else {
-    if (dy >= 0) {
-      return { sourceHandle: "b", targetHandle: "t" };
-    } else {
-      return { sourceHandle: "t", targetHandle: "b" };
-    }
-  }
+  if (entity.cluster) return { id: entity.id, type: "clusterCard", position: { x: 0, y: 0 }, data: { kind: "cluster", key: entity.id, label: entity.label, sortKey: `cluster:${entity.label}:${entity.id}`, cluster: entity.cluster, selectedTarget: entity.id === selectedId, dependencySide: side, dependencyDepth: depth } };
+  if (entity.nas) return { id: entity.id, type: "nasCard", position: { x: 0, y: 0 }, data: { kind: "nas", key: entity.id, label: entity.label, sortKey: `nas:${entity.label}:${entity.id}`, nas: entity.nas, selectedTarget: entity.id === selectedId, dependencySide: side, dependencyDepth: depth } };
+  if (entity.asset) return { id: entity.id, type: entity.kind === "dbaas" ? "dbaasCard" : "assetCard", position: { x: 0, y: 0 }, data: { kind: entity.kind === "dbaas" ? "dbaas" : "asset", key: entity.id, label: entity.label, sortKey: `${entity.asset.role}:${entity.label}:${entity.id}`, vm: entity.asset, selectedTarget: entity.id === selectedId, dependencySide: side, dependencyDepth: depth } };
+  return { id: entity.id, type: "externalCard", position: { x: 0, y: 0 }, data: { kind: "external", key: entity.id, label: entity.label, sortKey: `external:${entity.label}:${entity.id}`, count: 0, healthyCount: 0, selectedTarget: entity.id === selectedId, dependencySide: side, dependencyDepth: depth } };
 }
 
-export function ArchitectureCanvas({
-  vms,
-  statuses,
-  software,
-  sops,
-  clusters = [],
-  nasAssets = [],
-  softwareReleases = [],
-  softwareProducts = [],
-  relations = [],
-  topologyGroups = [],
-}: {
-  vms: Asset[];
-  statuses: NetworkStatus[];
-  software: SoftwareInstall[];
-  sops: SopDocument[];
-  clusters?: ClusterEntity[];
-  nasAssets?: NasAsset[];
-  softwareReleases?: SoftwareRelease[];
-  softwareProducts?: SoftwareProduct[];
-  relations?: ArchitectureRelation[];
-  topologyGroups?: TopologyGroup[];
-}) {
+function makeEdge(relation: ArchitectureRelation, source: string, target: string, flowActive: boolean, showLabel: boolean): Edge<TopologyEdgeData> {
+  return { id: relation.id, type: "flow", source, target, markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 }, data: { label: `${relation.protocol ?? relation.relationType}${relation.port ? `/${relation.port}` : ""}`, secondary: relation.relationType, issueCount: 0, relation, relationType: relation.relationType, flowActive, showLabel, layoutPriority: RELATION_LAYOUT_PRIORITY[relation.relationType] } };
+}
+
+export function ArchitectureCanvas({ vms, statuses, software, sops, clusters = [], nasAssets = [], softwareReleases = [], softwareProducts = [], relations = [], topologyGroups = [] }: { vms: Asset[]; statuses: NetworkStatus[]; software: SoftwareInstall[]; sops: SopDocument[]; clusters?: ClusterEntity[]; nasAssets?: NasAsset[]; softwareReleases?: SoftwareRelease[]; softwareProducts?: SoftwareProduct[]; relations?: ArchitectureRelation[]; topologyGroups?: TopologyGroup[] }) {
   const { activeProject } = useProjectGroup();
-
-  // Navigation & Filter States (persisted across reloads)
-  const [mode, setModeState] = useState<ViewMode>("overview");
-  const [envFilter, setEnvFilterState] = useState("ALL");
-
-  useEffect(() => {
-    try {
-      const savedMode = window.localStorage.getItem("rpa-architecture-mode");
-      if (savedMode === "overview" || savedMode === "asset") {
-        setModeState(savedMode);
-      }
-      const savedEnv = window.localStorage.getItem("rpa-architecture-env");
-      if (savedEnv) {
-        setEnvFilterState(savedEnv);
-      }
-    } catch {}
-  }, []);
-
-  const setMode = useCallback((v: ViewMode) => {
-    setModeState(v);
-    try {
-      window.localStorage.setItem("rpa-architecture-mode", v);
-    } catch {}
-  }, []);
-
-  const setEnvFilter = useCallback((env: string) => {
-    setEnvFilterState(env);
-    try {
-      window.localStorage.setItem("rpa-architecture-env", env);
-    } catch {}
-  }, []);
-
-  const [drillGroup, setDrillGroup] = useState<string | null>(null);
+  const [mode, setMode] = useState<ViewMode>("overview");
+  const [scopeId, setScopeId] = useState<string | null>(null);
+  const [environment, setEnvironment] = useState("ALL");
   const [overlay, setOverlay] = useState<OverlayMode>("live");
   const [issuesOnly, setIssuesOnly] = useState(false);
   const [flowAnimation, setFlowAnimation] = useState(false);
-  const [showEdgeLabels, setShowEdgeLabels] = useState(true);
-  const [layoutEditMode, setLayoutEditMode] = useState(false);
-  const [lineStyle, setLineStyle] = useState<"bezier" | "smoothstep">("bezier");
-  const [positionOverrides, setPositionOverrides] = useState<Record<string, { x: number; y: number }>>({});
-  const [edgeHandleOverrides, setEdgeHandleOverrides] = useState<Record<string, { source?: HandleDirection; target?: HandleDirection }>>({});
-  const [canvasRevision, setCanvasRevision] = useState(0);
+  const [showLabels, setShowLabels] = useState(false);
+  const [layoutEdit, setLayoutEdit] = useState(false);
+  const [isLayouting, setIsLayouting] = useState(false);
+  const [layoutRevision, setLayoutRevision] = useState(0);
   const [query, setQuery] = useState("");
-
-  // Live relations state to support in-canvas relation creation, deletion, and cross-session persistence
-  const [currentRelations, setCurrentRelations] = useState<ArchitectureRelation[]>(relations);
-  useEffect(() => {
-    let isMounted = true;
-    managementRepo.getRelations().then((allRelations) => {
-      if (!isMounted) return;
-      if (allRelations && allRelations.length > 0) {
-        setCurrentRelations(allRelations);
-      } else {
-        setCurrentRelations(relations);
-      }
-    });
-    return () => {
-      isMounted = false;
-    };
-  }, [relations]);
-
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  // Relation Filters (APM Monitoring default OFF)
-  const [relationFilters, setRelationFilters] = useState<Record<string, boolean>>({
-    SERVICE: true,
-    DATABASE: true,
-    STORAGE: true,
-    MONITORING: false,
-    MANAGEMENT: true,
-  });
-
-  // Slide Drawers State
+  const [dependencyQuery, setDependencyQuery] = useState("");
+  const [dependencyTarget, setDependencyTarget] = useState<string | null>(null);
+  const [dependencyMode, setDependencyMode] = useState<DependencyMode>("both");
+  const [dependencyDepth, setDependencyDepth] = useState<DependencyDepth>(2);
+  const [relationFilters, setRelationFilters] = useState<Record<RelationType, boolean>>({ SERVICE: true, DATABASE: true, STORAGE: true, MONITORING: false, MANAGEMENT: true, CLUSTER: true, EXTERNAL: true, OTHER: true });
+  const [currentRelations, setCurrentRelations] = useState(relations);
+  const [liveNodes, setLiveNodes] = useState<Node<TopologyNodeData>[]>([]);
+  const [liveEdges, setLiveEdges] = useState<Edge<TopologyEdgeData>[]>([]);
+  const [manualPositions, setManualPositions] = useState<Record<string, { x: number; y: number }>>({});
+  const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [selectedVm, setSelectedVm] = useState<Asset | null>(null);
-  const [selectedConnection, setSelectedConnection] = useState<NetworkStatus | null>(null);
-  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
-  const [selectedRelatedStatuses, setSelectedRelatedStatuses] = useState<NetworkStatus[]>([]);
-  const [selectedGroup, setSelectedGroup] = useState<GroupDrawerData | null>(null);
   const [selectedCluster, setSelectedCluster] = useState<ClusterEntity | null>(null);
   const [selectedNas, setSelectedNas] = useState<NasAsset | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<GroupDrawerData | null>(null);
+  const [selectedConnection, setSelectedConnection] = useState<NetworkStatus | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [selectedRelease, setSelectedRelease] = useState<SoftwareRelease | null>(null);
-  const [selectedRelation, setSelectedRelation] = useState<ArchitectureRelation | null>(null);
+  const [dependencyDrawerEntity, setDependencyDrawerEntity] = useState<SemanticEntity | null>(null);
+  const [edgeHandles, setEdgeHandles] = useState<Record<string, { source?: HandleDirection; target?: HandleDirection }>>({});
+  const groupClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flowInstance = useRef<{ fitView: (options?: Record<string, unknown>) => Promise<boolean> } | null>(null);
 
-  // Scoped project assets
-  const projectVms = useMemo(
-    () => vms.filter((v) => !v.projectGroupId || v.projectGroupId === activeProject.id),
-    [vms, activeProject.id]
-  );
-  const projectClusters = useMemo(
-    () => clusters.filter((c) => !c.projectGroupId || c.projectGroupId === activeProject.id),
-    [clusters, activeProject.id]
-  );
-  const projectNas = useMemo(
-    () => nasAssets.filter((n) => !n.projectGroupId || n.projectGroupId === activeProject.id),
-    [nasAssets, activeProject.id]
-  );
-  const projectRelations = useMemo(
-    () => currentRelations.filter((r) => !r.projectGroupId || r.projectGroupId === activeProject.id),
-    [currentRelations, activeProject.id]
-  );
-  const projectStatuses = useMemo(
-    () => statuses.filter((s) => !s.policy.projectGroupId || s.policy.projectGroupId === activeProject.id),
-    [statuses, activeProject.id]
-  );
+  useEffect(() => { managementRepo.getRelations().then((items) => setCurrentRelations(items.length ? items : relations)); }, [relations]);
+  const projectAssets = useMemo(() => vms.filter((item) => (!item.projectGroupId || item.projectGroupId === activeProject.id) && (environment === "ALL" || item.environment === environment)), [vms, activeProject.id, environment]);
+  const projectGroups = useMemo(() => topologyGroups.filter((item) => item.projectGroupId === activeProject.id), [topologyGroups, activeProject.id]);
+  const projectClusters = useMemo(() => clusters.filter((item) => (!item.projectGroupId || item.projectGroupId === activeProject.id) && (environment === "ALL" || item.environment === environment)), [clusters, activeProject.id, environment]);
+  const projectNas = useMemo(() => nasAssets.filter((item) => (!item.projectGroupId || item.projectGroupId === activeProject.id) && (environment === "ALL" || item.environment === environment)), [nasAssets, activeProject.id, environment]);
+  const projectRelations = useMemo(() => currentRelations.filter((item) => item.projectGroupId === activeProject.id), [currentRelations, activeProject.id]);
+  const projectStatuses = useMemo(() => statuses.filter((item) => !item.policy.projectGroupId || item.policy.projectGroupId === activeProject.id), [statuses, activeProject.id]);
+  const catalog = useMemo(() => buildEntityCatalog(projectGroups, projectAssets, projectClusters, projectNas, projectRelations), [projectGroups, projectAssets, projectClusters, projectNas, projectRelations]);
+  const searchableEntities = useMemo(() => [...catalog.values()].sort((a, b) => a.label.localeCompare(b.label)), [catalog]);
 
-  const availableGroups = useMemo(() => {
-    const registered = topologyGroups.filter((g) => g.projectGroupId === activeProject.id);
-    const domains = Array.from(new Set(projectVms.map((v) => v.domain || v.zone || "UNMAPPED")));
-    return [
-      ...registered,
-      ...domains
-        .filter((d) => !registered.some((g) => g.domain === d))
-        .map((d) => ({ id: "domain:" + d, name: d, domain: d, projectGroupId: activeProject.id } as TopologyGroup)),
-    ];
-  }, [topologyGroups, projectVms, activeProject.id]);
+  useEffect(() => { if (!dependencyTarget || !catalog.has(dependencyTarget)) { const preferred = searchableEntities.find((item) => item.kind === "cluster") ?? searchableEntities[0]; setDependencyTarget(preferred?.id ?? null); setDependencyQuery(preferred?.label ?? ""); } }, [catalog, dependencyTarget, searchableEntities]);
 
-  const selectedFilterGroup = availableGroups.find((g) => g.id === drillGroup);
-  const envVms = useMemo(
-    () =>
-      projectVms.filter((v) => {
-        if (envFilter !== "ALL" && v.environment !== envFilter) return false;
-        const g = selectedFilterGroup;
-        if (!g) return true;
-        if (g.assetIds) return g.assetIds.includes(v.id);
-        return (
-          !!(g.domain || g.system || g.environment) &&
-          (!g.domain || (v.domain || v.zone || "UNMAPPED") === g.domain) &&
-          (!g.system || v.system === g.system) &&
-          (!g.environment || v.environment === g.environment)
-        );
-      }),
-    [projectVms, envFilter, selectedFilterGroup]
-  );
-  const envVmIds = useMemo(() => new Set(envVms.map((v) => v.id)), [envVms]);
-
-  const envStatuses = useMemo(
-    () => projectStatuses.filter((s) => envVmIds.has(s.policy.sourceVmId)),
-    [projectStatuses, envVmIds]
-  );
-
-  const handleSelectConnection = useCallback(
-    (edgeId: string, status: NetworkStatus, relatedStatuses: NetworkStatus[]) => {
-      setSelectedEdgeId(edgeId);
-      setSelectedConnection(status);
-      setSelectedRelatedStatuses(relatedStatuses);
-      setSelectedRelation(null);
-    },
-    []
-  );
-
-  // Build Topology based on View Mode
-  const { nodes, edges } = useMemo(() => {
-    if (mode === "overview") {
-      return buildOverview(
-        envVms,
-        envStatuses,
-        projectRelations,
-        relationFilters,
-        issuesOnly,
-        overlay,
-        query,
-        flowAnimation,
-        showEdgeLabels,
-        handleSelectConnection,
-        (rel) => {
-          setSelectedRelation(rel);
-          setSelectedConnection(null);
-        }
-      );
+  const expandedRelations = useMemo(() => {
+    const result = [...projectRelations];
+    for (const relation of projectRelations) {
+      const sourceGroup = projectGroups.find((group) => group.id === relation.sourceEntityId);
+      if (sourceGroup) for (const asset of groupAssets(sourceGroup, projectAssets).filter((item) => item.role === "AP" || item.assetType === "K8S_WORKLOAD")) result.push({ ...relation, id: `${relation.id}:member:${asset.id}`, sourceEntityType: "ASSET", sourceEntityId: asset.id });
     }
-    return buildAssets(
-      envVms,
-      envStatuses,
-      projectClusters.filter(
-        (c) =>
-          (envFilter === "ALL" || c.environment === envFilter) &&
-          (!drillGroup || c.members.some((m) => envVmIds.has(m.assetId)))
-      ),
-      projectNas.filter(
-        (n) =>
-          (envFilter === "ALL" || n.environment === envFilter) &&
-          (!selectedFilterGroup?.environment || n.environment === selectedFilterGroup.environment) &&
-          (!drillGroup || envVms.some((v) => v.id === n.id || v.hostname === n.hostname || v.ipAddress === n.ipAddress))
-      ),
-      drillGroup,
-      projectRelations,
-      relationFilters,
-      issuesOnly,
-      overlay,
-      query,
-      flowAnimation,
-      showEdgeLabels,
-      handleSelectConnection,
-      (rel) => {
-        setSelectedRelation(rel);
-        setSelectedConnection(null);
-      }
-    );
-  }, [
-    mode,
-    envFilter,
-    envVmIds,
-    selectedFilterGroup,
-    drillGroup,
-    projectVms,
-    envVms,
-    envStatuses,
-    projectStatuses,
-    projectClusters,
-    projectNas,
-    projectRelations,
-    relationFilters,
-    issuesOnly,
-    overlay,
-    query,
-    flowAnimation,
-    showEdgeLabels,
-    handleSelectConnection,
-  ]);
+    return result;
+  }, [projectRelations, projectGroups, projectAssets]);
 
-  const layoutStorageKey = `rpa-topology-layout:v3:${activeProject.id}:${mode}:${envFilter}:${drillGroup ?? "ALL"}`;
+  const dependencyGraph = useMemo(() => dependencyTarget ? traverseDependencies(dependencyTarget, expandedRelations, dependencyMode, dependencyDepth, relationFilters) : { visits: [], relations: [] }, [dependencyTarget, expandedRelations, dependencyMode, dependencyDepth, relationFilters]);
 
-  useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(layoutStorageKey);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && typeof parsed === "object") {
-          setPositionOverrides(parsed);
-          return;
-        }
-      }
-      setPositionOverrides({});
-    } catch {
-      setPositionOverrides({});
+  const semanticGraph = useMemo(() => {
+    if (mode === "dependency") {
+      const visits = dependencyGraph.visits.filter((visit) => catalog.has(visit.id));
+      const visible = new Set(visits.map((visit) => visit.id));
+      const nodes = visits.map((visit) => entityNode(catalog.get(visit.id)!, projectAssets, dependencyTarget ?? undefined, visit.side, visit.depth));
+      const edges = dependencyGraph.relations.filter((relation) => visible.has(relation.sourceEntityId) && visible.has(relation.targetEntityId)).map((relation) => makeEdge(relation, relation.sourceEntityId, relation.targetEntityId, flowAnimation, showLabels));
+      return { nodes, edges };
     }
-  }, [layoutStorageKey]);
-
-  useEffect(() => {
-    try {
-      const savedHandles = window.localStorage.getItem(`rpa-topology-handles:v2:${activeProject.id}`);
-      setEdgeHandleOverrides(savedHandles ? JSON.parse(savedHandles) : {});
-    } catch {
-      setEdgeHandleOverrides({});
-    }
-  }, [activeProject.id]);
-
-  function updateEdgeHandles(edgeId: string, handles: { source?: HandleDirection; target?: HandleDirection }) {
-    setEdgeHandleOverrides((prev) => {
-      const next = { ...prev, [edgeId]: handles };
-      try {
-        window.localStorage.setItem(`rpa-topology-handles:v2:${activeProject.id}`, JSON.stringify(next));
-      } catch {}
-      return next;
-    });
-  }
-
-  // Real-time smooth dragging state with ghost twin preview
-  const [liveNodes, setLiveNodes] = useState<Node<TopologyNodeData>[]>(() =>
-    nodes.map((node) => ({
-      ...node,
-      position: node.position,
-      data: {
-        ...node.data,
-        isEditing: layoutEditMode,
-      },
-    }))
-  );
-
-  useEffect(() => {
-    setLiveNodes(
-      nodes.map((node) => ({
-        ...node,
-        position: positionOverrides[node.id] ?? node.position,
-        data: {
-          ...node.data,
-          isEditing: layoutEditMode,
-        },
-      }))
-    );
-  }, [nodes, positionOverrides, layoutEditMode]);
-
-  const onNodesChange = useCallback((changes: NodeChange[]) => {
-    setLiveNodes((nds) => applyNodeChanges(changes, nds) as Node<TopologyNodeData>[]);
-  }, []);
-
-  function saveNodePosition(nodeId: string, position: { x: number; y: number }) {
-    const snapped = { x: Math.round(position.x / 20) * 20, y: Math.round(position.y / 20) * 20 };
-    setPositionOverrides((current) => {
-      const next = { ...current, [nodeId]: snapped };
-      try {
-        window.localStorage.setItem(layoutStorageKey, JSON.stringify(next));
-      } catch {}
-      return next;
-    });
-  }
-
-  function onNodeDragStop(_: unknown, node: Node) {
-    saveNodePosition(node.id, node.position);
-  }
-
-  const handleSaveAndExitEditMode = useCallback(() => {
-    setPositionOverrides((current) => {
-      const updated: Record<string, { x: number; y: number }> = { ...current };
-      liveNodes.forEach((n) => {
-        if (n.position) {
-          updated[n.id] = {
-            x: Math.round(n.position.x / 20) * 20,
-            y: Math.round(n.position.y / 20) * 20,
-          };
-        }
-      });
-      try {
-        window.localStorage.setItem(layoutStorageKey, JSON.stringify(updated));
-      } catch {}
-      return updated;
-    });
-
-    setLayoutEditMode(false);
-    setToastMessage("✓ 레이아웃 배치 및 연결 관계가 성공적으로 저장되었습니다.");
-    setTimeout(() => setToastMessage(null), 3500);
-  }, [liveNodes, layoutStorageKey]);
-
-  function resetLayout() {
-    if (!confirm("노드 위치 배치를 초기 기본 상태로 되돌리시겠습니까?")) return;
-    try {
-      window.localStorage.removeItem(layoutStorageKey);
-    } catch {}
-    setPositionOverrides({});
-    setCanvasRevision((value) => value + 1);
-    setToastMessage("레이아웃이 기본 위치로 초기화되었습니다.");
-    setTimeout(() => setToastMessage(null), 3000);
-  }
-
-  // Dynamically resolve edge connection handles (4-way) and properties
-  const resolvedEdges = useMemo(() => {
-    const nodeMap = new Map<string, { x: number; y: number; w: number; h: number }>();
-    for (const n of liveNodes) {
-      const w = (n.style?.width as number) || 200;
-      const h = (n.style?.height as number) || 116;
-      nodeMap.set(n.id, { x: n.position.x, y: n.position.y, w, h });
-    }
-
-    return edges.map((e) => {
-      const override = edgeHandleOverrides[e.id];
-      let sourceHandle: string | undefined = override?.source ? override.source : undefined;
-      let targetHandle: string | undefined = override?.target ? override.target : undefined;
-
-      if (!sourceHandle || !targetHandle) {
-        const src = nodeMap.get(e.source);
-        const tgt = nodeMap.get(e.target);
-        const smart = getSmartHandlePair(
-          src,
-          tgt,
-          src ? { w: src.w, h: src.h } : undefined,
-          tgt ? { w: tgt.w, h: tgt.h } : undefined
-        );
-        if (!sourceHandle) sourceHandle = smart.sourceHandle;
-        if (!targetHandle) targetHandle = smart.targetHandle;
-      }
-
-      // Normalize any legacy handle ids
-      if (sourceHandle) sourceHandle = sourceHandle.replace(/-(src|tgt)$/, "");
-      if (targetHandle) targetHandle = targetHandle.replace(/-(src|tgt)$/, "");
-
-      return {
-        ...e,
-        sourceHandle,
-        targetHandle,
-        data: {
-          ...e.data,
-          lineStyle,
-          showLabel: showEdgeLabels,
-        },
+    const entities = overviewEntities(scopeId, projectGroups, projectAssets, projectClusters, projectNas);
+    const visible = new Set(entities.map((item) => item.id));
+    const nodes = entities.map((item) => {
+      const node = entityNode(catalog.get(item.id)!, projectAssets);
+      if (node.data.kind === "group") node.data.onDrillDown = () => {
+        if (groupClickTimer.current) clearTimeout(groupClickTimer.current);
+        setSelectedGroup(null);
+        setScopeId(item.id);
       };
+      return node;
     });
-  }, [liveNodes, edges, edgeHandleOverrides, lineStyle, showEdgeLabels]);
-
-  // Handle in-canvas drag connection
-  const onConnect = useCallback(
-    async (connection: Connection) => {
-      if (!connection.source || !connection.target) return;
-      if (connection.source === connection.target) return;
-
-      const sourceNode = liveNodes.find((n) => n.id === connection.source);
-      const targetNode = liveNodes.find((n) => n.id === connection.target);
-      if (!sourceNode || !targetNode) return;
-
-      let sourceEntityId = connection.source;
-      let sourceLabel = connection.source;
-      const sKind = sourceNode.data.kind;
-
-      if (sKind === "vm" && sourceNode.data.vm) {
-        sourceEntityId = sourceNode.data.vm.id;
-        sourceLabel = sourceNode.data.vm.hostname;
-      } else if (sKind === "cluster" && sourceNode.data.cluster) {
-        sourceEntityId = sourceNode.data.cluster.id;
-        sourceLabel = sourceNode.data.cluster.name;
-      } else if (sKind === "nas" && sourceNode.data.nas) {
-        sourceEntityId = sourceNode.data.nas.id;
-        sourceLabel = sourceNode.data.nas.hostname;
-      } else if (sKind === "group") {
-        sourceEntityId = sourceNode.data.key || sourceNode.id;
-        sourceLabel = sourceNode.data.label;
+    const edgeMap = new Map<string, Edge<TopologyEdgeData>>();
+    for (const relation of projectRelations) {
+      if (relationFilters[relation.relationType] === false) continue;
+      let sources = [nearestVisibleEntity(relation.sourceEntityId, visible, catalog, projectGroups)].filter(Boolean) as string[];
+      const targets = [nearestVisibleEntity(relation.targetEntityId, visible, catalog, projectGroups)].filter(Boolean) as string[];
+      if (scopeId && relation.sourceEntityId === scopeId) sources = nodes.filter((node) => node.data.vm?.role === "AP" || node.data.vm?.assetType === "K8S_WORKLOAD").map((node) => node.id);
+      for (const source of sources) for (const target of targets) if (source !== target) {
+        const key = `${source}:${target}:${relation.relationType}`;
+        if (!edgeMap.has(key)) edgeMap.set(key, makeEdge({ ...relation, id: key }, source, target, flowAnimation, showLabels));
       }
-
-      const sourceEntityType =
-        sKind === "vm"
-          ? "ASSET"
-          : sKind === "cluster"
-            ? "CLUSTER"
-            : sKind === "nas"
-              ? "NAS"
-              : sKind === "group"
-                ? "TOPOLOGY_GROUP"
-                : "EXTERNAL";
-
-      let targetEntityId = connection.target;
-      let targetLabel = connection.target;
-      const tKind = targetNode.data.kind;
-
-      if (tKind === "vm" && targetNode.data.vm) {
-        targetEntityId = targetNode.data.vm.id;
-        targetLabel = targetNode.data.vm.hostname;
-      } else if (tKind === "cluster" && targetNode.data.cluster) {
-        targetEntityId = targetNode.data.cluster.id;
-        targetLabel = targetNode.data.cluster.name;
-      } else if (tKind === "nas" && targetNode.data.nas) {
-        targetEntityId = targetNode.data.nas.id;
-        targetLabel = targetNode.data.nas.hostname;
-      } else if (tKind === "group") {
-        targetEntityId = targetNode.data.key || targetNode.id;
-        targetLabel = targetNode.data.label;
+    }
+    for (const status of projectStatuses) {
+      if (visible.has(status.policy.sourceVmId) && status.policy.targetVmId && visible.has(status.policy.targetVmId)) {
+        const relation: ArchitectureRelation = { id: status.policy.id, projectGroupId: activeProject.id, sourceEntityType: "ASSET", sourceEntityId: status.policy.sourceVmId, targetEntityType: "ASSET", targetEntityId: status.policy.targetVmId, relationType: "SERVICE", protocol: status.policy.protocol, port: status.policy.port };
+        const edge = makeEdge(relation, relation.sourceEntityId, relation.targetEntityId, flowAnimation, showLabels);
+        edge.data = { ...edge.data!, status, relatedStatuses: [status], issueCount: status.overall === "NORMAL" ? 0 : 1, secondary: overlay === "policy" ? status.policy.approvalStatus : `TCP ${status.observation?.tcp ?? "NO_DATA"}` };
+        edgeMap.set(edge.id, edge);
       }
+    }
+    const filteredNodes = nodes.filter((node) => (!issuesOnly || (node.data.issueCount ?? (node.data.vm?.health === "healthy" ? 0 : 1)) > 0) && (!query.trim() || `${node.data.label} ${node.data.vm?.ipAddress ?? ""}`.toLowerCase().includes(query.toLowerCase())));
+    const ids = new Set(filteredNodes.map((node) => node.id));
+    return { nodes: filteredNodes, edges: [...edgeMap.values()].filter((edge) => ids.has(edge.source) && ids.has(edge.target)) };
+  }, [mode, dependencyGraph, catalog, projectAssets, dependencyTarget, scopeId, projectGroups, projectClusters, projectNas, projectRelations, relationFilters, projectStatuses, flowAnimation, showLabels, overlay, issuesOnly, query, activeProject.id]);
 
-      const targetEntityType =
-        tKind === "cluster"
-          ? "CLUSTER"
-          : tKind === "nas"
-            ? "NAS"
-            : tKind === "vm"
-              ? "ASSET"
-              : tKind === "group"
-                ? "TOPOLOGY_GROUP"
-                : "EXTERNAL";
+  const scopeKey = mode === "overview" ? scopeId ?? "root" : `${dependencyTarget ?? "none"}:${dependencyMode}:${dependencyDepth}`;
+  const storageKey = `rpa-topology-layout:v4:${activeProject.id}:${mode}:${scopeKey}`;
+  useEffect(() => { try { setManualPositions(JSON.parse(localStorage.getItem(storageKey) ?? "{}")); } catch { setManualPositions({}); } }, [storageKey]);
+  useEffect(() => { try { setEdgeHandles(JSON.parse(localStorage.getItem(`rpa-topology-handles:v2:${activeProject.id}`) ?? "{}")); } catch { setEdgeHandles({}); } }, [activeProject.id]);
 
-      // Default relation parameters based on target type
-      let relationType: RelationType = "SERVICE";
-      let protocol = "TCP";
-      let port = 8080;
+  useEffect(() => {
+    let cancelled = false; setIsLayouting(true);
+    elkLayoutEngine.layout({ nodes: semanticGraph.nodes, edges: semanticGraph.edges, direction: mode === "dependency" ? "RIGHT" : "DOWN", scopeId: `${scopeKey}:${layoutRevision}` }).then((result) => {
+      if (cancelled) return;
+      setLiveNodes(result.nodes.map((node) => ({ ...node, position: manualPositions[node.id] ?? node.position, data: { ...node.data, isEditing: layoutEdit } })));
+      setLiveEdges(result.edges); setIsLayouting(false);
+      requestAnimationFrame(() => requestAnimationFrame(() => flowInstance.current?.fitView({ padding: mode === "dependency" ? 0.24 : 0.18 })));
+    });
+    return () => { cancelled = true; };
+  }, [semanticGraph, mode, scopeKey, layoutRevision, manualPositions, layoutEdit]);
 
-      if (tKind === "cluster" || targetNode.data.vm?.role === "DB") {
-        relationType = "DATABASE";
-        port = 1433;
-      } else if (tKind === "nas") {
-        relationType = "STORAGE";
-        protocol = "NFS";
-        port = 2049;
-      } else if (targetNode.data.system === "APM" || targetNode.data.domain === "APM") {
-        relationType = "MONITORING";
-        port = 10050;
-      }
+  const onNodesChange = useCallback((changes: NodeChange[]) => setLiveNodes((nodes) => applyNodeChanges(changes, nodes) as Node<TopologyNodeData>[]), []);
+  const savePosition = (node: Node) => { const position = { x: Math.round(node.position.x / 20) * 20, y: Math.round(node.position.y / 20) * 20 }; setManualPositions((current) => { const next = { ...current, [node.id]: position }; localStorage.setItem(storageKey, JSON.stringify(next)); return next; }); };
+  const autoLayout = () => { localStorage.removeItem(storageKey); setManualPositions({}); setLayoutRevision((value) => value + 1); };
+  const updateHandles = (id: string, value: { source?: HandleDirection; target?: HandleDirection }) => setEdgeHandles((current) => { const next = { ...current, [id]: value }; localStorage.setItem(`rpa-topology-handles:v2:${activeProject.id}`, JSON.stringify(next)); return next; });
+  const resolvedEdges = useMemo(() => liveEdges.map((edge) => ({ ...edge, sourceHandle: `${edgeHandles[edge.id]?.source ?? (mode === "dependency" ? "r" : "b")}-src`, targetHandle: `${edgeHandles[edge.id]?.target ?? (mode === "dependency" ? "l" : "t")}-tgt`, data: { ...edge.data!, showLabel: showLabels, flowActive: flowAnimation } })), [liveEdges, edgeHandles, mode, showLabels, flowAnimation]);
 
-      const newRelation: ArchitectureRelation = {
-        id: `rel-${Date.now().toString(36)}`,
-        projectGroupId: activeProject.id,
-        sourceEntityId,
-        sourceEntityType: sourceEntityType as any,
-        targetEntityId,
-        targetEntityType: targetEntityType as any,
-        relationType,
-        protocol,
-        port,
-        description: `${sourceLabel} → ${targetLabel} 연결 (${mode === "overview" ? "오버뷰" : "자산"})`,
-      };
+  const selectEntity = (id: string, dependencyDrawer = false) => {
+    const entity = catalog.get(id); if (!entity) return; setSelectedEntityId(id);
+    if (dependencyDrawer) { setDependencyDrawerEntity(entity); return; }
+    if (entity.asset) setSelectedVm(entity.asset); else if (entity.cluster) setSelectedCluster(entity.cluster); else if (entity.nas) setSelectedNas(entity.nas); else if (entity.group) { const members = groupAssets(entity.group, projectAssets); setSelectedGroup({ groupName: entity.label, groupType: entity.group.groupType, environment: entity.group.environment, domain: entity.group.domain, system: entity.group.system, description: entity.group.description, assets: members, statuses: projectStatuses.filter((status) => members.some((asset) => asset.id === status.policy.sourceVmId || asset.id === status.policy.targetVmId)), software, sops }); }
+  };
+  const handleNodeClick = (id: string) => {
+    const entity = catalog.get(id);
+    if (mode === "overview" && entity?.group) {
+      setSelectedEntityId(id);
+      if (groupClickTimer.current) clearTimeout(groupClickTimer.current);
+      groupClickTimer.current = setTimeout(() => selectEntity(id), 240);
+      return;
+    }
+    selectEntity(id, mode === "dependency");
+  };
+  const handleNodeDoubleClick = (id: string) => {
+    if (groupClickTimer.current) clearTimeout(groupClickTimer.current);
+    if (mode === "overview" && catalog.get(id)?.group) {
+      setSelectedGroup(null);
+      setScopeId(id);
+    }
+  };
+  const openDependency = (id: string) => { const entity = catalog.get(id); setDependencyTarget(id); setDependencyQuery(entity?.label ?? id); setMode("dependency"); setSelectedGroup(null); setSelectedVm(null); setSelectedCluster(null); setSelectedNas(null); };
+  const chooseDependencyQuery = (value: string) => { setDependencyQuery(value); const q = value.trim().toLowerCase(); const hit = searchableEntities.find((item) => item.id === value || item.label.toLowerCase() === q) ?? searchableEntities.find((item) => item.aliases.some((alias) => alias.toLowerCase().includes(q))); if (hit) setDependencyTarget(hit.id); };
+  const crumbs = breadcrumbFor(scopeId, projectGroups);
+  const impactedIds = dependencyGraph.visits.filter((visit) => visit.side === "impact").map((visit) => visit.id);
+  const impactedAssets = [...new Map(impactedIds.flatMap((id) => { const entity = catalog.get(id); return entity?.asset ? [entity.asset] : entity?.group ? groupAssets(entity.group, projectAssets) : entity?.cluster ? entity.cluster.members.map((member) => projectAssets.find((asset) => asset.id === member.assetId)).filter(Boolean) as Asset[] : []; }).map((asset) => [asset.id, asset])).values()];
+  const impactSummary = { direct: dependencyGraph.visits.filter((visit) => visit.side === "impact" && visit.depth === 1).length, total: new Set(impactedIds).size, critical: impactedAssets.filter((asset) => asset.criticality === "CRITICAL").length, systems: new Set(impactedAssets.map((asset) => asset.system).filter(Boolean)).size, policies: projectStatuses.filter((status) => impactedAssets.some((asset) => asset.id === status.policy.sourceVmId || asset.id === status.policy.targetVmId)).length, failed: projectStatuses.filter((status) => status.overall !== "NORMAL" && impactedAssets.some((asset) => asset.id === status.policy.sourceVmId || asset.id === status.policy.targetVmId)).length, sops: sops.filter((sop) => sop.relatedVmIds.some((id) => impactedAssets.some((asset) => asset.id === id))).length, eosl: software.filter((item) => impactedAssets.some((asset) => asset.id === item.vmId) && item.eoslDate && new Date(item.eoslDate).getTime() < Date.now()).length };
 
-      // 1. Create in management repository
-      await managementRepo.createRelation(newRelation);
+  const onConnect = async (connection: Connection) => {
+    if (!connection.source || !connection.target || connection.source === connection.target) return;
+    const source = catalog.get(connection.source); const target = catalog.get(connection.target); if (!source || !target) return;
+    const relation: ArchitectureRelation = { id: `rel-${Date.now().toString(36)}`, projectGroupId: activeProject.id, sourceEntityType: source.kind === "group" ? "TOPOLOGY_GROUP" : source.kind === "cluster" ? "CLUSTER" : "ASSET", sourceEntityId: source.id, targetEntityType: target.kind === "group" ? "TOPOLOGY_GROUP" : target.kind === "cluster" ? "CLUSTER" : target.kind === "nas" ? "NAS" : "ASSET", targetEntityId: target.id, relationType: target.kind === "cluster" || target.kind === "dbaas" ? "DATABASE" : target.kind === "nas" ? "STORAGE" : "SERVICE", protocol: target.kind === "nas" ? "NFS" : "TCP", port: target.kind === "cluster" ? 1433 : target.kind === "nas" ? 2049 : 8080 };
+    await managementRepo.createRelation(relation); setCurrentRelations((items) => [relation, ...items]); updateHandles(relation.id, { source: (connection.sourceHandle?.replace("-src", "") as HandleDirection) ?? "r", target: (connection.targetHandle?.replace("-tgt", "") as HandleDirection) ?? "l" });
+  };
 
-      // 2. Persist handle overrides for this connection
-      const cleanSrc = (connection.sourceHandle?.replace(/-(src|tgt)$/, "") || "r") as HandleDirection;
-      const cleanTgt = (connection.targetHandle?.replace(/-(src|tgt)$/, "") || "l") as HandleDirection;
-      updateEdgeHandles(newRelation.id, { source: cleanSrc, target: cleanTgt });
-
-      // 3. Update local relations state
-      setCurrentRelations((prev) => [newRelation, ...prev.filter((r) => r.id !== newRelation.id)]);
-
-      // 4. Show success feedback
-      setToastMessage(`✓ ${sourceLabel} → ${targetLabel} 연결 관계가 등록되었습니다. (관리 > 연결 관계에 자동 반영됨)`);
-      setTimeout(() => setToastMessage(null), 4000);
-    },
-    [liveNodes, activeProject.id, mode]
-  );
-
-  return (
-    <div className="space-y-2">
-      {/* Top Banner: Multi-Relation Filter Toggles */}
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-[10px]">
-        <div className="flex items-center gap-2">
-          <span className="font-semibold text-[var(--muted)]">연결 유형 필터:</span>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {(["SERVICE", "DATABASE", "STORAGE", "MONITORING", "MANAGEMENT"] as const).map((rt) => (
-              <label
-                key={rt}
-                className="flex cursor-pointer items-center gap-1 rounded border border-[var(--border)] bg-[var(--surface-2)] px-2 py-0.5 text-[9px] hover:border-[var(--border-strong)]"
-              >
-                <input
-                  type="checkbox"
-                  checked={relationFilters[rt] !== false}
-                  onChange={(e) =>
-                    setRelationFilters((prev) => ({
-                      ...prev,
-                      [rt]: e.target.checked,
-                    }))
-                  }
-                  className="rounded h-3 w-3 accent-[#5750f1]"
-                />
-                <span className={relationFilters[rt] ? "font-medium text-[var(--foreground)]" : "text-[var(--muted)]"}>
-                  {rt.charAt(0) + rt.slice(1).toLowerCase()}
-                </span>
-              </label>
-            ))}
-          </div>
-        </div>
+  return <div className="space-y-2">
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2 text-[10px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-0.5">{(["overview", "dependency"] as ViewMode[]).map((view) => <button key={view} type="button" onClick={() => setMode(view)} className={`h-6 rounded px-2.5 text-[9px] font-semibold ${mode === view ? "bg-[var(--surface)] shadow-sm" : "text-[var(--muted)]"}`}>{view === "overview" ? "Overview" : "Dependency"}</button>)}</div>
+        {mode === "overview" ? <><label className="flex items-center gap-1 text-[var(--muted)]">Project <span className="rounded border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1 text-[var(--foreground)]">{activeProject.name}</span></label><label className="flex items-center gap-1 text-[var(--muted)]">Environment <select value={environment} onChange={(event) => { setEnvironment(event.target.value); setScopeId(null); }} className="h-7 rounded border border-[var(--border)] bg-[var(--surface)] px-2"><option>ALL</option><option>PROD</option><option>QA</option><option>DEV</option></select></label></> : <><label className="flex items-center gap-1 text-[var(--muted)]">Target <span className="flex h-7 w-56 items-center gap-1 rounded border border-[var(--border)] px-2"><SearchIcon className="h-3 w-3" /><input list="dependency-targets" value={dependencyQuery} onChange={(event) => chooseDependencyQuery(event.target.value)} className="w-full bg-transparent outline-none" placeholder="Search asset / cluster / group..." /><datalist id="dependency-targets">{searchableEntities.map((item) => <option key={item.id} value={item.label}>{item.id}</option>)}</datalist></span></label><Segment values={["impact", "dependencies", "both"]} value={dependencyMode} onChange={(value) => setDependencyMode(value as DependencyMode)} /><Segment values={["1", "2", "3", "all"]} value={String(dependencyDepth)} onChange={(value) => setDependencyDepth(value === "all" ? "all" : Number(value) as 1 | 2 | 3)} /></>}
       </div>
-
-      {/* Main Filter & Action Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2">
-        {/* Left: View Mode Segment + Sub-selectors */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Summary and individual assets */}
-          <div className="flex rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-0.5">
-            {(["overview", "asset"] as ViewMode[]).map((v) => (
-              <button
-                key={v}
-                onClick={() => {
-                  setMode(v);
-                }}
-                className={`h-6 rounded px-2.5 text-[9px] font-medium transition capitalize ${
-                  mode === v ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm font-bold" : "text-[var(--muted)]"
-                }`}
-              >
-                {v === "overview" ? "오버뷰" : "전체보기"}
-              </button>
-            ))}
-          </div>
-
-          <label className="flex items-center gap-1 text-[10px] text-[var(--muted)]">
-            그룹:
-            <select
-              aria-label="그룹"
-              value={selectedFilterGroup?.id ?? "ALL"}
-              onChange={(e) => setDrillGroup(e.target.value === "ALL" ? null : e.target.value)}
-              className="h-7 max-w-48 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[9.5px]"
-            >
-              <option value="ALL">전체 그룹</option>
-              {availableGroups.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          {/* Environment Filter */}
-          <div className="flex items-center gap-1 text-[10px] text-[var(--muted)]">
-            <span>환경:</span>
-            <select
-              aria-label="환경"
-              value={envFilter}
-              onChange={(e) => setEnvFilter(e.target.value)}
-              className="h-7 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[9.5px] outline-none"
-            >
-              <option value="ALL">ALL</option>
-              <option value="PROD">PROD</option>
-              <option value="QA">QA</option>
-              <option value="DEV">DEV</option>
-            </select>
-          </div>
-
-          {/* Overlay Mode */}
-          <div className="flex rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-0.5">
-            <button
-              onClick={() => setOverlay("policy")}
-              className={`h-6 rounded px-2 text-[9px] font-medium ${
-                overlay === "policy" ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]"
-              }`}
-            >
-              정책 (Policy)
-            </button>
-            <button
-              onClick={() => setOverlay("live")}
-              className={`h-6 rounded px-2 text-[9px] font-medium ${
-                overlay === "live" ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]"
-              }`}
-            >
-              실측 프로브 (Actual)
-            </button>
-          </div>
-        </div>
-
-        {/* Right: Search, Toggles, Actions */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Probe Flow Animation */}
-          <button
-            onClick={() => setFlowAnimation((v) => !v)}
-            className={`flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[9px] font-medium transition ${
-              flowAnimation
-                ? "border-[#5750f1] bg-[#5750f1]/10 text-[#5750f1]"
-                : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]"
-            }`}
-          >
-            <span className={`h-1.5 w-1.5 rounded-full ${flowAnimation ? "bg-[#5750f1]" : "bg-[var(--muted)]"}`} />
-            <span>프로브 플로우</span>
-          </button>
-
-          {/* Labels Toggle */}
-          <button
-            onClick={() => setShowEdgeLabels((v) => !v)}
-            className={`flex h-7 items-center gap-1.5 rounded-md border px-2 text-[9px] font-medium transition ${
-              showEdgeLabels
-                ? "border-[#5750f1] bg-[#5750f1]/10 text-[#5750f1]"
-                : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]"
-            }`}
-          >
-            <span>라벨: {showEdgeLabels ? "ON" : "OFF"}</span>
-          </button>
-
-          {/* Edit Mode Toggle with prominent styling */}
-          <button
-            aria-pressed={layoutEditMode}
-            onClick={() => {
-              if (layoutEditMode) {
-                handleSaveAndExitEditMode();
-              } else {
-                setLayoutEditMode(true);
-              }
-            }}
-            className={`flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[9px] font-semibold transition ${
-              layoutEditMode
-                ? "bg-[#5750f1] text-white shadow-sm ring-2 ring-[#5750f1]/30 hover:bg-[#463fc9]"
-                : "border border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)] hover:border-[#5750f1]"
-            }`}
-          >
-            <span className={`h-2 w-2 rounded-full ${layoutEditMode ? "bg-white animate-pulse" : "bg-[var(--muted)]"}`} />
-            <span>{layoutEditMode ? "편집 완료 (저장)" : "레이아웃 & 선 연결 편집"}</span>
-          </button>
-
-          <button onClick={resetLayout} className="h-7 rounded-md border border-[var(--border)] px-2 text-[9px] hover:bg-[var(--surface-2)]">
-            자동 배치
-          </button>
-          <button
-            onClick={() => setLineStyle((v) => (v === "bezier" ? "smoothstep" : "bezier"))}
-            className="h-7 rounded-md border border-[var(--border)] px-2 text-[9px] hover:bg-[var(--surface-2)]"
-          >
-            {lineStyle === "bezier" ? "곡선 연결" : "직각 연결"}
-          </button>
-
-          {/* Search */}
-          <div className="flex h-7 w-[180px] items-center gap-1.5 rounded-md border border-[var(--border)] px-2">
-            <SearchIcon className="h-3 w-3 shrink-0 text-[var(--muted)]" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className="w-full bg-transparent text-[9px] outline-none"
-              placeholder="호스트명, IP, 포트 검색..."
-            />
-          </div>
-
-          {/* Issues Only */}
-          <label className="flex h-7 cursor-pointer items-center gap-1.5 rounded-md border border-[var(--border)] px-2 text-[9px]">
-            <input
-              type="checkbox"
-              checked={issuesOnly}
-              onChange={(e) => setIssuesOnly(e.target.checked)}
-              className="rounded h-3 w-3 accent-[#5750f1]"
-            />
-            <span>이슈 항목만</span>
-          </label>
-        </div>
-      </div>
-
-      {/* Canvas Area */}
-      <div className="relative h-[calc(100vh-235px)] min-h-[500px] rounded-lg border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
-        {/* Floating Edit Mode Banner */}
-        {layoutEditMode && (
-          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2.5 rounded-lg border border-[#5750f1] bg-[var(--surface)]/95 px-3.5 py-1.5 shadow-lg backdrop-blur-sm text-[10px]">
-            <span className="flex h-2 w-2 rounded-full bg-[#5750f1] animate-ping" />
-            <span className="font-bold text-[#5750f1]">편집 모드 활성화</span>
-            <span className="text-[var(--muted)]">
-              • 노드 본체를 드래그하여 배치 이동 | • 노드 둘레의 <b>보라색 점</b>을 마우스로 끌어서 다른 노드로 선 연결
-            </span>
-            <button
-              onClick={handleSaveAndExitEditMode}
-              className="ml-2 rounded bg-[#5750f1] px-2.5 py-1 text-[9px] font-semibold text-white shadow-sm hover:bg-[#463fc9] transition"
-            >
-              편집 완료 및 저장
-            </button>
-          </div>
-        )}
-
-        {/* Floating Action Toast Notification */}
-        {toastMessage && (
-          <div className="pointer-events-none absolute top-12 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-[var(--surface)] px-4 py-2 text-[11px] font-medium text-emerald-700 shadow-xl backdrop-blur-sm dark:text-emerald-300">
-            <span className="flex h-2 w-2 rounded-full bg-emerald-500" />
-            <span>{toastMessage}</span>
-          </div>
-        )}
-
-        <ReactFlow
-          key={`${mode}-${envFilter}-${drillGroup}-${activeProject.id}-${canvasRevision}`}
-          nodes={liveNodes}
-          edges={resolvedEdges}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          fitView
-          fitViewOptions={{ padding: 0.18 }}
-          minZoom={0.2}
-          maxZoom={1.6}
-          nodesDraggable={layoutEditMode}
-          nodesConnectable={layoutEditMode}
-          connectionMode={ConnectionMode.Loose}
-          connectionLineType={lineStyle === "bezier" ? ConnectionLineType.Bezier : ConnectionLineType.SmoothStep}
-          connectionLineStyle={{
-            stroke: "#5750f1",
-            strokeWidth: 2.5,
-            strokeDasharray: "5 5",
-          }}
-          snapToGrid
-          snapGrid={[20, 20]}
-          onNodeDragStop={onNodeDragStop}
-          onNodesChange={onNodesChange}
-          onConnect={onConnect}
-          onNodeClick={(_, node) => {
-            const d = node.data as TopologyNodeData;
-            if (d.vm) {
-              setSelectedVm(d.vm);
-            } else if (d.cluster) {
-              setSelectedCluster(d.cluster);
-            } else if (d.nas) {
-              setSelectedNas(d.nas);
-            } else if (d.kind === "group" || d.kind === "external") {
-              const groupAssets = envVms.filter((v) => {
-                if (d.environment && v.environment !== d.environment) return false;
-                if (d.domain) return v.domain === d.domain;
-                if (d.system) return v.system === d.system;
-                if (d.environment) return v.environment === d.environment;
-                return v.service === d.key || v.zone === d.key;
-              });
-              const groupStatuses = projectStatuses.filter((s) => {
-                return groupAssets.some(
-                  (a) => a.id === s.policy.sourceVmId || a.id === s.policy.targetVmId
-                );
-              });
-              setSelectedGroup({
-                groupName: d.label,
-                groupType: d.groupType,
-                environment: d.environment,
-                domain: d.domain,
-                system: d.system,
-                description: d.description,
-                assets: groupAssets,
-                statuses: groupStatuses,
-                software,
-                sops,
-              });
-            }
-          }}
-          onNodeDoubleClick={(_, node) => {
-            const d = node.data as TopologyNodeData;
-            if (d.kind === "group") {
-              setMode("asset");
-              setDrillGroup(
-                availableGroups.find((g) => (d.domain && g.domain === d.domain) || (d.system && g.system === d.system))?.id ?? null
-              );
-              if (d.environment) setEnvFilter(d.environment);
-              setSelectedGroup(null);
-            }
-          }}
-          onEdgeClick={(_, edge) => {
-            const d = edge.data as TopologyEdgeData;
-            setSelectedEdgeId(edge.id);
-            if (d?.status) {
-              setSelectedConnection(d.status);
-              setSelectedRelatedStatuses(d.relatedStatuses ?? [d.status]);
-              setSelectedRelation(null);
-            } else {
-              const matchingRel = currentRelations.find((r) => r.id === edge.id);
-              if (matchingRel) {
-                setSelectedRelation(matchingRel);
-                setSelectedConnection(null);
-              }
-            }
-          }}
-        >
-          <Background gap={20} size={1} color="var(--border)" />
-          <Controls showInteractive={false} />
-          <MiniMap
-            pannable
-            zoomable
-            nodeColor={(n) => {
-              if (n.type === "cluster") return "#a855f7";
-              if (n.type === "nas") return "#0ea5e9";
-              const d = n.data as TopologyNodeData;
-              if ((d.issueCount ?? 0) > 0 || d?.vm?.health === "critical") return "#f04438";
-              if (d?.vm?.health === "warning") return "#f79009";
-              return "#5750f1";
-            }}
-            className="!border-[var(--border)] !bg-[var(--surface)] shadow-md"
-          />
-        </ReactFlow>
-
-        {nodes.length === 0 && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-[var(--muted)]">
-            선택한 환경·그룹에 표시할 자산이 없습니다.
-          </div>
-        )}
-
-        {/* Legend Overlay at bottom center */}
-        <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 max-w-[90vw] rounded-md border border-[var(--border)] bg-[var(--surface)]/95 px-3 py-1.5 text-center text-[8px] text-[var(--muted)] shadow-sm backdrop-blur-sm">
-          <div>
-            <b className="text-[var(--foreground)]">선언 정책 (Should Be)</b> vs.{" "}
-            <b className="text-[var(--foreground)]">Telegraf TCP 프로브 (Actual)</b>
-          </div>
-          <div className="mt-0.5 text-[7.5px]">
-            클릭 → 상세 확인 · 더블클릭 → 그룹 전체보기 · 레이아웃 &amp; 선 연결 편집 → 노드 이동 및 점 드래그로 선 연결 (연결 관계 자동 등록)
-          </div>
-        </div>
-      </div>
-
-      {/* Slide Drawers (All sliding in from the right: right-0, width 460px) */}
-      <GroupDrawer
-        data={selectedGroup}
-        open={!!selectedGroup}
-        onClose={() => setSelectedGroup(null)}
-        onSelectAsset={(asset) => {
-          setSelectedVm(asset);
-        }}
-        onDrillDown={(groupName) => {
-          setMode("asset");
-          setDrillGroup(
-            availableGroups.find(
-              (g) =>
-                g.name === groupName ||
-                (!!g.domain && g.domain === selectedGroup?.domain) ||
-                (!!g.system && g.system === selectedGroup?.system)
-            )?.id ?? null
-          );
-          if (selectedGroup?.environment) setEnvFilter(selectedGroup.environment);
-          setSelectedGroup(null);
-        }}
-      />
-      <VmDrawer
-        vm={selectedVm}
-        network={projectStatuses}
-        software={software}
-        sops={sops}
-        open={!!selectedVm}
-        onClose={() => setSelectedVm(null)}
-        onSelectSoftware={(sw) => {
-          const matched = matchLegacySoftwareRelease(sw, softwareProducts, softwareReleases);
-          if (matched) setSelectedRelease(matched);
-        }}
-      />
-      <ConnectionDrawer
-        sourceHandle={edgeHandleOverrides[selectedEdgeId ?? ""]?.source}
-        targetHandle={edgeHandleOverrides[selectedEdgeId ?? ""]?.target}
-        onUpdateHandles={(handles) => {
-          if (selectedEdgeId) updateEdgeHandles(selectedEdgeId, handles);
-        }}
-        status={selectedConnection}
-        relatedStatuses={selectedRelatedStatuses}
-        open={!!selectedConnection}
-        onClose={() => {
-          setSelectedConnection(null);
-          setSelectedEdgeId(null);
-          setSelectedRelatedStatuses([]);
-        }}
-      />
-      <ClusterDrawer
-        cluster={selectedCluster}
-        open={!!selectedCluster}
-        onClose={() => setSelectedCluster(null)}
-      />
-      <NasDrawer
-        nas={selectedNas}
-        open={!!selectedNas}
-        onClose={() => setSelectedNas(null)}
-        onSelectVm={(hostname) => {
-          const hit = projectVms.find((v) => v.hostname === hostname);
-          if (hit) {
-            setSelectedNas(null);
-            setSelectedVm(hit);
-          }
-        }}
-      />
-      <SoftwareDetailDrawer
-        release={selectedRelease}
-        open={!!selectedRelease}
-        onClose={() => setSelectedRelease(null)}
-      />
-
-      {/* SlideDrawer for Architecture Relations created in-canvas */}
-      <SlideDrawer
-        open={!!selectedRelation}
-        onClose={() => setSelectedRelation(null)}
-        title="아키텍처 연결 관계"
-        subtitle={`${selectedRelation?.protocol || "TCP"}/${selectedRelation?.port || 8080} · ${selectedRelation?.relationType ?? ""}`}
-        width={460}
-      >
-        {selectedRelation && (
-          <div className="p-4 space-y-4 text-[10px]">
-            <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
-              <div>
-                <div className="text-[9px] text-[var(--muted)]">연결 ID</div>
-                <div className="font-mono font-semibold text-[var(--foreground)]">{selectedRelation.id}</div>
-              </div>
-              <span className="rounded bg-purple-500/15 px-2 py-0.5 font-mono text-[9px] font-bold text-purple-700 dark:text-purple-300">
-                {selectedRelation.relationType}
-              </span>
-            </div>
-
-            <div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-2.5 space-y-2">
-              <div className="font-semibold text-[var(--foreground)]">연결 엔티티 정보</div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <div className="text-[9px] text-[var(--muted)]">출발지 (Source)</div>
-                  <div className="font-mono font-bold text-[var(--foreground)]">{selectedRelation.sourceEntityId}</div>
-                  <div className="text-[8.5px] text-[var(--muted)]">유형: {selectedRelation.sourceEntityType}</div>
-                </div>
-                <div>
-                  <div className="text-[9px] text-[var(--muted)]">목적지 (Target)</div>
-                  <div className="font-mono font-bold text-[var(--foreground)]">{selectedRelation.targetEntityId}</div>
-                  <div className="text-[8.5px] text-[var(--muted)]">유형: {selectedRelation.targetEntityType}</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <div className="text-[9px] text-[var(--muted)]">프로토콜</div>
-                <div className="font-mono font-semibold">{selectedRelation.protocol || "TCP"}</div>
-              </div>
-              <div>
-                <div className="text-[9px] text-[var(--muted)]">포트</div>
-                <div className="font-mono font-semibold">{selectedRelation.port || "-"}</div>
-              </div>
-            </div>
-
-            {selectedRelation.description && (
-              <div>
-                <div className="text-[9px] text-[var(--muted)]">설명</div>
-                <div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-2 text-[var(--foreground)]">
-                  {selectedRelation.description}
-                </div>
-              </div>
-            )}
-
-            <div className="rounded-md border border-emerald-500/20 bg-emerald-50/50 p-2 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
-              ✓ 이 연결은 관리 &gt; 아키텍처 연결 관계 레지스트리에 영구 등록되어 있습니다.
-            </div>
-
-            <div className="flex items-center justify-between border-t border-[var(--border)] pt-3">
-              <a
-                href="/management/relations"
-                className="text-[10px] text-[#5750f1] font-semibold hover:underline"
-              >
-                관리 메뉴에서 전체 보기 →
-              </a>
-              <button
-                type="button"
-                onClick={async () => {
-                  if (!confirm("정말 이 연결 관계를 삭제하시겠습니까?")) return;
-                  await managementRepo.deleteRelation(selectedRelation.id);
-                  setCurrentRelations((prev) => prev.filter((r) => r.id !== selectedRelation.id));
-                  setSelectedRelation(null);
-                  setToastMessage("연결 관계가 삭제되었습니다.");
-                  setTimeout(() => setToastMessage(null), 3000);
-                }}
-                className="rounded border border-rose-500/40 px-3 py-1 text-[10px] font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950 transition"
-              >
-                연결 관계 삭제
-              </button>
-            </div>
-          </div>
-        )}
-      </SlideDrawer>
+      <div className="flex flex-wrap items-center gap-1.5"><button type="button" onClick={() => setOverlay((value) => value === "policy" ? "live" : "policy")} className="h-7 rounded border border-[var(--border)] px-2">{overlay === "policy" ? "Policy" : "Actual"}</button><Toggle label="Flow" active={flowAnimation} onClick={() => setFlowAnimation((v) => !v)} /><Toggle label="Labels" active={showLabels} onClick={() => setShowLabels((v) => !v)} /><Toggle label="Edit Layout" active={layoutEdit} onClick={() => setLayoutEdit((v) => !v)} /><button type="button" onClick={autoLayout} className="h-7 rounded border border-[var(--border)] px-2">Auto Layout</button>{selectedEntityId && <button type="button" onClick={() => openDependency(selectedEntityId)} className="h-7 rounded border border-[#5750f1]/40 px-2 text-[#5750f1]">View Dependency</button>}</div>
     </div>
-  );
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-[9px]"><div className="flex flex-wrap gap-1">{(Object.keys(relationFilters) as RelationType[]).map((type) => <label key={type} className="flex items-center gap-1 rounded border border-[var(--border)] bg-[var(--surface-2)] px-1.5 py-0.5"><input type="checkbox" checked={relationFilters[type]} onChange={(event) => setRelationFilters((current) => ({ ...current, [type]: event.target.checked }))} className="h-3 w-3 accent-[#5750f1]" />{type}</label>)}</div>{mode === "overview" && <div className="flex items-center gap-2"><button type="button" onClick={() => setScopeId(null)} className="text-[var(--muted)] hover:text-[#5750f1]">{activeProject.name}</button>{crumbs.map((group) => <span key={group.id} className="flex items-center gap-2"><span>›</span><button type="button" onClick={() => setScopeId(group.id)} className="font-semibold hover:text-[#5750f1]">{group.name}</button></span>)}{scopeId && <button type="button" onClick={() => setScopeId(crumbs.at(-2)?.id ?? null)} className="rounded border border-[var(--border)] px-2 py-0.5">Back</button>}<span className="flex h-6 w-44 items-center gap-1 rounded border border-[var(--border)] px-2"><SearchIcon className="h-3 w-3" /><input value={query} onChange={(event) => setQuery(event.target.value)} className="w-full bg-transparent outline-none" placeholder="hostname / IP" /></span><label className="flex items-center gap-1"><input type="checkbox" checked={issuesOnly} onChange={(event) => setIssuesOnly(event.target.checked)} />Issues only</label></div>}</div>
+    {mode === "dependency" && <ImpactSummary values={impactSummary} />}
+    <div className="relative h-[calc(100vh-260px)] min-h-[510px] overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+      {isLayouting && <div className="absolute right-3 top-3 z-30 rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[9px] text-[var(--muted)] shadow">Calculating layout...</div>}
+      <ReactFlow key={`${mode}:${scopeKey}:${layoutRevision}`} nodes={liveNodes} edges={resolvedEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} fitView fitViewOptions={{ padding: mode === "dependency" ? 0.24 : 0.18 }} minZoom={0.2} maxZoom={1.6} nodesDraggable={layoutEdit} nodesConnectable={layoutEdit} connectionMode={ConnectionMode.Loose} connectionLineType={ConnectionLineType.SmoothStep} snapToGrid snapGrid={[20, 20]} onInit={(instance) => { flowInstance.current = instance as unknown as typeof flowInstance.current; }} onNodesChange={onNodesChange} onNodeDragStop={(_, node) => savePosition(node)} onConnect={onConnect} onNodeClick={(event, node) => { if (event.detail === 2) handleNodeDoubleClick(node.id); else handleNodeClick(node.id); }} onNodeDoubleClick={(_, node) => handleNodeDoubleClick(node.id)} onEdgeClick={(_, edge) => { const status = edge.data?.status as NetworkStatus | undefined; if (status) { setSelectedEdgeId(edge.id); setSelectedConnection(status); } }}>
+        <Background gap={20} size={1} color="var(--border)" /><Controls showInteractive={false} /><MiniMap pannable zoomable className="!border-[var(--border)] !bg-[var(--surface)]" nodeColor={(node) => node.data.selectedTarget ? "#5750f1" : node.type === "cluster" ? "#a855f7" : node.type === "nas" ? "#0ea5e9" : "#98a2b3"} />
+      </ReactFlow>
+      {!isLayouting && liveNodes.length === 0 && <div className="absolute inset-0 flex items-center justify-center text-xs text-[var(--muted)]">현재 범위와 필터에 표시할 관계가 없습니다.</div>}
+      <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded border border-[var(--border)] bg-[var(--surface)]/95 px-3 py-1 text-[8px] text-[var(--muted)] shadow">Policy (Should Be) · Actual (TCP Probe) · double-click Group to drill down · 20px Grid Snap</div>
+    </div>
+    <GroupDrawer data={selectedGroup} open={!!selectedGroup} onClose={() => setSelectedGroup(null)} onSelectAsset={(asset) => setSelectedVm(asset)} onDrillDown={() => { if (selectedEntityId) setScopeId(selectedEntityId); setSelectedGroup(null); }} />
+    <VmDrawer vm={selectedVm} network={projectStatuses} software={software} sops={sops} open={!!selectedVm} onClose={() => setSelectedVm(null)} onSelectSoftware={(item) => { const release = matchLegacySoftwareRelease(item, softwareProducts, softwareReleases); if (release) setSelectedRelease(release); }} />
+    <ConnectionDrawer sourceHandle={edgeHandles[selectedEdgeId ?? ""]?.source} targetHandle={edgeHandles[selectedEdgeId ?? ""]?.target} onUpdateHandles={(value) => selectedEdgeId && updateHandles(selectedEdgeId, value)} status={selectedConnection} relatedStatuses={selectedConnection ? [selectedConnection] : []} open={!!selectedConnection} onClose={() => setSelectedConnection(null)} />
+    <ClusterDrawer cluster={selectedCluster} open={!!selectedCluster} onClose={() => setSelectedCluster(null)} /><NasDrawer nas={selectedNas} open={!!selectedNas} onClose={() => setSelectedNas(null)} onSelectVm={(hostname) => setSelectedVm(projectAssets.find((item) => item.hostname === hostname) ?? null)} /><SoftwareDetailDrawer release={selectedRelease} open={!!selectedRelease} onClose={() => setSelectedRelease(null)} />
+    <DependencyDrawer entity={dependencyDrawerEntity} open={!!dependencyDrawerEntity} onClose={() => setDependencyDrawerEntity(null)} visits={dependencyGraph.visits} catalog={catalog} statuses={projectStatuses} software={software} sops={sops} assets={projectAssets} />
+  </div>;
 }
 
-// -------------------------------------------------------------
-// BUILD 1: OVERVIEW ARCHITECTURE (Executive single-screen view)
-// -------------------------------------------------------------
-function buildOverview(
-  vms: Asset[],
-  statuses: NetworkStatus[],
-  relations: ArchitectureRelation[],
-  relationFilters: Record<string, boolean>,
-  issuesOnly: boolean,
-  overlay: OverlayMode,
-  query: string,
-  flowActive: boolean,
-  showLabels: boolean,
-  onSelectConnection: (id: string, s: NetworkStatus, all: NetworkStatus[]) => void,
-  onSelectRelation?: (r: ArchitectureRelation) => void
-) {
-  const q = query.trim().toLowerCase();
-  if (q) {
-    vms = vms.filter((v) =>
-      `${v.hostname} ${v.ipAddress} ${v.service} ${v.domain ?? ""}`.toLowerCase().includes(q)
-    );
-  }
-  // Aggregate entities for the overview canvas
-  const portalAssets = vms.filter((v) => v.system === "RPA Portal" || v.domain === "PORTAL");
-  const memProdAssets = vms.filter((v) => v.domain === "MEMORY" && v.environment === "PROD");
-  const fndProdAssets = vms.filter((v) => v.domain === "FOUNDRY" && v.environment === "PROD");
-  const comProdAssets = vms.filter((v) => v.domain === "COMMON" && v.environment === "PROD");
-  const qaAssets = vms.filter((v) => v.environment === "QA");
-  const devAssets = vms.filter((v) => v.environment === "DEV");
-  const apmAssets = vms.filter((v) => v.system === "APM" || v.domain === "APM");
-  const commonFuncAssets = vms.filter((v) => v.system === "Common Function" || v.domain === "COMMON_FUNCTION");
+function Segment({ values, value, onChange }: { values: string[]; value: string; onChange: (value: string) => void }) { return <div className="flex rounded border border-[var(--border)] bg-[var(--surface-2)] p-0.5">{values.map((item) => <button type="button" key={item} onClick={() => onChange(item)} className={`h-6 rounded px-2 text-[8px] capitalize ${value === item ? "bg-[var(--surface)] font-semibold shadow-sm" : "text-[var(--muted)]"}`}>{item}</button>)}</div>; }
+function Toggle({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) { return <button type="button" aria-pressed={active} onClick={onClick} className={`h-7 rounded border px-2 ${active ? "border-[#5750f1] bg-[#5750f1]/10 text-[#5750f1]" : "border-[var(--border)] text-[var(--muted)]"}`}>{label}</button>; }
+function ImpactSummary({ values }: { values: Record<string, number> }) { const labels: Record<string, string> = { direct: "Direct dependents", total: "Total impacted", critical: "Critical assets", systems: "Systems affected", policies: "Related policies", failed: "Failed actual links", sops: "Related SOP", eosl: "EOSL risk" }; return <div className="grid grid-cols-4 gap-px overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--border)] sm:grid-cols-8">{Object.entries(values).map(([key, value]) => <div key={key} className="bg-[var(--surface)] px-2 py-1.5"><div className="text-[8px] text-[var(--muted)]">{labels[key]}</div><div className="text-[13px] font-semibold tabular-nums">{value}</div></div>)}</div>; }
 
-  function makeGroupData(label: string, sublabel: string, assets: Asset[], domain?: string, system?: string, env?: string) {
-    const apCount = assets.filter((a) => a.role === "AP").length;
-    const dbCount = assets.filter((a) => a.role === "DB").length;
-    const nasCount = assets.filter((a) => a.assetType === "NAS").length;
-    const k8sCount = assets.filter((a) => a.assetType === "K8S_WORKLOAD").length;
-    const healthy = assets.filter((a) => a.health === "healthy").length;
-    const warning = assets.filter((a) => a.health === "warning").length;
-    const critical = assets.filter((a) => a.health === "critical").length;
-    return {
-      kind: "group" as const,
-      key: label,
-      label,
-      sublabel,
-      count: assets.length,
-      apCount,
-      dbCount,
-      nasCount,
-      k8sCount,
-      healthyCount: healthy,
-      warningCount: warning,
-      criticalCount: critical,
-      issueCount: warning + critical,
-      domain,
-      system,
-      environment: env,
-    };
-  }
-
-  const nodes: Node<TopologyNodeData>[] = [
-    // Top Center: RPA Portal (Kubernetes)
-    {
-      id: "overview-portal",
-      type: "tier",
-      position: { x: 440, y: 30 },
-      data: makeGroupData("RPA PORTAL", "Kubernetes Runtime · PROD", portalAssets, "PORTAL", "RPA Portal", "PROD"),
-    },
-    // Top Right: APM Monitoring
-    {
-      id: "overview-apm",
-      type: "tier",
-      position: { x: 1040, y: 30 },
-      data: makeGroupData("APM MONITOR", "Telemetry Fleet · PROD", apmAssets, "APM", "APM", "PROD"),
-    },
-    // Middle Row: 3 A360 PROD Domains + Common Function
-    {
-      id: "overview-mem-prod",
-      type: "tier",
-      position: { x: 80, y: 220 },
-      data: makeGroupData("MEMORY PROD", "A360 Platform", memProdAssets, "MEMORY", "A360", "PROD"),
-    },
-    {
-      id: "overview-fnd-prod",
-      type: "tier",
-      position: { x: 440, y: 220 },
-      data: makeGroupData("FOUNDRY PROD", "A360 Platform", fndProdAssets, "FOUNDRY", "A360", "PROD"),
-    },
-    {
-      id: "overview-com-prod",
-      type: "tier",
-      position: { x: 740, y: 220 },
-      data: makeGroupData("COMMON PROD", "A360 Platform", comProdAssets, "COMMON", "A360", "PROD"),
-    },
-    {
-      id: "overview-common-func",
-      type: "tier",
-      position: { x: 1040, y: 220 },
-      data: makeGroupData("COMMON FUNCTION", "Shared Auth & Services", commonFuncAssets, "COMMON_FUNCTION", "Common Function", "PROD"),
-    },
-    // Bottom Row: QA and DEV
-    {
-      id: "overview-qa",
-      type: "tier",
-      position: { x: 80, y: 410 },
-      data: makeGroupData("QA ENVIRONMENT", "Memory / Foundry / Common QA", qaAssets, undefined, "A360", "QA"),
-    },
-    {
-      id: "overview-dev",
-      type: "tier",
-      position: { x: 440, y: 410 },
-      data: makeGroupData("DEV ENVIRONMENT", "Single AP & Standalone DB", devAssets, "DEV", "A360", "DEV"),
-    },
-  ];
-
-  // High-Level Clean Connective Edges
-  const rawEdges: {
-    id: string;
-    source: string;
-    target: string;
-    label: string;
-    secondary: string;
-    relType: RelationType;
-    issues?: number;
-    sample?: NetworkStatus;
-  }[] = [
-    {
-      id: "edge-portal-mem",
-      source: "overview-portal",
-      target: "overview-mem-prod",
-      label: "HTTPS/443",
-      secondary: "Management",
-      relType: "MANAGEMENT",
-      sample: statuses.find((s) => s.policy.port === 443),
-    },
-    {
-      id: "edge-portal-fnd",
-      source: "overview-portal",
-      target: "overview-fnd-prod",
-      label: "HTTPS/443",
-      secondary: "Management",
-      relType: "MANAGEMENT",
-    },
-    {
-      id: "edge-portal-com",
-      source: "overview-portal",
-      target: "overview-com-prod",
-      label: "HTTPS/443",
-      secondary: "Management",
-      relType: "MANAGEMENT",
-    },
-    {
-      id: "edge-com-common-func",
-      source: "overview-com-prod",
-      target: "overview-common-func",
-      label: "Service API",
-      secondary: "Common Sync",
-      relType: "SERVICE",
-    },
-    {
-      id: "edge-apm-mem",
-      source: "overview-apm",
-      target: "overview-mem-prod",
-      label: "TCP/10050",
-      secondary: "APM Probe",
-      relType: "MONITORING",
-      sample: statuses.find((s) => s.policy.port === 10050),
-    },
-    {
-      id: "edge-apm-fnd",
-      source: "overview-apm",
-      target: "overview-fnd-prod",
-      label: "TCP/10050",
-      secondary: "APM Probe",
-      relType: "MONITORING",
-    },
-    {
-      id: "edge-apm-com",
-      source: "overview-apm",
-      target: "overview-com-prod",
-      label: "TCP/10050",
-      secondary: "APM Probe",
-      relType: "MONITORING",
-    },
-  ];
-
-  // Dynamic user-created relations in overview
-  const dynamicOverviewEdges: typeof rawEdges = [];
-  for (const r of relations) {
-    const srcNode = nodes.find(
-      (n) =>
-        n.id === r.sourceEntityId ||
-        n.data.key === r.sourceEntityId ||
-        n.data.domain === r.sourceEntityId ||
-        n.data.system === r.sourceEntityId
-    );
-    const tgtNode = nodes.find(
-      (n) =>
-        n.id === r.targetEntityId ||
-        n.data.key === r.targetEntityId ||
-        n.data.domain === r.targetEntityId ||
-        n.data.system === r.targetEntityId
-    );
-    if (srcNode && tgtNode && srcNode.id !== tgtNode.id) {
-      if (!rawEdges.some((e) => e.id === r.id) && !dynamicOverviewEdges.some((e) => e.id === r.id)) {
-        dynamicOverviewEdges.push({
-          id: r.id,
-          source: srcNode.id,
-          target: tgtNode.id,
-          label: `${r.protocol || "TCP"}/${r.port || 8080}`,
-          secondary: r.relationType,
-          relType: r.relationType,
-        });
-      }
-    }
-  }
-
-  const allOverviewEdges = [...rawEdges, ...dynamicOverviewEdges];
-
-  const edges: Edge<TopologyEdgeData>[] = allOverviewEdges
-    .filter((e) => relationFilters[e.relType] !== false)
-    .map((e) => {
-      const matchingRelation = relations.find((r) => r.id === e.id);
-      return {
-        id: e.id,
-        type: "flow",
-        source: e.source,
-        target: e.target,
-        markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
-        data: {
-          label: e.label,
-          secondary: e.secondary,
-          issueCount: e.issues ?? 0,
-          status: e.sample,
-          relatedStatuses: e.sample ? [e.sample] : [],
-          flowActive,
-          showLabel: showLabels,
-          relationType: e.relType,
-          onSelect: () => {
-            if (e.sample) {
-              onSelectConnection(e.id, e.sample, [e.sample]);
-            } else if (matchingRelation && onSelectRelation) {
-              onSelectRelation(matchingRelation);
-            }
-          },
-        },
-      };
-    });
-
-  const shownNodes = nodes.filter(
-    (n) => n.data.kind !== "group" || ((n.data.count ?? 0) > 0 && (!issuesOnly || (n.data.issueCount ?? 0) > 0))
-  );
-  const ids = new Set(shownNodes.map((n) => n.id));
-  return { nodes: shownNodes, edges: edges.filter((e) => ids.has(e.source) && ids.has(e.target)) };
+function DependencyDrawer({ entity, open, onClose, visits, catalog, statuses, software, sops, assets }: { entity: SemanticEntity | null; open: boolean; onClose: () => void; visits: Array<{ id: string; side: string; depth: number }>; catalog: Map<string, SemanticEntity>; statuses: NetworkStatus[]; software: SoftwareInstall[]; sops: SopDocument[]; assets: Asset[] }) {
+  const [tab, setTab] = useState("Overview"); if (!entity) return null;
+  const ids = new Set([entity.id, ...(entity.group ? groupAssets(entity.group, assets).map((asset) => asset.id) : []), ...(entity.cluster ? entity.cluster.members.map((member) => member.assetId) : [])]);
+  const relatedStatuses = statuses.filter((status) => ids.has(status.policy.sourceVmId) || (!!status.policy.targetVmId && ids.has(status.policy.targetVmId)));
+  const relatedSoftware = software.filter((item) => ids.has(item.vmId));
+  const relatedSops = sops.filter((item) => item.relatedVmIds.some((id) => ids.has(id)));
+  return <SlideDrawer open={open} onClose={onClose} title={entity.label} subtitle={`${entity.kind.toUpperCase()} · Dependency context`} width={460}><div className="border-b border-[var(--border)] px-3 pt-2"><div className="flex gap-1">{["Overview", "Impact", "Network", "Software", "SOP"].map((item) => <button key={item} type="button" onClick={() => setTab(item)} className={`border-b-2 px-2 py-2 text-[9px] ${tab === item ? "border-[#5750f1] font-semibold text-[#5750f1]" : "border-transparent text-[var(--muted)]"}`}>{item}</button>)}</div></div><div className="space-y-2 p-4 text-[10px]">{tab === "Overview" && <><KV k="Entity ID" v={entity.id} /><KV k="Type" v={entity.kind.toUpperCase()} /><KV k="Aliases" v={entity.aliases.join(", ") || "-"} /></>}{tab === "Impact" && visits.filter((visit) => visit.id !== entity.id).map((visit) => <div key={`${visit.side}:${visit.id}`} className="flex justify-between rounded border border-[var(--border)] p-2"><span>{catalog.get(visit.id)?.label ?? visit.id}</span><span className="text-[var(--muted)]">{visit.side.toUpperCase()} · DEPTH {visit.depth}</span></div>)}{tab === "Network" && relatedStatuses.map((status) => <div key={status.policy.id} className="rounded border border-[var(--border)] p-2"><div>{status.policy.sourceName} → {status.policy.targetName}</div><div className="text-[var(--muted)]">{status.policy.protocol}/{status.policy.port} · {status.policy.approvalStatus} · TCP {status.observation?.tcp ?? "NO_DATA"} · {status.overall}</div></div>)}{tab === "Software" && relatedSoftware.map((item) => <div key={item.id} className="flex justify-between rounded border border-[var(--border)] p-2"><span>{item.name} {item.version}</span><span className="font-mono text-[var(--muted)]">EOSL {item.eoslDate ?? "UNKNOWN"}</span></div>)}{tab === "SOP" && relatedSops.map((item) => <a key={item.id} href={item.url ?? "#"} className="block rounded border border-[var(--border)] p-2 hover:bg-[var(--surface-2)]"><div className="font-semibold">{item.title}</div><div className="text-[var(--muted)]">{item.category} · {item.owner}</div></a>)}{((tab === "Network" && !relatedStatuses.length) || (tab === "Software" && !relatedSoftware.length) || (tab === "SOP" && !relatedSops.length)) && <div className="rounded border border-dashed border-[var(--border)] p-3 text-center text-[var(--muted)]">관련 데이터가 없습니다.</div>}</div></SlideDrawer>;
 }
-
-// -------------------------------------------------------------
-// BUILD 2: ASSET VIEW (Detailed nodes: VMs, DBaaS, K8s, NAS, Clusters)
-// -------------------------------------------------------------
-function buildAssets(
-  vms: Asset[],
-  statuses: NetworkStatus[],
-  clusters: ClusterEntity[],
-  nasAssets: NasAsset[],
-  drillGroup: string | null,
-  relations: ArchitectureRelation[],
-  relationFilters: Record<string, boolean>,
-  issuesOnly: boolean,
-  overlay: OverlayMode,
-  query: string,
-  flowActive: boolean,
-  showLabels: boolean,
-  onSelectConnection: (id: string, s: NetworkStatus, all: NetworkStatus[]) => void,
-  onSelectRelation?: (r: ArchitectureRelation) => void
-) {
-  const q = query.trim().toLowerCase();
-
-  // Filter visible assets
-  const visible = vms.filter((v) => {
-    if (v.assetType === "NAS" && nasAssets.some((n) => n.id === v.id || n.hostname === v.hostname)) return false;
-    if (drillGroup && v.domain !== drillGroup && v.system !== drillGroup && v.zone !== drillGroup) {
-      return false;
-    }
-    if (issuesOnly && v.health === "healthy") return false;
-    if (q && !`${v.hostname} ${v.ipAddress} ${v.service} ${v.domain ?? ""}`.toLowerCase().includes(q)) {
-      return false;
-    }
-    return true;
-  });
-
-  const visibleIds = new Set(visible.map((v) => v.id));
-
-  // Layout arrangement by Domain / Zone Lanes
-  const X_STEP = 260;
-  const Y_STEP = 150;
-
-  // Domain groupings for clean layout
-  const domainOrder = ["MEMORY", "FOUNDRY", "COMMON", "PORTAL", "APM", "COMMON_FUNCTION", "DEV"];
-  const domainBuckets = new Map<string, Asset[]>();
-
-  for (const vm of visible) {
-    const d = vm.domain || "OTHER";
-    const b = domainBuckets.get(d) ?? [];
-    b.push(vm);
-    domainBuckets.set(d, b);
-  }
-
-  const nodes: Node<TopologyNodeData>[] = [];
-
-  let currentY = 50;
-
-  for (const dom of [...domainOrder, ...Array.from(domainBuckets.keys()).filter((d) => !domainOrder.includes(d))]) {
-    const items = domainBuckets.get(dom);
-    if (!items || items.length === 0) continue;
-
-    items.forEach((vm, idx) => {
-      nodes.push({
-        id: vm.id,
-        type: "vm",
-        position: { x: 80 + (idx % 4) * X_STEP, y: currentY + Math.floor(idx / 4) * Y_STEP },
-        data: {
-          kind: "vm" as const,
-          key: vm.id,
-          label: vm.hostname,
-          vm,
-        },
-      });
-    });
-
-    currentY += Math.ceil(items.length / 4) * Y_STEP + 40;
-  }
-
-  // Clusters
-  const relevantClusters = clusters.filter(
-    (c) => !drillGroup || c.domain === drillGroup || c.name.includes(drillGroup)
-  );
-  relevantClusters.forEach((cl, idx) => {
-    nodes.push({
-      id: `cluster-${cl.id}`,
-      type: "cluster",
-      position: { x: 80 + (idx % 3) * X_STEP, y: currentY },
-      data: {
-        kind: "cluster" as const,
-        key: cl.id,
-        label: cl.name,
-        cluster: cl,
-      },
-    });
-  });
-
-  if (relevantClusters.length > 0) {
-    currentY += 170;
-  }
-
-  // NAS
-  const relevantNas = nasAssets.filter(
-    (n) => !drillGroup || n.domain === drillGroup || n.hostname.includes(drillGroup)
-  );
-  relevantNas.forEach((nas, idx) => {
-    nodes.push({
-      id: `nas-${nas.id}`,
-      type: "nas",
-      position: { x: 80 + (idx % 3) * X_STEP, y: currentY },
-      data: {
-        kind: "nas" as const,
-        key: nas.id,
-        label: nas.hostname,
-        nas,
-      },
-    });
-  });
-
-  // Edges filtered by policy & relation filters
-  const filteredStatuses = statuses.filter(
-    (s) =>
-      visibleIds.has(s.policy.sourceVmId) &&
-      (s.policy.targetVmId ? visibleIds.has(s.policy.targetVmId) : true) &&
-      (!issuesOnly || s.overall !== "NORMAL") &&
-      (!q || `${s.policy.port} ${s.policy.protocol} ${s.policy.sourceName} ${s.policy.targetName}`.toLowerCase().includes(q))
-  );
-
-  const edges: Edge<TopologyEdgeData>[] = filteredStatuses.map((s) => {
-    const isBidi = s.isBidirectional || s.policy.direction === "BIDIRECTIONAL";
-    const label = `${s.policy.protocol}/${s.policy.port}${isBidi ? " (⇄)" : ""}`;
-    const secondary =
-      overlay === "policy"
-        ? `${s.policy.approvalStatus}${
-            s.daysToExpiry != null
-              ? ` · ${s.daysToExpiry >= 0 ? `D-${s.daysToExpiry}` : `D+${Math.abs(s.daysToExpiry)}`}`
-              : ""
-          }`
-        : s.overall === "RETURN_DIRECTION_FAILED"
-          ? "RETURN FAILED"
-          : `TCP ${s.observation?.tcp ?? "NO DATA"}`;
-
-    return {
-      id: s.policy.id,
-      type: "flow",
-      source: s.policy.sourceVmId,
-      target: s.policy.targetVmId ?? `ext-${s.policy.targetName}`,
-      markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
-      data: {
-        label,
-        secondary,
-        issueCount: s.overall === "NORMAL" ? 0 : 1,
-        status: s,
-        relatedStatuses: [s],
-        flowActive,
-        showLabel: showLabels,
-        onSelect: () => onSelectConnection(s.policy.id, s, [s]),
-      },
-    };
-  });
-
-  // Dynamic user-created architecture relations in asset view
-  for (const r of relations) {
-    if (relationFilters[r.relationType] === false) continue;
-    const srcNode = nodes.find(
-      (n) =>
-        n.id === r.sourceEntityId ||
-        n.id === `cluster-${r.sourceEntityId}` ||
-        n.id === `nas-${r.sourceEntityId}` ||
-        n.data.label === r.sourceEntityId ||
-        (n.data.vm && n.data.vm.hostname === r.sourceEntityId)
-    );
-    const tgtNode = nodes.find(
-      (n) =>
-        n.id === r.targetEntityId ||
-        n.id === `cluster-${r.targetEntityId}` ||
-        n.id === `nas-${r.targetEntityId}` ||
-        n.data.label === r.targetEntityId ||
-        (n.data.vm && n.data.vm.hostname === r.targetEntityId)
-    );
-    if (srcNode && tgtNode && srcNode.id !== tgtNode.id) {
-      if (!edges.some((e) => e.id === r.id)) {
-        edges.push({
-          id: r.id,
-          type: "flow",
-          source: srcNode.id,
-          target: tgtNode.id,
-          markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
-          data: {
-            label: `${r.protocol || "TCP"}/${r.port || 8080}`,
-            secondary: r.relationType,
-            issueCount: 0,
-            flowActive,
-            showLabel: showLabels,
-            relationType: r.relationType,
-            onSelect: () => onSelectRelation?.(r),
-          },
-        });
-      }
-    }
-  }
-
-  const shownNodes = nodes.filter(
-    (n) => n.data.kind !== "group" || ((n.data.count ?? 0) > 0 && (!issuesOnly || (n.data.issueCount ?? 0) > 0))
-  );
-  const ids = new Set(shownNodes.map((n) => n.id));
-  return { nodes: shownNodes, edges: edges.filter((e) => ids.has(e.source) && ids.has(e.target)) };
-}
+function KV({ k, v }: { k: string; v: React.ReactNode }) { return <div className="flex min-h-8 items-center border-b border-[var(--border)]"><span className="w-28 text-[var(--muted)]">{k}</span><span className="font-medium">{v}</span></div>; }

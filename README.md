@@ -28,15 +28,18 @@ The UI is intentionally a **compact developer/admin console**, not a generated S
 ### Architecture
 
 - React Flow canvas
-- **Overview → Service → VM** drill-down
+- **Overview | Dependency** operator views
+- same-canvas `Project → System → Environment → Domain → Asset` drill-down with breadcrumbs
+- deterministic ELK layered auto layout with orthogonal routes
+- Dependency impact/upstream traversal with depth and relation filters
 - first screen shows grouped tiers rather than all VMs
-- tier double-click → VM view filtered to that tier
+- group double-click → child groups or scoped assets
 - issue-only filter
 - VM/IP search
+- asset/group/cluster dependency search
 - VM click → right Drawer
 - edge click → right Connection Drawer
-- aggregate service/tier flows on high-level views
-- per-connection TCP/expiry labels on VM view
+- policy/actual overlays, Probe Flow, labels-off default and 20px manual correction
 
 ### Network model
 

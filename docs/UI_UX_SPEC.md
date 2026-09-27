@@ -28,10 +28,13 @@ VM, network, cluster, NAS and software details use a **right sliding Drawer** (4
 ## Architecture scalability
 
 - first load: grouped tiers only
-- service view: service-level nodes
-- VM view: explicit drill-down; default filter should prevent an unreadable 30+ node wall
+- operator views: Overview and Dependency only
+- group navigation: same-canvas Overview drill-down with clickable breadcrumbs
+- assets: explicit leaf drill-down; default scope prevents an unreadable 30+ node wall
 - issue-only: isolate risky flows
 - search: hostname/IP first; port/request ID later
+- deterministic ELK layered layout; manual 20px-grid editing is a final correction layer
+- Dependency defaults to Both, depth 2, with Monitoring disabled
 
 ## Executive presentation
 

@@ -13,6 +13,7 @@ CREATE TABLE import_batch (
 CREATE TABLE vm_asset (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   asset_key VARCHAR(100) NOT NULL UNIQUE,
+  project_group_id VARCHAR(100) NULL,
   hostname VARCHAR(255) NOT NULL,
   ip_address VARCHAR(45) NOT NULL,
   environment VARCHAR(30) NOT NULL,
@@ -46,6 +47,10 @@ CREATE TABLE software_catalog (
   vendor VARCHAR(150) NULL,
   category VARCHAR(100) NULL,
   product_family VARCHAR(150) NULL,
+  description TEXT NULL,
+  catalog_status ENUM('ACTIVE','STALE','RETIRED') NOT NULL DEFAULT 'ACTIVE',
+  last_catalog_seen_at DATETIME NULL,
+  external_key VARCHAR(255) NULL,
   UNIQUE KEY uq_sw_catalog (canonical_name, vendor)
 );
 
@@ -55,20 +60,86 @@ CREATE TABLE software_release (
   version VARCHAR(100) NOT NULL,
   release_date DATE NULL,
   support_end_date DATE NULL,
+  security_support_end_date DATE NULL,
+  extended_support_end_date DATE NULL,
   eosl_date DATE NULL,
   version_match_rule ENUM('exact','prefix','regex','range') NOT NULL DEFAULT 'exact',
   match_pattern VARCHAR(255) NULL,
+  successor_release_id BIGINT NULL,
+  catalog_status ENUM('ACTIVE','STALE','RETIRED') NOT NULL DEFAULT 'ACTIVE',
+  last_catalog_seen_at DATETIME NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uq_sw_release (software_id, version),
   INDEX idx_sw_release_eosl (eosl_date),
-  CONSTRAINT fk_sw_release_product FOREIGN KEY (software_id) REFERENCES software_catalog(id)
+  CONSTRAINT fk_sw_release_product FOREIGN KEY (software_id) REFERENCES software_catalog(id),
+  CONSTRAINT fk_sw_release_successor FOREIGN KEY (successor_release_id) REFERENCES software_release(id)
+);
+
+CREATE TABLE software_lifecycle_phase (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  release_id BIGINT NOT NULL,
+  phase_type ENUM('ACTIVE_SUPPORT','SECURITY_SUPPORT','EXTENDED_SUPPORT','MAINTENANCE','OTHER') NOT NULL,
+  start_date DATE NOT NULL,
+  end_date DATE NOT NULL,
+  label VARCHAR(150) NOT NULL,
+  CONSTRAINT fk_phase_release FOREIGN KEY (release_id) REFERENCES software_release(id),
+  INDEX idx_phase_release_dates (release_id,start_date,end_date)
+);
+
+CREATE TABLE software_product_alias (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  product_id BIGINT NOT NULL,
+  alias VARCHAR(255) NOT NULL,
+  match_type ENUM('EXACT','CONTAINS','REGEX') NOT NULL,
+  CONSTRAINT fk_alias_product FOREIGN KEY (product_id) REFERENCES software_catalog(id),
+  UNIQUE KEY uq_product_alias (product_id,alias,match_type)
+);
+
+CREATE TABLE project_software_scope (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  project_group_id VARCHAR(100) NOT NULL,
+  product_id BIGINT NOT NULL,
+  preferred_release_id BIGINT NULL,
+  scope_source ENUM('DISCOVERED','MANUAL') NOT NULL,
+  usage_status ENUM('IN_USE','PLANNED','RETIRED') NOT NULL DEFAULT 'IN_USE',
+  owner VARCHAR(150) NULL,
+  criticality ENUM('CRITICAL','HIGH','MEDIUM','LOW') NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_scope_product FOREIGN KEY (product_id) REFERENCES software_catalog(id),
+  CONSTRAINT fk_scope_release FOREIGN KEY (preferred_release_id) REFERENCES software_release(id),
+  UNIQUE KEY uq_project_product_scope (project_group_id,product_id)
+);
+
+CREATE TABLE software_catalog_import_batch (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  imported_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  file_name VARCHAR(255) NOT NULL,
+  total_rows INT NOT NULL,
+  new_count INT NOT NULL DEFAULT 0,
+  changed_count INT NOT NULL DEFAULT 0,
+  unchanged_count INT NOT NULL DEFAULT 0,
+  missing_count INT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE software_release_lifecycle_history (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  release_id BIGINT NOT NULL,
+  field_name VARCHAR(80) NOT NULL,
+  old_value VARCHAR(255) NULL,
+  new_value VARCHAR(255) NULL,
+  changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  import_batch_id BIGINT NOT NULL,
+  CONSTRAINT fk_history_release FOREIGN KEY (release_id) REFERENCES software_release(id),
+  CONSTRAINT fk_history_batch FOREIGN KEY (import_batch_id) REFERENCES software_catalog_import_batch(id),
+  INDEX idx_history_release (release_id,changed_at)
 );
 
 CREATE TABLE vm_software (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   vm_id BIGINT NOT NULL,
   software_id BIGINT NOT NULL,
+  detected_product_name VARCHAR(255) NULL,
   version VARCHAR(100) NULL,
   matched_release_id BIGINT NULL,
   edition VARCHAR(100) NULL,

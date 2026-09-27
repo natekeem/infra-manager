@@ -2331,7 +2331,7 @@ export const policies: NetworkPolicy[] = [
     direction: "ONE_WAY",
     approvalStatus: "APPROVED",
     approvedAt: "2025-09-28T00:00:00+09:00",
-    // 7 days from now (2026-09-21 + 7 = 2026-09-28)
+    // Demo expiry date. Runtime risk is derived through the shared current-time provider.
     expiresAt: "2026-09-28T00:00:00+09:00",
     requestId: "REQ-FW-2025-0899",
     purpose: "Common Domain DB Sync",
@@ -2657,7 +2657,7 @@ export const observations: ConnectivityObservation[] = [
 // ==========================================
 // 8. 3-TIER SOFTWARE LIFECYCLE & CATALOG
 // ==========================================
-export const softwareProducts: SoftwareProduct[] = [
+const coreSoftwareProducts: SoftwareProduct[] = [
   {
     id: "sp-tomcat",
     name: "Apache Tomcat",
@@ -2693,9 +2693,9 @@ export const softwareProducts: SoftwareProduct[] = [
     category: "Proprietary",
     description: "Internal banking interface automation plugin",
   },
-];
+].map((product) => ({ ...product, catalogStatus: "ACTIVE" as const, lastCatalogSeenAt: "2026-09-25T09:00:00+09:00" }));
 
-export const softwareReleases: SoftwareRelease[] = [
+const coreSoftwareReleases: SoftwareRelease[] = [
   {
     id: "sr-tomcat-9",
     productId: "sp-tomcat",
@@ -2751,6 +2751,72 @@ export const softwareReleases: SoftwareRelease[] = [
     matchPattern: "v29",
   },
 ];
+
+const companyCatalogSeeds = [
+  ["windows-server", "Windows Server", "Microsoft", "Operating System", ["2012 R2", "2016", "2019", "2022"]],
+  ["openjdk", "Java OpenJDK", "Eclipse Adoptium", "Runtime / JDK", ["8", "11", "17", "21"]],
+  ["telegraf", "Telegraf", "InfluxData", "Monitoring", ["1.20", "1.21", "1.22", "1.23", "1.24", "1.25", "1.26", "1.27", "1.28", "1.29"]],
+  ["crowdstrike", "CrowdStrike Falcon Sensor", "CrowdStrike", "Security", ["6.57", "7.10", "7.15"]],
+  ["python", "Python", "Python Software Foundation", "Runtime", ["3.9", "3.10", "3.11"]],
+  ["perl", "Perl", "Perl Foundation", "Runtime", ["5.32", "5.36", "5.38"]],
+  ["oracle-db", "Oracle Database", "Oracle", "Database", ["12c", "19c", "23ai"]],
+  ["mysql", "MySQL Server", "Oracle", "Database", ["5.7", "8.0", "8.4"]],
+  ["nginx", "NGINX", "F5", "Web Server", ["1.22", "1.24", "1.26"]],
+  ["iis", "Microsoft IIS", "Microsoft", "Web Server", ["8.5", "10.0", "10.1"]],
+  ["nodejs", "Node.js", "OpenJS Foundation", "Runtime", ["18", "20", "22"]],
+  ["redis", "Redis", "Redis Ltd.", "Cache", ["6.2", "7.0", "7.2"]],
+  ["rabbitmq", "RabbitMQ", "Broadcom", "Messaging", ["3.11", "3.12", "4.0"]],
+  ["git", "Git", "Software Freedom Conservancy", "Developer Tool", ["2.39", "2.43", "2.46"]],
+  ["powershell", "PowerShell", "Microsoft", "Automation", ["5.1", "7.3", "7.4"]],
+  ["chrome", "Google Chrome Enterprise", "Google", "Browser", ["120", "128", "134"]],
+] as const;
+
+const extraProducts: SoftwareProduct[] = companyCatalogSeeds.map(([key, name, vendor, category]) => ({
+  id: `sp-${key}`, name, vendor, category, catalogStatus: "ACTIVE", lastCatalogSeenAt: "2026-09-25T09:00:00+09:00",
+}));
+
+const horizonDates = ["2026-05-31", "2026-10-15", "2026-12-10", "2027-02-28", "2029-12-31"];
+const extraReleases: SoftwareRelease[] = companyCatalogSeeds.flatMap(([key, name, vendor, , versions], productIndex) =>
+  versions.map((version, versionIndex) => {
+    const eoslDate = horizonDates[(productIndex + versionIndex) % horizonDates.length];
+    return {
+      id: `sr-${key}-${String(version).toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+      productId: `sp-${key}`, productName: name, version, vendor,
+      releaseDate: `${2020 + versionIndex}-01-15`, supportEndDate: eoslDate, eoslDate,
+      status: "SUPPORTED", versionMatchRule: "prefix", matchPattern: version,
+      catalogStatus: "ACTIVE", lastCatalogSeenAt: "2026-09-25T09:00:00+09:00",
+    } satisfies SoftwareRelease;
+  })
+);
+
+export const softwareProducts: SoftwareProduct[] = [...coreSoftwareProducts, ...extraProducts];
+export const softwareReleases: SoftwareRelease[] = [...coreSoftwareReleases, ...extraReleases];
+
+export const softwareLifecyclePhases = [
+  { id: "phase-java8-active", releaseId: "sr-java-8", phaseType: "ACTIVE_SUPPORT", startDate: "2019-01-15", endDate: "2022-12-31", label: "Active Support" },
+  { id: "phase-java8-security", releaseId: "sr-java-8", phaseType: "SECURITY_SUPPORT", startDate: "2023-01-01", endDate: "2025-12-31", label: "Security Support" },
+  { id: "phase-a360-active", releaseId: "sr-a360-v29", phaseType: "ACTIVE_SUPPORT", startDate: "2023-11-01", endDate: "2026-12-31", label: "Active Support" },
+  { id: "phase-a360-extended", releaseId: "sr-a360-v29", phaseType: "EXTENDED_SUPPORT", startDate: "2027-01-01", endDate: "2028-06-30", label: "Extended Support" },
+] as import("@/domain/models").SoftwareLifecyclePhase[];
+
+export const softwareProductAliases = [
+  { id: "alias-mssql", productId: "sp-mssql", alias: "Microsoft SQL Server 2019 (64-bit)", matchType: "EXACT" },
+  { id: "alias-java", productId: "sp-java", alias: "Oracle Java", matchType: "CONTAINS" },
+  { id: "alias-openjdk", productId: "sp-openjdk", alias: "OpenJDK", matchType: "CONTAINS" },
+] as import("@/domain/models").SoftwareProductAlias[];
+
+export const projectSoftwareScopes = [
+  { id: "scope-rpa-a360", projectGroupId: "rpa", productId: "sp-a360", preferredReleaseId: "sr-a360-v29", scopeSource: "MANUAL", usageStatus: "IN_USE", owner: "RPA Platform", criticality: "CRITICAL", createdAt: "2026-01-10T09:00:00+09:00" },
+  { id: "scope-rpa-mssql", projectGroupId: "rpa", productId: "sp-mssql", preferredReleaseId: "sr-mssql-2019", scopeSource: "DISCOVERED", usageStatus: "IN_USE", owner: "DBA", criticality: "CRITICAL", createdAt: "2026-01-10T09:00:00+09:00" },
+] as import("@/domain/models").ProjectSoftwareScope[];
+
+export const softwareCatalogImportBatches = [
+  { id: "catalog-import-20260925", importedAt: "2026-09-25T09:00:00+09:00", fileName: "company-eosl-catalog-20260925.csv", totalRows: 56, newCount: 4, changedCount: 2, unchangedCount: 49, missingCount: 1 },
+] as import("@/domain/models").SoftwareCatalogImportBatch[];
+
+export const softwareLifecycleHistory = [
+  { id: "history-mssql-1", releaseId: "sr-mssql-2019", fieldName: "eoslDate", oldValue: "2030-01-01", newValue: "2030-01-08", changedAt: "2026-09-25T09:00:00+09:00", importBatchId: "catalog-import-20260925" },
+] as import("@/domain/models").SoftwareReleaseLifecycleHistory[];
 
 export const assetSoftwareInstallations: AssetSoftwareInstallation[] = [
   // D90 Scenario on RPA-P-MEM-AP02
@@ -2829,6 +2895,35 @@ export const assetSoftwareInstallations: AssetSoftwareInstallation[] = [
     lifecycleStatus: "SUPPORTED",
     vendor: "Microsoft",
     category: "Database",
+  },
+  ...[
+    ["inst-win2019-mem-ap01", "rpa-p-mem-ap01", "sp-windows-server", "Windows Server", "2019", "sr-windows-server-2019", "Microsoft", "Operating System"],
+    ["inst-openjdk17-fnd-ap01", "rpa-p-fnd-ap01", "sp-openjdk", "Java OpenJDK", "17.0.8", "sr-openjdk-17", "Eclipse Adoptium", "Runtime / JDK"],
+    ["inst-openjdk17-fnd-ap02", "rpa-p-fnd-ap02", "sp-openjdk", "Java OpenJDK", "17.0.9", "sr-openjdk-17", "Eclipse Adoptium", "Runtime / JDK"],
+    ["inst-telegraf124-com-ap01", "rpa-p-com-ap01", "sp-telegraf", "Telegraf", "1.24.3", "sr-telegraf-1-24", "InfluxData", "Monitoring"],
+    ["inst-python310-com-ap02", "rpa-p-com-ap02", "sp-python", "Python", "3.10.14", "sr-python-3-10", "Python Software Foundation", "Runtime"],
+    ["inst-powershell74-com-ap03", "rpa-p-com-ap03", "sp-powershell", "PowerShell", "7.4.5", "sr-powershell-7-4", "Microsoft", "Automation"],
+    ["inst-nginx124-fnd-ap03", "rpa-p-fnd-ap03", "sp-nginx", "NGINX", "1.24.0", "sr-nginx-1-24", "F5", "Web Server"],
+  ].map(([id, assetId, productId, productName, detectedVersion, matchedReleaseId, vendor, category]) => ({
+    id, projectGroupId: "rpa", assetId, productId, productName, detectedVersion, matchedReleaseId,
+    matchedReleaseVersion: detectedVersion, eoslDate: null, lifecycleStatus: "SUPPORTED" as const,
+    matchStatus: "MATCHED" as const, vendor, category,
+  })),
+  {
+    id: "inst-ambiguous-java",
+    projectGroupId: "rpa",
+    assetId: "rpa-p-mem-ap03",
+    productId: "",
+    productName: "Oracle Java OpenJDK Runtime",
+    detectedProductName: "Oracle Java OpenJDK Runtime",
+    detectedVersion: "17.0.7",
+    matchedReleaseId: null,
+    matchedReleaseVersion: null,
+    eoslDate: null,
+    lifecycleStatus: "UNMAPPED",
+    matchStatus: "AMBIGUOUS",
+    vendor: "Unknown",
+    category: "Runtime / JDK",
   },
 ];
 

@@ -60,36 +60,25 @@ Defines logical and functional dependencies between nodes:
 
 ---
 
-## 3. Four Architecture Canvas View Modes
+## 3. Architecture Canvas View Modes
 
-The toolbar features a 4-segment View Mode switcher:
+The current toolbar intentionally exposes two operator-facing modes:
 
 ```
-[ Overview ] [ Group ] [ Service ] [ Asset ]
+[ 오버뷰 ] [ 전체보기 ]
 ```
 
-### 3.1. Overview Mode
+### 3.1. 오버뷰
 - Single-screen executive layout representing high-level subsystems, domains, and external integrations.
 - Nodes represent `TopologyGroup` entities (or external systems) formatted as compact `GroupNode` cards.
 - Displays aggregate healthy / warning / critical counters, AP/DB/Storage composition, and cross-group connectivity health.
 - Double-clicking any group immediately switches view to that group's internal assets.
 
-### 3.2. Group Mode (`groupBy` Selector)
-Dynamic group-level layout grouped by operational dimensions:
-- `Domain`: Groups assets by operational domain (e.g. `MEMORY`, `FOUNDRY`, `COMMON`).
-- `Environment`: Groups assets by deployment tier (`PROD`, `QA`, `DEV`).
-- `System`: Groups assets by software system (`A360`, `PORTAL`, `APM`, `COMMON`).
-- `Cluster`: Groups assets by high-availability cluster membership.
-- `Runtime`: Groups assets by compute runtime (`VM`, `K8S_WORKLOAD`, `DBAAS`, `NAS`).
-
-### 3.3. Service Mode
-- Visualizes logical services (e.g. `Control Room Web`, `Bot Runner Service`, `MSSQL Clustered Engine`, `K8s Ingress Controller`) and inter-service dependencies.
-- Edges indicate functional dependency relationships rather than raw hardware connections.
-
-### 3.4. Asset Mode
+### 3.2. 전체보기
 - Detailed asset topology displaying individual `VmNode`, `NasNode`, and `ClusterNode` elements.
-- Can be viewed globally or scoped to a specific parent group selected via drill-down or breadcrumbs.
+- Can be scoped with the adjacent project group and environment selectors. Both filters intersect.
 - Includes 3-metric live resource mini-gauges (CPU, Memory, Disk), IP badges, OS badges, and status rings.
+- Layout edit mode supports 20px-snapped dragging, persisted positions, automatic-layout reset and manual source/target edge handles.
 
 ---
 

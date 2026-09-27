@@ -1,23 +1,28 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { Asset, NetworkStatus, SoftwareInstall, SopDocument } from "@/domain/models";
+import type { Asset, AssetSoftwareInstallation, NetworkStatus, SoftwareInstall, SoftwareRelease, SopDocument } from "@/domain/models";
 import { Badge } from "@/components/tailgrids/core/badge";
 import { VmDrawer } from "./vm-drawer";
 import { getEoslState } from "@/domain/eosl";
 import { SearchIcon } from "@/components/common/icons";
 import { useProjectGroup } from "@/context/project-group-context";
+import { getAppNow } from "@/domain/app-time";
 
 export function VmInventory({
   vms,
   network,
   software,
   sops,
+  installations = [],
+  releases = [],
 }: {
   vms: Asset[];
   network: NetworkStatus[];
   software: SoftwareInstall[];
   sops: SopDocument[];
+  installations?: AssetSoftwareInstallation[];
+  releases?: SoftwareRelease[];
 }) {
   const { activeProject } = useProjectGroup();
   const [query, setQuery] = useState("");
@@ -38,7 +43,7 @@ export function VmInventory({
   const roles = useMemo(() => ["ALL", ...Array.from(new Set(projectVms.map((v) => v.role)))], [projectVms]);
   const environments = useMemo(() => ["ALL", ...Array.from(new Set(projectVms.map((v) => v.environment)))], [projectVms]);
 
-  const now = new Date("2026-09-21T00:28:00+09:00");
+  const now = getAppNow();
 
   const filtered = useMemo(() => {
     return projectVms.filter((vm) => {
@@ -292,6 +297,8 @@ export function VmInventory({
         network={network}
         software={software}
         sops={sops}
+        installations={installations}
+        releases={releases}
         open={!!selected}
         onClose={() => setSelected(null)}
       />

@@ -23,7 +23,7 @@ This spec exists to stop future coding agents from gradually turning the portal 
 
 ## Detail interaction
 
-VM and network details use a **left sliding Drawer**, preserving the current page/context behind it. Do not replace it with center modal or full navigation page.
+VM, network, cluster, NAS and software details use a **right sliding Drawer** (460px), preserving the left navigation and current page context. Do not replace it with a center modal or full navigation page.
 
 ## Architecture scalability
 

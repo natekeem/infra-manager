@@ -198,6 +198,9 @@ export interface SoftwareProduct {
   vendor: string;
   category: string;
   description?: string;
+  catalogStatus?: "ACTIVE" | "STALE" | "RETIRED";
+  lastCatalogSeenAt?: string | null;
+  externalKey?: string | null;
 }
 
 export interface SoftwareRelease {
@@ -208,10 +211,68 @@ export interface SoftwareRelease {
   vendor: string;
   releaseDate?: string;
   supportEndDate?: string;
+  securitySupportEndDate?: string | null;
+  extendedSupportEndDate?: string | null;
   eoslDate: string | null;
+  /** @deprecated Derived from eoslDate at runtime. */
   status: "SUPPORTED" | "D180" | "D90" | "D30" | "EOSL";
   versionMatchRule: "exact" | "prefix" | "regex" | "range";
   matchPattern?: string;
+  successorReleaseId?: string | null;
+  catalogStatus?: "ACTIVE" | "STALE" | "RETIRED";
+  lastCatalogSeenAt?: string | null;
+}
+
+export type LifecycleStatus = "SUPPORTED" | "D180" | "D90" | "D30" | "EOSL" | "UNMAPPED";
+export type SoftwareMatchStatus = "MATCHED" | "UNMAPPED" | "AMBIGUOUS";
+
+export interface SoftwareLifecyclePhase {
+  id: string;
+  releaseId: string;
+  phaseType: "ACTIVE_SUPPORT" | "SECURITY_SUPPORT" | "EXTENDED_SUPPORT" | "MAINTENANCE" | "OTHER";
+  startDate: string;
+  endDate: string;
+  label: string;
+}
+
+export interface SoftwareProductAlias {
+  id: string;
+  productId: string;
+  alias: string;
+  matchType: "EXACT" | "CONTAINS" | "REGEX";
+}
+
+export interface ProjectSoftwareScope {
+  id: string;
+  projectGroupId: string;
+  productId: string;
+  preferredReleaseId?: string | null;
+  scopeSource: "DISCOVERED" | "MANUAL";
+  usageStatus: "IN_USE" | "PLANNED" | "RETIRED";
+  owner?: string | null;
+  criticality?: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | null;
+  createdAt: string;
+}
+
+export interface SoftwareCatalogImportBatch {
+  id: string;
+  importedAt: string;
+  fileName: string;
+  totalRows: number;
+  newCount: number;
+  changedCount: number;
+  unchangedCount: number;
+  missingCount: number;
+}
+
+export interface SoftwareReleaseLifecycleHistory {
+  id: string;
+  releaseId: string;
+  fieldName: string;
+  oldValue: string | null;
+  newValue: string | null;
+  changedAt: string;
+  importBatchId: string;
 }
 
 export interface AssetSoftwareInstallation {
@@ -224,7 +285,11 @@ export interface AssetSoftwareInstallation {
   matchedReleaseId?: string | null;
   matchedReleaseVersion?: string | null;
   eoslDate?: string | null;
-  lifecycleStatus: "SUPPORTED" | "D180" | "D90" | "D30" | "EOSL" | "UNMAPPED";
+  lifecycleStatus: LifecycleStatus;
+  matchStatus?: SoftwareMatchStatus;
+  detectedProductName?: string;
+  candidateProductIds?: string[];
+  candidateReleaseIds?: string[];
   vendor?: string;
   category?: string;
   installedAt?: string;

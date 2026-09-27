@@ -1,12 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import type { NetworkStatus, SoftwareInstall, SopDocument, VmAsset } from "@/domain/models";
+import type { AssetSoftwareInstallation, NetworkStatus, SoftwareInstall, SoftwareRelease, SopDocument, VmAsset } from "@/domain/models";
 import { SlideDrawer } from "@/components/common/slide-drawer";
 import { Badge } from "@/components/tailgrids/core/badge";
 import { StatusBadge } from "@/components/network/status-badge";
 import { getEoslState } from "@/domain/eosl";
 import { ArrowUpRightIcon } from "@/components/common/icons";
+import { getAppNow } from "@/domain/app-time";
+import { daysUntilEosl, deriveLifecycleStatus, matchVersionRule } from "@/domain/software-lifecycle";
 
 type DrawerTab = "overview" | "network" | "software" | "sop";
 
@@ -18,6 +20,8 @@ export function VmDrawer({
   open,
   onClose,
   onSelectSoftware,
+  installations = [],
+  releases = [],
 }: {
   vm: VmAsset | null;
   network: NetworkStatus[];
@@ -26,6 +30,8 @@ export function VmDrawer({
   open: boolean;
   onClose: () => void;
   onSelectSoftware?: (sw: SoftwareInstall) => void;
+  installations?: AssetSoftwareInstallation[];
+  releases?: SoftwareRelease[];
 }) {
   const [activeTab, setActiveTab] = useState<DrawerTab>("overview");
 
@@ -35,8 +41,10 @@ export function VmDrawer({
     (s) => s.policy.sourceVmId === vm.id || s.policy.targetVmId === vm.id
   );
   const installed = software.filter((s) => s.vmId === vm.id);
+  const catalogInstalled = installations.filter((item) => item.assetId === vm.id);
   const docs = sops.filter((s) => s.relatedVmIds.includes(vm.id));
-  const eosl = getEoslState(vm.eoslDate, new Date("2026-09-21T00:28:00+09:00"));
+  const osRelease = releases.find((release) => release.productName.toLowerCase().includes((vm.osName ?? "").toLowerCase()) && !!vm.osVersion && matchVersionRule(vm.osVersion, release.versionMatchRule, release.matchPattern, release.version));
+  const eosl = getEoslState(osRelease?.eoslDate ?? vm.eoslDate, getAppNow());
   const eoslTone =
     eosl.state === "EOSL"
       ? "danger"
@@ -59,7 +67,7 @@ export function VmDrawer({
             [
               { id: "overview", label: "개요" },
               { id: "network", label: `네트워크 (${connections.length})` },
-              { id: "software", label: `소프트웨어 (${installed.length})` },
+              { id: "software", label: `소프트웨어 (${catalogInstalled.length || installed.length})` },
               { id: "sop", label: `SOP (${docs.length})` },
             ] as const
           ).map((tab) => (
@@ -125,7 +133,7 @@ export function VmDrawer({
                 v={
                   <span className="flex items-center gap-2">
                     <Badge tone={eoslTone}>{eosl.state}</Badge>
-                    <span className="font-mono text-[9px]">{vm.eoslDate ?? "미매핑"}</span>
+                    <span className="font-mono text-[9px]">{osRelease?.eoslDate ?? vm.eoslDate ?? "미매핑"}{osRelease ? " · Catalog" : " · Legacy fallback"}</span>
                   </span>
                 }
               />
@@ -174,8 +182,13 @@ export function VmDrawer({
               감지된 소프트웨어 패키지, 카탈로그 릴리스 매칭 및 지원 수명주기
             </div>
             <div className="divide-y divide-[var(--border)] rounded-md border border-[var(--border)]">
-              {installed.map((sw) => {
-                const state = getEoslState(sw.eoslDate, new Date("2026-09-21T00:28:00+09:00"));
+              {catalogInstalled.length > 0 ? catalogInstalled.map((sw) => {
+                const release = releases.find((item) => item.id === sw.matchedReleaseId);
+                const state = deriveLifecycleStatus(release?.eoslDate);
+                const days = daysUntilEosl(release?.eoslDate);
+                return <div key={sw.id} className="flex items-center justify-between gap-2 p-2.5 hover:bg-[var(--surface-2)] transition"><div><div className="text-[11px] font-medium">{sw.productName}</div><div className="text-[9px] text-[var(--muted)]">감지 {sw.detectedVersion} · 매칭 {release?.version ?? "-"}</div><div className="font-mono text-[8px] text-[var(--muted-2)]">EOSL {release?.eoslDate ?? "UNKNOWN"} · {days == null ? "-" : days < 0 ? `D+${Math.abs(days)}` : `D-${days}`} · {sw.matchStatus ?? "MATCHED"}</div></div><Badge tone={state === "SUPPORTED" ? "success" : state === "EOSL" ? "danger" : state === "UNMAPPED" ? "neutral" : "warning"}>{state}</Badge></div>;
+              }) : installed.map((sw) => {
+                const state = getEoslState(sw.eoslDate, getAppNow());
                 const tone =
                   state.state === "EOSL"
                     ? "danger"

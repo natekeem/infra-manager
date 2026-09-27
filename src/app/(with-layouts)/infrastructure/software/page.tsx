@@ -2,19 +2,27 @@ import { PageHeader } from "@/components/common/page-header";
 import { SoftwareView } from "@/components/software/software-view";
 import {
   getAssetSoftwareInstallations,
+  getProjectSoftwareScopes,
   getSoftware,
+  getSoftwareCatalogImportBatches,
+  getSoftwareLifecycleHistory,
+  getSoftwareLifecyclePhases,
   getSoftwareProducts,
   getSoftwareReleases,
   getVmAssets,
 } from "@/services/api/infrastructure";
 
 export default async function SoftwarePage() {
-  const [software, vms, products, releases, installations] = await Promise.all([
+  const [software, vms, products, releases, installations, phases, scopes, history, importBatches] = await Promise.all([
     getSoftware(),
     getVmAssets(),
     getSoftwareProducts(),
     getSoftwareReleases(),
     getAssetSoftwareInstallations(),
+    getSoftwareLifecyclePhases(),
+    getProjectSoftwareScopes(),
+    getSoftwareLifecycleHistory(),
+    getSoftwareCatalogImportBatches(),
   ]);
 
   return (
@@ -29,6 +37,10 @@ export default async function SoftwarePage() {
         products={products}
         releases={releases}
         installations={installations}
+        phases={phases}
+        scopes={scopes}
+        history={history}
+        importBatches={importBatches}
       />
     </>
   );

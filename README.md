@@ -22,7 +22,7 @@ The UI is intentionally a **compact developer/admin console**, not a generated S
 - dense table suitable for 30+ VMs
 - hostname/IP/service search
 - role filter
-- row click → **left sliding Drawer**
+- row click → **right sliding Drawer**
 - Drawer includes resource snapshot, asset metadata, network status, installed software/EOSL, SOP and Grafana link
 
 ### Architecture
@@ -33,8 +33,8 @@ The UI is intentionally a **compact developer/admin console**, not a generated S
 - tier double-click → VM view filtered to that tier
 - issue-only filter
 - VM/IP search
-- VM click → left Drawer
-- edge click → left Connection Drawer
+- VM click → right Drawer
+- edge click → right Connection Drawer
 - aggregate service/tier flows on high-level views
 - per-connection TCP/expiry labels on VM view
 
@@ -115,9 +115,8 @@ DATA_SOURCE=mysql
 
 ### 5. Map Telegraf / Influx
 
-If generated probe configs are adopted, keep these tags on `net_response`:
+If generated probe configs are adopted, keep the directional identity tags on `net_response`:
 
-- `policy_id`
 - `source_vm_id`
 - `source_name`
 - `target_name`
@@ -142,7 +141,9 @@ INFLUX_BUCKET=...
 INFLUX_CONNECTIVITY_MEASUREMENT=net_response
 ```
 
-`src/services/server/influx-observations.ts` already maps the generated tag convention into the application's `ConnectivityObservation` contract. If the existing company measurement differs, change that adapter only — do not rewrite the UI.
+`policy_id` may be retained as optional diagnostic metadata, but observations remain independent facts and are joined by `source_vm_id + target_ip + protocol + target_port`. `src/services/server/influx-observations.ts` maps the tag convention into the application's `ConnectivityObservation` contract. If the existing company measurement differs, change that adapter only — do not rewrite the UI.
+
+`DEMO_NOW` may be set on the server (and `NEXT_PUBLIC_DEMO_NOW` for client-rendered demo surfaces) to freeze lifecycle calculations. Without it, all screens use the real current time. `EOSL_CATALOG_STALE_DAYS` / `NEXT_PUBLIC_EOSL_CATALOG_STALE_DAYS` controls catalog freshness warnings (default 30 days).
 
 ## Main routes
 

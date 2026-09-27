@@ -8,9 +8,14 @@ import type {
   NetworkPolicy,
   NetworkStatus,
   ProjectGroup,
+  ProjectSoftwareScope,
+  SoftwareCatalogImportBatch,
   SoftwareInstall,
+  SoftwareLifecyclePhase,
   SoftwareProduct,
+  SoftwareProductAlias,
   SoftwareRelease,
+  SoftwareReleaseLifecycleHistory,
   SopDocument,
   TopologyGroup,
   VmAsset,
@@ -22,15 +27,25 @@ import {
   observations as mockObservations,
   policies as mockPolicies,
   projectGroups as mockProjectGroups,
+  projectSoftwareScopes as mockProjectSoftwareScopes,
   relations as mockRelations,
   software as mockSoftware,
   softwareProducts as mockSoftwareProducts,
+  softwareProductAliases as mockSoftwareProductAliases,
   softwareReleases as mockSoftwareReleases,
+  softwareLifecyclePhases as mockSoftwareLifecyclePhases,
+  softwareCatalogImportBatches as mockSoftwareCatalogImportBatches,
+  softwareLifecycleHistory as mockSoftwareLifecycleHistory,
   sops as mockSops,
   topologyGroups as mockTopologyGroups,
   vms as mockVms,
 } from "./mock-data";
-import { loadPoliciesFromMysql, loadSoftwareFromMysql, loadSopsFromMysql, loadVmsFromMysql } from "@/services/server/repository";
+import {
+  loadAssetSoftwareInstallationsFromMysql, loadPoliciesFromMysql, loadProjectSoftwareScopeFromMysql,
+  loadSoftwareCatalogImportBatchesFromMysql, loadSoftwareFromMysql, loadSoftwareLifecycleHistoryFromMysql,
+  loadSoftwareLifecyclePhasesFromMysql, loadSoftwareProductAliasesFromMysql, loadSoftwareProductsFromMysql,
+  loadSoftwareReleasesFromMysql, loadSopsFromMysql, loadVmsFromMysql,
+} from "@/services/server/repository";
 import { loadConnectivityFromInflux } from "@/services/server/influx-observations";
 import { healthFromResource, loadVmResourceSnapshotFromInflux } from "@/services/server/influx-resources";
 import { enrichInstallations, enrichLegacySoftware } from "@/domain/software-lifecycle";
@@ -86,19 +101,45 @@ export async function getClusters(projectGroupId?: string): Promise<ClusterEntit
 
 export async function getSoftware(): Promise<SoftwareInstall[]> {
   const software = useMysql() ? await loadSoftwareFromMysql() : mockSoftware;
-  return enrichLegacySoftware(software, mockSoftwareProducts, mockSoftwareReleases);
+  const [products, releases] = await Promise.all([getSoftwareProducts(), getSoftwareReleases()]);
+  return enrichLegacySoftware(software, products, releases);
 }
 
 export async function getSoftwareProducts(): Promise<SoftwareProduct[]> {
-  return mockSoftwareProducts;
+  return useMysql() ? loadSoftwareProductsFromMysql() : mockSoftwareProducts;
 }
 
 export async function getSoftwareReleases(): Promise<SoftwareRelease[]> {
-  return mockSoftwareReleases;
+  return useMysql() ? loadSoftwareReleasesFromMysql() : mockSoftwareReleases;
+}
+
+export async function getSoftwareLifecyclePhases(): Promise<SoftwareLifecyclePhase[]> {
+  return useMysql() ? loadSoftwareLifecyclePhasesFromMysql() : mockSoftwareLifecyclePhases;
+}
+
+export async function getSoftwareProductAliases(): Promise<SoftwareProductAlias[]> {
+  return useMysql() ? loadSoftwareProductAliasesFromMysql() : mockSoftwareProductAliases;
+}
+
+export async function getProjectSoftwareScopes(projectGroupId?: string): Promise<ProjectSoftwareScope[]> {
+  const scopes = useMysql() ? await loadProjectSoftwareScopeFromMysql() : mockProjectSoftwareScopes;
+  return projectGroupId ? scopes.filter((scope) => scope.projectGroupId === projectGroupId) : scopes;
+}
+
+export async function getSoftwareCatalogImportBatches(): Promise<SoftwareCatalogImportBatch[]> {
+  return useMysql() ? loadSoftwareCatalogImportBatchesFromMysql() : mockSoftwareCatalogImportBatches;
+}
+
+export async function getSoftwareLifecycleHistory(): Promise<SoftwareReleaseLifecycleHistory[]> {
+  return useMysql() ? loadSoftwareLifecycleHistoryFromMysql() : mockSoftwareLifecycleHistory;
 }
 
 export async function getAssetSoftwareInstallations(projectGroupId?: string): Promise<AssetSoftwareInstallation[]> {
-  const enriched = enrichInstallations(mockAssetSoftwareInstallations, mockSoftwareReleases);
+  const [installations, releases, products, aliases] = await Promise.all([
+    useMysql() ? loadAssetSoftwareInstallationsFromMysql() : mockAssetSoftwareInstallations,
+    getSoftwareReleases(), getSoftwareProducts(), getSoftwareProductAliases(),
+  ]);
+  const enriched = enrichInstallations(installations, releases, products, aliases);
   if (!projectGroupId) return enriched;
   return enriched.filter((i) => !i.projectGroupId || i.projectGroupId === projectGroupId);
 }

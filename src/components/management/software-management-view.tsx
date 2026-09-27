@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import type { SoftwareProduct, SoftwareRelease } from "@/domain/models";
 import { managementRepo } from "@/services/management/mock-repository";
 import { Badge } from "@/components/tailgrids/core/badge";
 import { SearchIcon } from "@/components/common/icons";
 import { SlideDrawer } from "@/components/common/slide-drawer";
+import { CatalogImportPanel } from "./catalog-import-panel";
+import { deriveLifecycleStatus } from "@/domain/software-lifecycle";
 
 export function SoftwareManagementView({
   initialProducts,
@@ -17,17 +19,6 @@ export function SoftwareManagementView({
   const [products, setProducts] = useState<SoftwareProduct[]>(initialProducts);
   const [releases, setReleases] = useState<SoftwareRelease[]>(initialReleases);
 
-  useEffect(() => {
-    let isMounted = true;
-    Promise.all([managementRepo.getProducts(), managementRepo.getReleases()]).then(([allProducts, allReleases]) => {
-      if (!isMounted) return;
-      if (allProducts && allProducts.length > 0) setProducts(allProducts);
-      if (allReleases && allReleases.length > 0) setReleases(allReleases);
-    });
-    return () => {
-      isMounted = false;
-    };
-  }, []);
   const [query, setQuery] = useState("");
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingRelease, setEditingRelease] = useState<SoftwareRelease | null>(null);
@@ -112,6 +103,7 @@ export function SoftwareManagementView({
 
   return (
     <div className="space-y-3">
+      <CatalogImportPanel products={products} releases={releases} onApply={(nextProducts, nextReleases) => { setProducts(nextProducts); setReleases(nextReleases); }} />
       {/* Control Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2">
         <div className="flex h-7 w-[240px] items-center gap-1.5 rounded-md border border-[var(--border)] px-2">
@@ -188,15 +180,15 @@ export function SoftwareManagementView({
                     <Td>
                       <Badge
                         tone={
-                          r.status === "SUPPORTED"
+                          deriveLifecycleStatus(r.eoslDate) === "SUPPORTED"
                             ? "success"
-                            : r.status === "EOSL"
+                            : deriveLifecycleStatus(r.eoslDate) === "EOSL"
                               ? "danger"
                               : "warning"
                         }
                         dot
                       >
-                        {r.status}
+                        {deriveLifecycleStatus(r.eoslDate)}
                       </Badge>
                     </Td>
                     <Td className="text-right">

@@ -75,7 +75,7 @@ const SAMPLE_PAYLOAD = JSON.stringify(
         summary: "Emergency recovery steps when RPA worker robot terminates abnormally.",
         url: "https://wiki.internal/ops/sop-bot-recovery",
         relatedVmIds: ["vm-bot09"],
-        updatedAt: "2026-09-21",
+        updatedAt: "2026-09-25",
       },
     ],
   },

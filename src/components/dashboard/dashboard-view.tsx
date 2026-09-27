@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import type { ConnectivityObservation, NetworkStatus, ResourcePoint, SoftwareInstall, SopDocument, VmAsset } from "@/domain/models";
+import type { AssetSoftwareInstallation, ConnectivityObservation, NetworkStatus, ResourcePoint, SoftwareInstall, SoftwareLifecyclePhase, SoftwareRelease, SopDocument, VmAsset } from "@/domain/models";
 import { getEoslState } from "@/domain/eosl";
 import { PageHeader } from "@/components/common/page-header";
 import { Card, CardHeader } from "@/components/tailgrids/core/card";
@@ -16,6 +16,7 @@ import { VmDrawer } from "@/components/infrastructure/vm-drawer";
 import { ConnectionDrawer } from "@/components/network/connection-drawer";
 import { ArrowUpRightIcon } from "@/components/common/icons";
 import { useProjectGroup } from "@/context/project-group-context";
+import { getAppNow } from "@/domain/app-time";
 
 interface DashboardViewProps {
   vms: VmAsset[];
@@ -23,9 +24,12 @@ interface DashboardViewProps {
   software: SoftwareInstall[];
   sops: SopDocument[];
   trend: ResourcePoint[];
+  installations: AssetSoftwareInstallation[];
+  releases: SoftwareRelease[];
+  phases: SoftwareLifecyclePhase[];
 }
 
-export function DashboardView({ vms, network, software, sops, trend }: DashboardViewProps) {
+export function DashboardView({ vms, network, software, sops, trend, installations, releases, phases }: DashboardViewProps) {
   const { activeProject } = useProjectGroup();
   const [selectedVm, setSelectedVm] = useState<VmAsset | null>(null);
   const [selectedConnection, setSelectedConnection] = useState<NetworkStatus | null>(null);
@@ -52,6 +56,7 @@ export function DashboardView({ vms, network, software, sops, trend }: Dashboard
     () => software.filter((s) => projectVmIds.has(s.vmId)),
     [software, projectVmIds]
   );
+  const projectInstallations = useMemo(() => installations.filter((item) => projectVmIds.has(item.assetId) && (!item.projectGroupId || item.projectGroupId === activeProject.id)), [installations, projectVmIds, activeProject.id]);
 
   const projectSops = useMemo(
     () =>
@@ -80,7 +85,7 @@ export function DashboardView({ vms, network, software, sops, trend }: Dashboard
         (n.daysToExpiry !== null && n.daysToExpiry !== undefined && n.daysToExpiry < 0)
     ).length;
 
-    const now = new Date("2026-09-21T00:28:00+09:00");
+    const now = getAppNow();
     const vmEosl = projectVms.map((v) => getEoslState(v.eoslDate, now).state);
     const swEosl = projectSoftware.map((s) => getEoslState(s.eoslDate, now).state);
     const allEosl = [...vmEosl, ...swEosl];
@@ -311,15 +316,15 @@ export function DashboardView({ vms, network, software, sops, trend }: Dashboard
 
         <Card>
           <CardHeader
-            title="EOSL 위험 요약"
-            description="지원 종료 임박한 운영체제 및 설치 소프트웨어"
+            title="Project Software Lifecycle"
+            description="현재 프로젝트가 실제 사용하는 릴리스를 자산 수로 집계"
             action={
               <Link href="/infrastructure/software" className="text-[9px] font-medium text-[#5750f1] hover:underline">
                 소프트웨어 및 EOSL →
               </Link>
             }
           />
-          <EoslRiskSummary vms={projectVms} software={projectSoftware} onSelectVm={setSelectedVm} />
+          <EoslRiskSummary installations={projectInstallations} releases={releases} phases={phases} />
         </Card>
       </div>
 
@@ -329,6 +334,8 @@ export function DashboardView({ vms, network, software, sops, trend }: Dashboard
         network={projectNetwork}
         software={projectSoftware}
         sops={projectSops}
+        installations={projectInstallations}
+        releases={releases}
         open={!!selectedVm}
         onClose={() => setSelectedVm(null)}
       />

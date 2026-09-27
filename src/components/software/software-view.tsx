@@ -1,578 +1,115 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type {
-  AssetSoftwareInstallation,
-  SoftwareInstall,
-  SoftwareProduct,
-  SoftwareRelease,
-  VmAsset,
-} from "@/domain/models";
+import type { AssetSoftwareInstallation, ProjectSoftwareScope, SoftwareCatalogImportBatch, SoftwareInstall,
+  SoftwareLifecyclePhase, SoftwareProduct, SoftwareRelease, SoftwareReleaseLifecycleHistory, VmAsset } from "@/domain/models";
 import { Badge } from "@/components/tailgrids/core/badge";
 import { SearchIcon } from "@/components/common/icons";
-import { SoftwareDetailDrawer } from "./software-detail-drawer";
-import { daysUntil } from "@/domain/network-status";
 import { useProjectGroup } from "@/context/project-group-context";
+import { deriveLifecycleStatus, daysUntilEosl, getProjectUsedProductIds } from "@/domain/software-lifecycle";
+import { getAppNow } from "@/domain/app-time";
+import { SoftwareDetailDrawer } from "./software-detail-drawer";
+import { EoslTimelineChart } from "./eosl-timeline-chart";
 
-type TabMode = "by-asset" | "catalog" | "lifecycle";
+type TabMode = "in-use" | "by-asset" | "lifecycle" | "catalog";
 
-export function SoftwareView({
-  software,
-  vms,
-  products = [],
-  releases = [],
-  installations = [],
-}: {
-  software: SoftwareInstall[];
-  vms: VmAsset[];
-  products?: SoftwareProduct[];
-  releases?: SoftwareRelease[];
-  installations?: AssetSoftwareInstallation[];
+export function SoftwareView({ software: _software, vms, products = [], releases = [], installations = [], phases = [], scopes = [], history = [], importBatches = [] }: {
+  software: SoftwareInstall[]; vms: VmAsset[]; products?: SoftwareProduct[]; releases?: SoftwareRelease[];
+  installations?: AssetSoftwareInstallation[]; phases?: SoftwareLifecyclePhase[]; scopes?: ProjectSoftwareScope[];
+  history?: SoftwareReleaseLifecycleHistory[]; importBatches?: SoftwareCatalogImportBatch[];
 }) {
   const { activeProject } = useProjectGroup();
-  const [tab, setTab] = useState<TabMode>("by-asset");
+  const [tab, setTab] = useState<TabMode>("in-use");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
+  const [vendorFilter, setVendorFilter] = useState("ALL");
+  const [categoryFilter, setCategoryFilter] = useState("ALL");
+  const [catalogStatusFilter, setCatalogStatusFilter] = useState("ALL");
+  const [pageSize, setPageSize] = useState(50);
+  const [page, setPage] = useState(1);
+  const [localScopes, setLocalScopes] = useState(scopes);
+  const [localInstallations, setLocalInstallations] = useState(installations);
   const [selectedRelease, setSelectedRelease] = useState<SoftwareRelease | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<SoftwareProduct | null>(null);
 
-  const projectVms = useMemo(
-    () => vms.filter((v) => !v.projectGroupId || v.projectGroupId === activeProject.id),
-    [vms, activeProject.id]
-  );
-  const projectVmIds = useMemo(() => new Set(projectVms.map((v) => v.id)), [projectVms]);
+  const projectVms = useMemo(() => vms.filter((v) => !v.projectGroupId || v.projectGroupId === activeProject.id), [vms, activeProject.id]);
+  const projectVmIds = useMemo(() => new Set(projectVms.map((vm) => vm.id)), [projectVms]);
+  const vmMap = useMemo(() => new Map(projectVms.map((vm) => [vm.id, vm])), [projectVms]);
+  const projectInstallations = useMemo(() => localInstallations.filter((installation) => projectVmIds.has(installation.assetId) && (!installation.projectGroupId || installation.projectGroupId === activeProject.id)), [localInstallations, projectVmIds, activeProject.id]);
+  const usedProductIds = useMemo(() => getProjectUsedProductIds(activeProject.id, localScopes, projectInstallations), [activeProject.id, localScopes, projectInstallations]);
+  const usedReleases = useMemo(() => releases.filter((release) => usedProductIds.has(release.productId) && projectInstallations.some((installation) => installation.matchedReleaseId === release.id)), [releases, usedProductIds, projectInstallations]);
+  const installedCounts = useMemo(() => Object.fromEntries(releases.map((release) => [release.id, projectInstallations.filter((installation) => installation.matchedReleaseId === release.id).length])), [releases, projectInstallations]);
+  const vendors = useMemo(() => [...new Set(products.map((product) => product.vendor))].sort(), [products]);
+  const categories = useMemo(() => [...new Set(products.map((product) => product.category))].sort(), [products]);
+  const latestImport = importBatches[0];
+  const staleDays = Number(process.env.NEXT_PUBLIC_EOSL_CATALOG_STALE_DAYS ?? 30);
+  const catalogAge = latestImport ? Math.floor((getAppNow().getTime() - new Date(latestImport.importedAt).getTime()) / 86400000) : null;
 
-  const vmMap = useMemo(() => Object.fromEntries(projectVms.map((v) => [v.id, v])), [projectVms]);
+  const filteredInstallations = useMemo(() => projectInstallations.filter((installation) => {
+    const haystack = `${installation.productName} ${installation.detectedVersion} ${vmMap.get(installation.assetId)?.hostname ?? installation.assetId}`.toLowerCase();
+    return (!query || haystack.includes(query.toLowerCase())) && (statusFilter === "ALL" || installation.matchStatus === statusFilter || installation.lifecycleStatus === statusFilter);
+  }), [projectInstallations, vmMap, query, statusFilter]);
 
-  // Merge installations with legacy software if installations array is provided
-  const combinedInstallations = useMemo(() => {
-    if (installations && installations.length > 0) return installations;
-    // Fallback from legacy software
-    return software.map((s) => {
-      const days = daysUntil(s.eoslDate);
-      let lifecycleStatus: "SUPPORTED" | "D180" | "D90" | "D30" | "EOSL" | "UNMAPPED" = "UNMAPPED";
-      if (!s.eoslDate) {
-        lifecycleStatus = "UNMAPPED";
-      } else if (days !== null && days < 0) {
-        lifecycleStatus = "EOSL";
-      } else if (days !== null && days <= 30) {
-        lifecycleStatus = "D30";
-      } else if (days !== null && days <= 90) {
-        lifecycleStatus = "D90";
-      } else if (days !== null && days <= 180) {
-        lifecycleStatus = "D180";
-      } else {
-        lifecycleStatus = "SUPPORTED";
-      }
+  const filteredCatalog = useMemo(() => releases.filter((release) => {
+    const product = products.find((item) => item.id === release.productId);
+    const lifecycle = deriveLifecycleStatus(release.eoslDate);
+    const haystack = `${release.productName} ${release.version} ${release.vendor}`.toLowerCase();
+    return (!query || haystack.includes(query.toLowerCase())) && (statusFilter === "ALL" || lifecycle === statusFilter)
+      && (vendorFilter === "ALL" || release.vendor === vendorFilter) && (categoryFilter === "ALL" || product?.category === categoryFilter)
+      && (catalogStatusFilter === "ALL" || (release.catalogStatus ?? product?.catalogStatus ?? "ACTIVE") === catalogStatusFilter);
+  }), [releases, products, query, statusFilter, vendorFilter, categoryFilter, catalogStatusFilter]);
+  const pagedCatalog = filteredCatalog.slice((page - 1) * pageSize, page * pageSize);
+  const pageCount = Math.max(1, Math.ceil(filteredCatalog.length / pageSize));
 
-      return {
-        id: s.id,
-        assetId: s.vmId,
-        productId: s.name.toLowerCase().replace(/\s+/g, "-"),
-        productName: s.name,
-        detectedVersion: s.version ?? "Unknown",
-        matchedReleaseVersion: s.version ?? null,
-        eoslDate: s.eoslDate,
-        lifecycleStatus,
-        vendor: s.vendor,
-        category: s.category,
-      } as AssetSoftwareInstallation;
-    }).filter((i) => projectVmIds.has(i.assetId));
-  }, [installations, software, projectVmIds]);
+  const aggregates = useMemo(() => [...usedProductIds].map((productId) => {
+    const product = products.find((item) => item.id === productId);
+    const rows = projectInstallations.filter((installation) => installation.productId === productId);
+    const matched = rows.map((row) => releases.find((release) => release.id === row.matchedReleaseId)).filter(Boolean) as SoftwareRelease[];
+    const riskiest = [...matched].sort((a, b) => riskRank(deriveLifecycleStatus(a.eoslDate)) - riskRank(deriveLifecycleStatus(b.eoslDate)))[0];
+    return { product, rows, matched, riskiest };
+  }).filter((item) => item.product), [usedProductIds, products, projectInstallations, releases]);
 
-  // Filtered by-asset
-  const filteredInstallations = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return combinedInstallations.filter((inst) => {
-      const vm = vmMap[inst.assetId];
-      const matchQuery =
-        !q ||
-        `${inst.productName} ${inst.detectedVersion} ${inst.vendor ?? ""} ${inst.assetId} ${vm?.hostname ?? ""} ${vm?.ipAddress ?? ""}`
-          .toLowerCase()
-          .includes(q);
-      const matchStatus = statusFilter === "ALL" || inst.lifecycleStatus === statusFilter;
-      return matchQuery && matchStatus;
-    });
-  }, [combinedInstallations, vmMap, query, statusFilter]);
+  const openRelease = (release: SoftwareRelease) => { setSelectedRelease(release); setSelectedProduct(products.find((product) => product.id === release.productId) ?? null); };
+  const openProduct = (productId: string) => { const product = products.find((item) => item.id === productId) ?? null; setSelectedProduct(product); setSelectedRelease(releases.find((release) => release.productId === productId) ?? null); };
+  const addToProject = () => {
+    if (!selectedProduct || usedProductIds.has(selectedProduct.id)) return;
+    setLocalScopes((current) => [...current, { id: `local-${activeProject.id}-${selectedProduct.id}`, projectGroupId: activeProject.id, productId: selectedProduct.id, scopeSource: "MANUAL", usageStatus: "IN_USE", createdAt: getAppNow().toISOString() }]);
+  };
 
-  // Filtered catalog
-  const filteredReleases = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return releases.filter((rel) => {
-      const matchQuery =
-        !q ||
-        `${rel.productName} ${rel.version} ${rel.vendor} ${rel.versionMatchRule}`
-          .toLowerCase()
-          .includes(q);
-      const matchStatus = statusFilter === "ALL" || rel.status === statusFilter;
-      return matchQuery && matchStatus;
-    });
-  }, [releases, query, statusFilter]);
-
-  // Stats calculation
-  const stats = useMemo(() => {
-    const eolCount = combinedInstallations.filter((i) => i.lifecycleStatus === "EOSL").length;
-    const d30Count = combinedInstallations.filter((i) => i.lifecycleStatus === "D30").length;
-    const d90Count = combinedInstallations.filter((i) => i.lifecycleStatus === "D90").length;
-    const d180Count = combinedInstallations.filter((i) => i.lifecycleStatus === "D180").length;
-    const unmappedCount = combinedInstallations.filter((i) => i.lifecycleStatus === "UNMAPPED").length;
-    const supportedCount = combinedInstallations.filter((i) => i.lifecycleStatus === "SUPPORTED").length;
-
-    return {
-      total: combinedInstallations.length,
-      eolCount,
-      d30Count,
-      d90Count,
-      d180Count,
-      unmappedCount,
-      supportedCount,
-    };
-  }, [combinedInstallations]);
-
-  function handleOpenRelease(release: SoftwareRelease) {
-    setSelectedRelease(release);
-    setSelectedProduct(products.find((p) => p.id === release.productId) ?? null);
-  }
-
-  function handleOpenInstallation(inst: AssetSoftwareInstallation) {
-    const matched = releases.find((r) => r.id === inst.matchedReleaseId) ??
-      releases.find((r) => r.productName === inst.productName && r.version === inst.detectedVersion);
-    if (matched) {
-      setSelectedRelease(matched);
-      setSelectedProduct(products.find((p) => p.id === matched.productId) ?? null);
-    } else {
-      setSelectedRelease({
-        id: `unmapped-${inst.id}`,
-        productId: inst.productId,
-        productName: inst.productName,
-        version: inst.detectedVersion,
-        vendor: inst.vendor ?? "Unknown",
-        eoslDate: inst.eoslDate ?? null,
-        status: inst.lifecycleStatus === "UNMAPPED" ? "SUPPORTED" : (inst.lifecycleStatus as any),
-        versionMatchRule: "exact",
-      });
-      setSelectedProduct(products.find((p) => p.id === inst.productId) ?? null);
-    }
-  }
-
-  return (
-    <div className="space-y-3">
-      {/* Top Metric Strip */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-        <MetricCard label="전체 설치 소프트웨어" value={stats.total} tone="neutral" />
-        <MetricCard label="지원 중" value={stats.supportedCount} tone="success" />
-        <MetricCard label="D-180 / D-90 주의" value={stats.d180Count + stats.d90Count} tone="warning" />
-        <MetricCard label="D-30 만료 임박" value={stats.d30Count} tone="warning" highlight />
-        <MetricCard label="EOSL 만료됨" value={stats.eolCount} tone="danger" highlight />
-        <MetricCard label="미매핑 / 미인식" value={stats.unmappedCount} tone="neutral" />
-      </div>
-
-      {/* Control Bar: Tabs + Filters */}
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2">
-        {/* Tab Switcher */}
-        <div className="flex rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-0.5">
-          <button
-            type="button"
-            onClick={() => setTab("by-asset")}
-            className={`h-7 rounded px-3 text-[10px] font-medium transition ${
-              tab === "by-asset"
-                ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm"
-                : "text-[var(--muted)] hover:text-[var(--foreground)]"
-            }`}
-          >
-            자산별 현황 ({combinedInstallations.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab("catalog")}
-            className={`h-7 rounded px-3 text-[10px] font-medium transition ${
-              tab === "catalog"
-                ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm"
-                : "text-[var(--muted)] hover:text-[var(--foreground)]"
-            }`}
-          >
-            소프트웨어 카탈로그 ({releases.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab("lifecycle")}
-            className={`h-7 rounded px-3 text-[10px] font-medium transition ${
-              tab === "lifecycle"
-                ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm"
-                : "text-[var(--muted)] hover:text-[var(--foreground)]"
-            }`}
-          >
-            수명주기 매트릭스
-          </button>
-        </div>
-
-        {/* Filter & Search */}
-        <div className="flex items-center gap-2">
-          {tab !== "lifecycle" && (
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              aria-label="Filter software by status"
-              className="h-7 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[10px] outline-none text-[var(--foreground)]"
-            >
-              <option value="ALL">전체 상태</option>
-              <option value="SUPPORTED">SUPPORTED</option>
-              <option value="D180">D-180</option>
-              <option value="D90">D-90</option>
-              <option value="D30">D-30</option>
-              <option value="EOSL">EOSL</option>
-              <option value="UNMAPPED">UNMAPPED</option>
-            </select>
-          )}
-
-          <div className="flex h-7 w-[220px] items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2">
-            <SearchIcon className="h-3.5 w-3.5 shrink-0 text-[var(--muted)]" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className="w-full bg-transparent text-[10px] outline-none text-[var(--foreground)]"
-              placeholder="소프트웨어, 버전, 호스트 검색..."
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Tab 1: By Asset Table */}
-      {tab === "by-asset" && (
-        <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)]">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[960px] text-left text-[10px]">
-              <thead>
-                <tr className="border-b border-[var(--border)] bg-[var(--surface-2)] text-[9px] uppercase tracking-[0.04em] text-[var(--muted)]">
-                  <Th>자산 / 호스트</Th>
-                  <Th>소프트웨어</Th>
-                  <Th>감지된 버전</Th>
-                  <Th>벤더</Th>
-                  <Th>분류</Th>
-                  <Th>수명주기 상태</Th>
-                  <Th>EOSL 일자</Th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border)]">
-                {filteredInstallations.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="p-6 text-center text-[11px] text-[var(--muted)]">
-                      일치하는 소프트웨어 설치 내역이 없습니다.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredInstallations.map((inst) => {
-                    const vm = vmMap[inst.assetId];
-                    const days = daysUntil(inst.eoslDate);
-
-                    return (
-                      <tr
-                        key={inst.id}
-                        onClick={() => handleOpenInstallation(inst)}
-                        className="cursor-pointer hover:bg-[var(--surface-2)] transition-colors"
-                      >
-                        <Td>
-                          <span className="font-mono font-bold text-[var(--foreground)]">
-                            {vm?.hostname ?? inst.assetId}
-                          </span>
-                          <div className="font-mono text-[9px] text-[var(--muted)]">
-                            {vm?.ipAddress ?? "-"}
-                          </div>
-                        </Td>
-                        <Td>
-                          <span className="font-semibold text-[var(--foreground)]">
-                            {inst.productName}
-                          </span>
-                        </Td>
-                        <Td>
-                          <span className="font-mono">{inst.detectedVersion}</span>
-                        </Td>
-                        <Td>{inst.vendor ?? "-"}</Td>
-                        <Td>
-                          <span className="rounded bg-[var(--surface-2)] px-1.5 py-0.5 text-[9px]">
-                            {inst.category ?? "General"}
-                          </span>
-                        </Td>
-                        <Td>
-                          <Badge
-                            tone={
-                              inst.lifecycleStatus === "SUPPORTED"
-                                ? "success"
-                                : inst.lifecycleStatus === "EOSL"
-                                  ? "danger"
-                                  : inst.lifecycleStatus === "UNMAPPED"
-                                    ? "neutral"
-                                    : "warning"
-                            }
-                            dot
-                          >
-                            {inst.lifecycleStatus}
-                          </Badge>
-                        </Td>
-                        <Td>
-                          <span className="font-mono">{inst.eoslDate ?? "Unmapped"}</span>
-                          {days != null && (
-                            <div className="font-mono text-[9px] text-[var(--muted)]">
-                              {days < 0 ? `D+${Math.abs(days)}` : `D-${days}`}
-                            </div>
-                          )}
-                        </Td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Tab 2: Software Catalog Table */}
-      {tab === "catalog" && (
-        <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)]">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[960px] text-left text-[10px]">
-              <thead>
-                <tr className="border-b border-[var(--border)] bg-[var(--surface-2)] text-[9px] uppercase tracking-[0.04em] text-[var(--muted)]">
-                  <Th>제품</Th>
-                  <Th>릴리스 버전</Th>
-                  <Th>벤더</Th>
-                  <Th>매칭 규칙</Th>
-                  <Th>매칭 패턴</Th>
-                  <Th>지원 종료</Th>
-                  <Th>EOSL 일자</Th>
-                  <Th>상태</Th>
-                  <Th>설치 수</Th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border)]">
-                {filteredReleases.length === 0 ? (
-                  <tr>
-                    <td colSpan={9} className="p-6 text-center text-[11px] text-[var(--muted)]">
-                      카탈로그에 등록된 릴리스가 없습니다.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredReleases.map((rel) => {
-                    const matchCount = combinedInstallations.filter(
-                      (i) => i.matchedReleaseId === rel.id || (i.productName === rel.productName && i.detectedVersion === rel.version)
-                    ).length;
-
-                    return (
-                      <tr
-                        key={rel.id}
-                        onClick={() => handleOpenRelease(rel)}
-                        className="cursor-pointer hover:bg-[var(--surface-2)] transition-colors"
-                      >
-                        <Td>
-                          <span className="font-bold text-[var(--foreground)]">{rel.productName}</span>
-                        </Td>
-                        <Td>
-                          <span className="font-mono font-semibold text-[var(--foreground)]">{rel.version}</span>
-                        </Td>
-                        <Td>{rel.vendor}</Td>
-                        <Td>
-                          <Badge tone="info">{rel.versionMatchRule.toUpperCase()}</Badge>
-                        </Td>
-                        <Td>
-                          <span className="font-mono text-[9px] text-[var(--muted)]">
-                            {rel.matchPattern ?? rel.version}
-                          </span>
-                        </Td>
-                        <Td>
-                          <span className="font-mono">{rel.supportEndDate ?? "-"}</span>
-                        </Td>
-                        <Td>
-                          <span className="font-mono font-medium">{rel.eoslDate ?? "Unmapped"}</span>
-                        </Td>
-                        <Td>
-                          <Badge
-                            tone={
-                              rel.status === "SUPPORTED"
-                                ? "success"
-                                : rel.status === "EOSL"
-                                  ? "danger"
-                                  : "warning"
-                            }
-                            dot
-                          >
-                            {rel.status}
-                          </Badge>
-                        </Td>
-                        <Td>
-                          <span className="font-mono text-[var(--foreground)]">{matchCount} VM(s)</span>
-                        </Td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Tab 3: Lifecycle Matrix View */}
-      {tab === "lifecycle" && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            {/* Urgent: EOSL & D-30 */}
-            <div className="rounded-lg border border-[var(--danger)]/30 bg-[var(--surface)] p-3">
-              <div className="mb-2 flex items-center justify-between border-b border-[var(--border)] pb-2">
-                <div className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-[var(--danger)]" />
-                  <h3 className="text-[11px] font-bold text-[var(--foreground)]">긴급 조치 필요 (EOSL & D-30)</h3>
-                </div>
-                <span className="font-mono text-[10px] font-bold text-[var(--danger)]">
-                  {stats.eolCount + stats.d30Count}개 자산
-                </span>
-              </div>
-              <div className="space-y-2 max-h-80 overflow-y-auto">
-                {combinedInstallations
-                  .filter((i) => i.lifecycleStatus === "EOSL" || i.lifecycleStatus === "D30")
-                  .map((inst) => (
-                    <div
-                      key={inst.id}
-                      onClick={() => handleOpenInstallation(inst)}
-                      className="flex cursor-pointer items-center justify-between rounded border border-[var(--border)] bg-[var(--surface-2)] p-2 text-[10px] hover:border-[var(--danger)] transition-colors"
-                    >
-                      <div>
-                        <div className="font-mono font-bold text-[var(--foreground)]">{vmMap[inst.assetId]?.hostname ?? inst.assetId}</div>
-                        <div className="text-[9px] text-[var(--muted)]">
-                          {inst.productName} {inst.detectedVersion}
-                        </div>
-                      </div>
-                      <Badge tone={inst.lifecycleStatus === "EOSL" ? "danger" : "warning"}>
-                        {inst.lifecycleStatus}
-                      </Badge>
-                    </div>
-                  ))}
-              </div>
-            </div>
-
-            {/* Upcoming: D-90 & D-180 */}
-            <div className="rounded-lg border border-[var(--warning)]/30 bg-[var(--surface)] p-3">
-              <div className="mb-2 flex items-center justify-between border-b border-[var(--border)] pb-2">
-                <div className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-[var(--warning)]" />
-                  <h3 className="text-[11px] font-bold text-[var(--foreground)]">만료 도래 예정 (D-90 & D-180)</h3>
-                </div>
-                <span className="font-mono text-[10px] font-bold text-[var(--warning)]">
-                  {stats.d90Count + stats.d180Count}개 자산
-                </span>
-              </div>
-              <div className="space-y-2 max-h-80 overflow-y-auto">
-                {combinedInstallations
-                  .filter((i) => i.lifecycleStatus === "D90" || i.lifecycleStatus === "D180")
-                  .map((inst) => (
-                    <div
-                      key={inst.id}
-                      onClick={() => handleOpenInstallation(inst)}
-                      className="flex cursor-pointer items-center justify-between rounded border border-[var(--border)] bg-[var(--surface-2)] p-2 text-[10px] hover:border-[var(--warning)] transition-colors"
-                    >
-                      <div>
-                        <div className="font-mono font-bold text-[var(--foreground)]">{vmMap[inst.assetId]?.hostname ?? inst.assetId}</div>
-                        <div className="text-[9px] text-[var(--muted)]">
-                          {inst.productName} {inst.detectedVersion}
-                        </div>
-                      </div>
-                      <Badge tone="warning">{inst.lifecycleStatus}</Badge>
-                    </div>
-                  ))}
-              </div>
-            </div>
-
-            {/* Unmapped / Unrecognized */}
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
-              <div className="mb-2 flex items-center justify-between border-b border-[var(--border)] pb-2">
-                <div className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-[var(--muted)]" />
-                  <h3 className="text-[11px] font-bold text-[var(--foreground)]">미매핑 / 카탈로그 검토 필요</h3>
-                </div>
-                <span className="font-mono text-[10px] font-bold text-[var(--muted)]">
-                  {stats.unmappedCount}개 자산
-                </span>
-              </div>
-              <div className="space-y-2 max-h-80 overflow-y-auto">
-                {combinedInstallations
-                  .filter((i) => i.lifecycleStatus === "UNMAPPED")
-                  .map((inst) => (
-                    <div
-                      key={inst.id}
-                      onClick={() => handleOpenInstallation(inst)}
-                      className="flex cursor-pointer items-center justify-between rounded border border-[var(--border)] bg-[var(--surface-2)] p-2 text-[10px] hover:border-[var(--primary)] transition-colors"
-                    >
-                      <div>
-                        <div className="font-mono font-bold text-[var(--foreground)]">{vmMap[inst.assetId]?.hostname ?? inst.assetId}</div>
-                        <div className="text-[9px] text-[var(--muted)]">
-                          {inst.productName} {inst.detectedVersion}
-                        </div>
-                      </div>
-                      <Badge tone="neutral">UNMAPPED</Badge>
-                    </div>
-                  ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Compliance note */}
-          <div className="rounded-md border border-dashed border-[var(--border-strong)] p-3 text-[9.5px] text-[var(--muted)] leading-relaxed">
-            운영 원칙: 카탈로그와 매칭되지 않는 소프트웨어 버전은 임의로 정상 또는 만료 상태로 추정하지 않고 <span className="font-semibold text-[var(--foreground)]">UNMAPPED</span> 상태로 유지하여, 관리자가 정식 카탈로그 릴리스 규칙을 등록하거나 보안 검증을 수행하도록 유도합니다.
-          </div>
-        </div>
-      )}
-
-      {/* Software Detail Drawer */}
-      <SoftwareDetailDrawer
-        release={selectedRelease}
-        product={selectedProduct}
-        installations={combinedInstallations.filter(
-          (i) =>
-            selectedRelease &&
-            (i.matchedReleaseId === selectedRelease.id ||
-              (i.productName === selectedRelease.productName && i.detectedVersion === selectedRelease.version))
-        )}
-        open={!!selectedRelease}
-        onClose={() => {
-          setSelectedRelease(null);
-          setSelectedProduct(null);
-        }}
-      />
+  return <div className="space-y-3">
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+      <div><div className="text-[10px] font-semibold">Company EOSL Catalog</div><div className="text-[9px] text-[var(--muted)]">{latestImport ? `마지막 Import ${latestImport.importedAt.slice(0, 10)} · ${products.length} products / ${releases.length} releases` : "Import 이력 없음"}</div></div>
+      {catalogAge !== null && catalogAge > staleDays && <Badge tone="warning">STALE CATALOG · {catalogAge}일</Badge>}
     </div>
-  );
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2">
+      <div className="flex rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-0.5">{([
+        ["in-use", `사용 중 (${aggregates.length})`], ["by-asset", `자산별 (${projectInstallations.length})`], ["lifecycle", "수명주기"], ["catalog", `전체 카탈로그 (${releases.length})`],
+      ] as const).map(([id, label]) => <button key={id} onClick={() => { setTab(id); setPage(1); }} className={`h-7 rounded px-3 text-[10px] font-medium ${tab === id ? "bg-[var(--surface)] shadow-sm" : "text-[var(--muted)]"}`}>{label}</button>)}</div>
+      <div className="flex flex-wrap items-center gap-2"><select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }} className="h-7 rounded border border-[var(--border)] bg-[var(--surface)] px-2 text-[10px]"><option value="ALL">전체 상태</option>{["SUPPORTED","D180","D90","D30","EOSL","UNMAPPED","AMBIGUOUS"].map((value) => <option key={value}>{value}</option>)}</select>
+        <div className="flex h-7 w-[220px] items-center gap-1.5 rounded border border-[var(--border)] px-2"><SearchIcon className="h-3.5 w-3.5 text-[var(--muted)]"/><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} className="w-full bg-transparent text-[10px] outline-none" placeholder="제품, 버전, 호스트 검색"/></div></div>
+    </div>
+
+    {tab === "in-use" && <Table headers={["Software","Current Version(s)","Installed Assets","EOSL","Remaining","Risk","Match"]}>{aggregates.map(({ product, rows, riskiest }) => {
+      const statuses = rows.map((row) => row.matchStatus ?? "MATCHED"); const status = statuses.includes("AMBIGUOUS") ? "AMBIGUOUS" : statuses.includes("UNMAPPED") ? "UNMAPPED" : "MATCHED";
+      return <tr key={product!.id} onClick={() => openProduct(product!.id)} className="cursor-pointer border-b border-[var(--border)] hover:bg-[var(--surface-2)]"><Td strong>{product!.name}</Td><Td mono>{[...new Set(rows.map((row) => row.matchedReleaseVersion ?? row.detectedVersion))].join(", ") || "PLANNED"}</Td><Td mono>{new Set(rows.map((row) => row.assetId)).size}</Td><Td mono>{riskiest?.eoslDate ?? "UNKNOWN"}</Td><Td mono>{formatRemaining(daysUntilEosl(riskiest?.eoslDate))}</Td><Td><Status value={deriveLifecycleStatus(riskiest?.eoslDate)} /></Td><Td><Status value={status} /></Td></tr>;
+    })}</Table>}
+
+    {tab === "by-asset" && <Table headers={["Asset","Software","Detected Version","Matched Release","EOSL","Remaining","Lifecycle","Match"]}>{filteredInstallations.map((installation) => <tr key={installation.id} onClick={() => installation.matchedReleaseId ? openRelease(releases.find((release) => release.id === installation.matchedReleaseId)!) : openProduct(installation.productId)} className="cursor-pointer border-b border-[var(--border)] hover:bg-[var(--surface-2)]"><Td strong>{vmMap.get(installation.assetId)?.hostname ?? installation.assetId}</Td><Td>{installation.productName}</Td><Td mono>{installation.detectedVersion}</Td><Td mono>{installation.matchedReleaseVersion ?? "-"}</Td><Td mono>{installation.eoslDate ?? "UNKNOWN"}</Td><Td mono>{formatRemaining(daysUntilEosl(installation.eoslDate))}</Td><Td><Status value={installation.lifecycleStatus}/></Td><Td><Status value={installation.matchStatus ?? "MATCHED"}/></Td></tr>)}</Table>}
+
+    {tab === "lifecycle" && <div className="space-y-3"><EoslTimelineChart releases={usedReleases} phases={phases} installedCounts={installedCounts} selectedReleaseId={selectedRelease?.id} onSelectRelease={openRelease} displayMode="all"/><div className="grid gap-3 lg:grid-cols-3"><RiskBox title="Immediate Risk" rows={projectInstallations.filter((row) => ["EOSL","D30"].includes(row.lifecycleStatus))} onOpen={(row) => row.matchedReleaseId && openRelease(releases.find((release) => release.id === row.matchedReleaseId)!)} /><RiskBox title="Upcoming" rows={projectInstallations.filter((row) => ["D90","D180"].includes(row.lifecycleStatus))} onOpen={(row) => row.matchedReleaseId && openRelease(releases.find((release) => release.id === row.matchedReleaseId)!)} /><ReviewBox rows={projectInstallations.filter((row) => row.matchStatus === "UNMAPPED" || row.matchStatus === "AMBIGUOUS")} products={products} releases={releases} onMapProduct={(id, product) => setLocalInstallations((rows) => rows.map((row) => row.id === id ? { ...row, productId: product.id, productName: product.name, vendor: product.vendor, category: product.category, matchStatus: "UNMAPPED" } : row))} onMapRelease={(id, release) => setLocalInstallations((rows) => rows.map((row) => row.id === id ? { ...row, productId: release.productId, productName: release.productName, vendor: release.vendor, matchedReleaseId: release.id, matchedReleaseVersion: release.version, eoslDate: release.eoslDate, lifecycleStatus: deriveLifecycleStatus(release.eoslDate), matchStatus: "MATCHED" } : row))}/></div></div>}
+
+    {tab === "catalog" && <div className="space-y-2"><div className="flex flex-wrap gap-2"><Filter value={vendorFilter} setValue={setVendorFilter} label="벤더" options={vendors}/><Filter value={categoryFilter} setValue={setCategoryFilter} label="카테고리" options={categories}/><Filter value={catalogStatusFilter} setValue={setCatalogStatusFilter} label="Catalog" options={["ACTIVE","STALE","RETIRED"]}/></div><Table headers={["Product","Version","Vendor","EOSL","Lifecycle","Catalog Updated","Used In Project","Installed Assets"]}>{pagedCatalog.map((release) => <tr key={release.id} onClick={() => openRelease(release)} className="cursor-pointer border-b border-[var(--border)] hover:bg-[var(--surface-2)]"><Td strong>{release.productName}</Td><Td mono>{release.version}</Td><Td>{release.vendor}</Td><Td mono>{release.eoslDate ?? "UNKNOWN"}</Td><Td><Status value={deriveLifecycleStatus(release.eoslDate)}/></Td><Td mono>{release.lastCatalogSeenAt?.slice(0,10) ?? products.find((product) => product.id === release.productId)?.lastCatalogSeenAt?.slice(0,10) ?? "-"}</Td><Td>{usedProductIds.has(release.productId) ? "Yes" : "-"}</Td><Td mono>{installedCounts[release.id] ?? 0}</Td></tr>)}</Table><div className="flex items-center justify-end gap-2 text-[9px]"><select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }} className="h-7 rounded border border-[var(--border)] bg-[var(--surface)]"><option value={50}>50 rows</option><option value={100}>100 rows</option></select><button disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>← 이전</button><span>{page} / {pageCount}</span><button disabled={page >= pageCount} onClick={() => setPage((value) => value + 1)}>다음 →</button></div></div>}
+
+    <SoftwareDetailDrawer release={selectedRelease} product={selectedProduct} releases={selectedProduct ? releases.filter((release) => release.productId === selectedProduct.id) : []} phases={phases} installations={selectedProduct ? projectInstallations.filter((installation) => installation.productId === selectedProduct.id) : []} history={history} assets={projectVms} inProject={!!selectedProduct && usedProductIds.has(selectedProduct.id)} onAddToProject={addToProject} open={!!selectedProduct || !!selectedRelease} onClose={() => { setSelectedProduct(null); setSelectedRelease(null); }}/>
+  </div>;
 }
 
-function MetricCard({
-  label,
-  value,
-  tone = "neutral",
-  highlight = false,
-}: {
-  label: string;
-  value: number;
-  tone?: "success" | "warning" | "danger" | "neutral";
-  highlight?: boolean;
-}) {
-  return (
-    <div
-      className={`rounded-lg border p-2.5 ${
-        highlight && tone === "danger"
-          ? "border-[var(--danger)]/40 bg-[var(--danger-surface)] text-[var(--danger)]"
-          : highlight && tone === "warning"
-            ? "border-[var(--warning)]/40 bg-[var(--warning-surface)] text-[var(--warning)]"
-            : "border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)]"
-      }`}
-    >
-      <div className="text-[9px] text-[var(--muted)]">{label}</div>
-      <div className="mt-0.5 font-mono text-base font-bold tabular-nums">{value}</div>
-    </div>
-  );
-}
-
-const Th = ({ children }: { children: React.ReactNode }) => (
-  <th className="px-3 py-2 font-medium">{children}</th>
-);
-
-const Td = ({ children, className }: { children: React.ReactNode; className?: string }) => (
-  <td className={`px-3 py-2 align-middle ${className ?? ""}`}>{children}</td>
-);
+function riskRank(value: string) { return ({ EOSL: 0, D30: 1, D90: 2, D180: 3, SUPPORTED: 4, UNMAPPED: 5 } as Record<string,number>)[value] ?? 9; }
+function formatRemaining(days: number | null) { return days == null ? "-" : days < 0 ? `D+${Math.abs(days)}` : `D-${days}`; }
+function Status({ value }: { value: string }) { const tone = value === "SUPPORTED" || value === "MATCHED" ? "success" : value === "EOSL" ? "danger" : value === "UNMAPPED" || value === "AMBIGUOUS" ? "neutral" : "warning"; return <Badge tone={tone}>{value}</Badge>; }
+function Filter({ value, setValue, label, options }: { value:string; setValue:(value:string)=>void; label:string; options:string[] }) { return <select value={value} onChange={(event) => setValue(event.target.value)} className="h-7 rounded border border-[var(--border)] bg-[var(--surface)] px-2 text-[10px]"><option value="ALL">전체 {label}</option>{options.map((option) => <option key={option}>{option}</option>)}</select>; }
+function Table({ headers, children }: { headers: string[]; children: React.ReactNode }) { return <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)]"><div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-[10px]"><thead><tr className="border-b border-[var(--border)] bg-[var(--surface-2)] text-[9px] uppercase text-[var(--muted)]">{headers.map((header) => <th key={header} className="px-3 py-2 font-medium">{header}</th>)}</tr></thead><tbody>{children}</tbody></table></div></div>; }
+function Td({ children, mono, strong }: { children: React.ReactNode; mono?: boolean; strong?: boolean }) { return <td className={`px-3 py-2 ${mono ? "font-mono" : ""} ${strong ? "font-semibold" : ""}`}>{children}</td>; }
+function RiskBox({ title, rows, onOpen }: { title: string; rows: AssetSoftwareInstallation[]; onOpen: (row: AssetSoftwareInstallation) => void }) { return <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3"><div className="mb-2 flex justify-between text-[10px] font-semibold"><span>{title}</span><span>{rows.length}</span></div><div className="space-y-1">{rows.length === 0 ? <div className="text-[9px] text-[var(--muted)]">해당 항목이 없습니다.</div> : rows.map((row) => <button key={row.id} className="block w-full rounded border border-[var(--border)] p-2 text-left text-[9px]" onClick={() => onOpen(row)}><b>{row.productName}</b><div className="font-mono text-[var(--muted)]">{row.detectedVersion} · {row.matchStatus ?? row.lifecycleStatus}</div></button>)}</div></div>; }
+function ReviewBox({ rows, products, releases, onMapProduct, onMapRelease }: { rows: AssetSoftwareInstallation[]; products: SoftwareProduct[]; releases: SoftwareRelease[]; onMapProduct:(id:string,product:SoftwareProduct)=>void; onMapRelease:(id:string,release:SoftwareRelease)=>void }) { return <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3"><div className="mb-2 flex justify-between text-[10px] font-semibold"><span>Catalog Review</span><span>{rows.length}</span></div><div className="space-y-2">{rows.map((row) => <ReviewRow key={row.id} row={row} products={products} releases={releases} onMapProduct={onMapProduct} onMapRelease={onMapRelease}/>)}</div></div>; }
+function ReviewRow({ row, products, releases, onMapProduct, onMapRelease }: { row: AssetSoftwareInstallation; products: SoftwareProduct[]; releases: SoftwareRelease[]; onMapProduct:(id:string,product:SoftwareProduct)=>void; onMapRelease:(id:string,release:SoftwareRelease)=>void }) { const [productId,setProductId]=useState(row.candidateProductIds?.[0] ?? row.productId ?? ""); const choices=releases.filter((release)=>release.productId===productId); const [releaseId,setReleaseId]=useState(""); return <div className="rounded border border-[var(--border)] p-2 text-[9px]"><div className="mb-1"><b>{row.detectedProductName ?? row.productName}</b> <span className="font-mono text-[var(--muted)]">{row.detectedVersion} · {row.matchStatus}</span></div><div className="grid gap-1"><select value={productId} onChange={(event)=>{setProductId(event.target.value);setReleaseId("");}} className="h-7 rounded border border-[var(--border)] bg-[var(--surface)]"><option value="">Map to Product…</option>{products.map((product)=><option key={product.id} value={product.id}>{product.name}</option>)}</select><select value={releaseId} onChange={(event)=>setReleaseId(event.target.value)} className="h-7 rounded border border-[var(--border)] bg-[var(--surface)]"><option value="">Map to Release…</option>{choices.map((release)=><option key={release.id} value={release.id}>{release.version}</option>)}</select><div className="flex flex-wrap gap-1"><button disabled={!productId} onClick={()=>{const product=products.find((item)=>item.id===productId);if(product)onMapProduct(row.id,product);}} className="rounded border border-[var(--border)] px-2 py-1 disabled:opacity-40">Create Alias + Map Product</button><button disabled={!releaseId} onClick={()=>{const release=releases.find((item)=>item.id===releaseId);if(release)onMapRelease(row.id,release);}} className="rounded border border-[var(--border)] px-2 py-1 text-[#5750f1] disabled:opacity-40">Map Release</button><a href="/management/software" className="rounded border border-[var(--border)] px-2 py-1">Create Release</a></div></div></div>; }

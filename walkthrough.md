@@ -1,5 +1,7 @@
 # Company Software Lifecycle Catalog Walkthrough
 
+> Architecture UX 2차 안정화 기록은 문서 하단의 `Architecture UX 2차 재설계` 절을 참조한다.
+
 ## 1. 변경된 Data Model
 
 - Existing `SoftwareProduct`, `SoftwareRelease`, `AssetSoftwareInstallation` were extended rather than duplicated.
@@ -155,3 +157,43 @@ Verified in `DATA_SOURCE=mock` on the live Next.js page:
 - Global header search remains outside Architecture scope.
 - Production MySQL/Influx mapping still follows the existing adapter migration plan; this task intentionally validated mock mode only.
 - The fixed-width global admin shell is horizontally scrollable on phone-width viewports. A repository-wide responsive sidebar redesign was not introduced because it is outside this Architecture scope and prohibited by the UI freeze rules.
+
+---
+
+# Architecture UX 2차 재설계
+
+## 1–6. 전체 구성과 compound group
+
+- 기존 문제는 `scopeId`가 캔버스 entity set을 교체해 전체 context를 없애고, Dependency도 별도 subset graph를 생성한 데 있었다.
+- `scopeId`와 breadcrumb/Back을 제거하고 `expandedGroupIds: Set<string>`로 독립적인 다중 expand/collapse를 구현했다.
+- 초기 화면은 top-level group만 collapsed 상태로 유지한다. `+ / −`, double-click, Collapse all, Expand one level이 같은 상태 모델을 사용한다.
+- Expanded group은 `parentId`와 `extent="parent"`를 쓰는 실제 React Flow parent다. leaf asset/cluster/NAS는 parent-relative coordinate를 사용한다.
+- `compound-layout.ts`는 nested child scope를 먼저 ELK로 배치하고 측정된 group width/height를 상위 ELK node로 전달하는 bottom-up two-pass layout을 사용한다.
+
+## 7–9. Dependency focus
+
+- Dependency는 전체 topology의 위치와 expanded state를 공유하는 highlight mode다. traversal의 `both` BFS 결과는 node subset이 아니라 side/depth metadata로 사용한다.
+- Selected/direct/depth 2/depth 3/unrelated opacity는 각각 100/100/85/65/15% 기준이며, collapsed group은 내부 관련 asset 수 badge를 표시한다.
+- Impact/Dependencies/Both segment를 제거하고 `영향 대상`, `필요 자원` legend와 `연결 범위` select만 제공한다.
+
+## 10–16. Edge, layout trigger, handle 안정화
+
+- `FlowEdge`는 과거 ELK `routedPoints` 대신 항상 현재 `sourceX/sourceY/targetX/targetY`로 SmoothStep path를 만든다. drag와 parent 이동 중 endpoint가 handle을 실시간 추적한다.
+- 레이아웃 fingerprint는 project/environment, visible node hierarchy, expanded IDs, explicit revision만 포함한다. Relation/Overlay/Label/Flow/selection/filter 변경은 ELK나 fitView를 호출하지 않는다.
+- ReactFlow의 변경형 `key`와 implicit `fitView` prop을 제거했다. Fit은 최초/expand-collapse/Auto Layout과 명시 Fit 버튼에서만 실행한다.
+- 한 side에 source/target handle을 겹치던 구조를 단일 `t/b/l/r` Loose handle로 교체했다. v2 localStorage는 suffix를 제거해 v3로 migrate하며, invalid ID는 fallback 처리한다.
+- Relation 생성은 `currentRelations`와 handle map만 갱신한다. live node position과 manual layout은 보존된다.
+
+## 17–20. 검증과 남은 TODO
+
+- `npm run validate:architecture`: 60 nodes / 120 edges / cycle-safe traversal 통과.
+- `npx tsc --noEmit`: 통과.
+- `npm run build`: Next.js 21개 route 생성까지 통과.
+- Browser QA: top-level collapsed 초기 화면, A360 → PROD → Memory와 Foundry 동시 expand, Memory collapse, Dependency 전환/DB 선택/나머지 dim, collapsed group related badge, Flow/Labels/Policy control, 빈 canvas focus clear, right Drawer를 확인했다.
+- Drag QA: AP01을 이동한 뒤 node bounding box와 연결된 3개 SVG path가 모두 변경되어 endpoint 실시간 추적을 확인했다.
+- Relation QA: AP01 → DB02를 새로 연결한 뒤 `changedNodes=[]`, viewport transform 동일, 새 edge 1개를 확인했다. Relation 추가로 layout/viewport reset이 발생하지 않았다.
+- Layout reset QA: Labels와 Policy/Actual toggle 전후 viewport transform이 각각 완전히 동일했다.
+- Console QA: 새 browser session에서 warning/error 0건이며 invalid source/target handle warning이 없었다.
+- 390×844 QA: grouped default, toolbar controls, canvas, minimap, right-side navigation separation이 유지됐다. 기존 fixed admin shell의 높은 밀도는 이번 Architecture 범위에서 변경하지 않았다.
+- mock adapter와 기존 Policy/Actual, bidirectional diagnosis, VM/Cluster/NAS/Software/SOP drawer 계약은 유지한다.
+- Full undo history는 범위 밖이며 현재는 마지막 node move 1건만 되돌리는 최소 지원이다.

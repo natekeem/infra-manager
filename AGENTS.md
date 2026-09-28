@@ -7,7 +7,7 @@ This repository intentionally follows the current NextAdmin v2 project philosoph
 1. **Do not redesign the UI.** Preserve current sidebar/header dimensions, compact typography, border radius, spacing and neutral color system.
 2. **Do not create large gradient KPI cards, glassmorphism, neon effects, oversized headings, or consumer/SaaS landing-page styling.** This is an internal developer/operations console.
 3. **Context Drawers open from the Right.** All contextual drawers (`VmDrawer`, `ConnectionDrawer`, `ClusterDrawer`, `NasDrawer`, `SoftwareDetailDrawer`) use `SlideDrawer` sliding in from the right (`right-0`, 460px width) so the left navigation sidebar remains completely unobstructed.
-4. **Architecture default view stays grouped.** Never render all 30+ VMs on first load. Overview → Service → VM is the intended drill-down.
+4. **Architecture default view stays grouped.** Never render all 30+ VMs on first load. 전체 구성에서 필요한 Group만 inline expand하여 Asset을 확인한다.
 5. **Network truth model has exactly two primary dimensions:**
    - Declared/approved policy from MySQL or normalized source documents = SHOULD BE (supports `ONE_WAY` and `BIDIRECTIONAL`)
    - Source-side Telegraf TCP probe from InfluxDB = ACTUAL (checks forward and return probes for bidirectional policies)
@@ -49,11 +49,11 @@ This repository intentionally follows the current NextAdmin v2 project philosoph
 
 ## Architecture UX
 
-- Architecture has exactly two operator views: Overview and Dependency.
-- Group is not a separate view; Overview uses same-canvas drill-down with breadcrumbs.
+- Architecture has exactly two operator views: 전체 구성 and Dependency.
+- Architecture always preserves the full context. Group expansion is not scope navigation; groups expand/collapse inline and multiple groups may remain open.
 - The complete asset list belongs to Infrastructure > Assets.
-- Overview: grouped tiers and external dependencies. Never hardcode RPA domain names or layout coordinates in layout code.
-- Double-click a group: drill into its child groups or assets in the same canvas.
+- 전체 구성: grouped tiers and external dependencies. Never hardcode RPA domain names or layout coordinates in layout code.
+- Double-click and `+ / −` toggle the same inline expansion. Expanded groups use real React Flow parent/child structure.
 - Click VM: right Drawer.
 - Click connection/edge: right Drawer with policy + actual + diagnosis (forward & return).
 - Click cluster: right ClusterDrawer (VIP, active/passive nodes).
@@ -62,10 +62,12 @@ This repository intentionally follows the current NextAdmin v2 project philosoph
 - Issues-only toggle must remain available.
 - Search must accept hostname/IP; later extend to port/request ID without changing the layout.
 - Automatic coordinates come from the deterministic ELK layered engine; AI/LLM coordinate generation is prohibited.
-- Dependency traversal is deterministic BFS/DFS with cycle protection and defaults to depth 2.
+- Dependency is full-graph highlight mode, not an isolated subgraph. Do not restore Impact/Dependencies/Both controls; traversal defaults to depth 2.
 - Monitoring relations are disabled by default and have low layout priority.
 - Edge labels are disabled by default. Manual Edit is the final 20px-grid correction layer after Auto Layout.
 - Architecture Relation, Network Policy and Actual observations stay separate even when combined visually.
+- Auto Layout runs only on initial/project/environment/expand-collapse/explicit Auto Layout triggers. Relation, overlay, label, Flow, selection and refresh changes must not reset positions or viewport.
+- During drag, edges use current React Flow handles. Never construct handle IDs by combining source/target suffix strings; valid IDs are only `t`, `b`, `l`, and `r`.
 
 ## Definition of done for internal migration
 

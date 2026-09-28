@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import type { Edge, Node } from "@xyflow/react";
 import { elkLayoutEngine } from "../src/architecture/layout/elk-layout";
 import { traverseDependencies } from "../src/architecture/layout/dependency-layout";
+import { normalizeHandleMap, normalizeHandleSide } from "../src/architecture/interaction/handle-utils";
 import type { ArchitectureRelation } from "../src/domain/models";
 
 const relations: ArchitectureRelation[] = Array.from({ length: 120 }, (_, index) => ({
@@ -16,6 +17,9 @@ const relations: ArchitectureRelation[] = Array.from({ length: 120 }, (_, index)
 
 const cycle = traverseDependencies("asset-0", relations, "both", "all", { MONITORING: false });
 assert(cycle.visits.length <= 60, "cycle-safe traversal must visit each entity at most once per result map");
+assert.equal(normalizeHandleSide("t-tgt", "r"), "t", "legacy target handles migrate to a valid single-side id");
+assert.equal(normalizeHandleSide("l-src"), "l", "legacy suffixes migrate to a side");
+assert.deepEqual(normalizeHandleMap({ edge: { source: "b-src", target: "r-tgt" } }), { edge: { source: "b", target: "r" } });
 
 const nodes: Node<{ kind: "asset"; sortKey: string }>[] = Array.from({ length: 60 }, (_, index) => ({
   id: `asset-${index}`,

@@ -28,13 +28,13 @@ VM, network, cluster, NAS and software details use a **right sliding Drawer** (4
 ## Architecture scalability
 
 - first load: grouped tiers only
-- operator views: Overview and Dependency only
-- group navigation: same-canvas Overview drill-down with clickable breadcrumbs
-- assets: explicit leaf drill-down; default scope prevents an unreadable 30+ node wall
+- operator views: 전체 구성 and Dependency only
+- group navigation: inline multi-group expand/collapse on the same full-context canvas
+- assets: leaf assets appear inside actual React Flow parent containers; the default remains collapsed
 - issue-only: isolate risky flows
 - search: hostname/IP first; port/request ID later
 - deterministic ELK layered layout; manual 20px-grid editing is a final correction layer
-- Dependency defaults to Both, depth 2, with Monitoring disabled
+- Dependency is full-graph highlight mode, defaults to depth 2, and keeps Monitoring disabled
 
 ## Executive presentation
 

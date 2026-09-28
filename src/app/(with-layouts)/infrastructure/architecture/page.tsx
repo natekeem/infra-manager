@@ -42,7 +42,7 @@ export default async function ArchitecturePage() {
     <>
       <PageHeader
         title="Architecture"
-        description="Overview에서 계층을 탐색하고 Dependency에서 자산·그룹·클러스터의 의존성과 장애 영향 범위를 확인합니다."
+        description="전체 구성에서 필요한 그룹을 펼치고 Dependency에서 자산·그룹·클러스터의 의존성과 장애 영향 범위를 확인합니다."
       />
       <ArchitectureCanvas
         vms={vms}

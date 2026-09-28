@@ -16,6 +16,8 @@ export const NODE_DIMENSIONS = {
 export interface LayoutNodeData extends Record<string, unknown> {
   kind: keyof typeof NODE_DIMENSIONS;
   sortKey?: string;
+  width?: number;
+  height?: number;
 }
 
 export interface RoutedPoint {

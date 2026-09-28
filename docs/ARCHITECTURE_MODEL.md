@@ -5,7 +5,7 @@
 The RPA Infrastructure Control Center architecture canvas visualizes multi-project enterprise deployments without initial visual clutter.
 In accordance with `AGENTS.md` and the multi-project generalization:
 - **Default Grouped View**: Never renders all 30+ VM nodes on first load. The default view aggregates infrastructure into high-level topology groups, domains, and systems with aggregate health indicators.
-- **Drill-Down Flow**: `Project → System → Environment → Domain/Runtime → Asset`. Double-clicking a group or selecting a breadcrumb changes scope in the same Overview canvas.
+- **Inline Expansion Flow**: `Project → System → Environment → Domain/Runtime → Asset`. `expandedGroupIds` controls independent `+ / −` expansion while every top-level system remains on the same canvas.
 - **Generic Engine (Zero Hardcoded Domain Logic)**: The canvas engine handles any project topology dynamically (`ProjectGroup` -> `TopologyGroup` -> `Asset` & `ArchitectureRelation`) without hardcoded RPA-specific conditional checks like `if (domain === "MEMORY")`.
 - **Density & Bounds Control**: Custom React Flow node cards use explicit compact bounding boxes (`GroupNode`: `w: 220px, min-h: 120px`, `VmNode`: `w: 230px, h: 125px`) with zero outer margins and orthogonal smoothstep / bezier edge routing (`borderRadius: 8`), preventing node clipping and label overlap.
 
@@ -65,35 +65,30 @@ Defines logical and functional dependencies between nodes:
 The current toolbar intentionally exposes two operator-facing modes:
 
 ```
-[ Overview ] [ Dependency ]
+[ 전체 구성 ] [ Dependency ]
 ```
 
-### 3.1. Overview
+### 3.1. 전체 구성
 - Grouped relationship-first layout representing systems, environments, domains, runtimes and leaf assets.
 - Nodes represent `TopologyGroup` entities (or external systems) formatted as compact `GroupNode` cards.
 - Displays aggregate healthy / warning / critical counters, AP/DB/Storage composition, and cross-group connectivity health.
-- Double-clicking any group drills into direct child groups; a leaf group reveals its assets, clusters and NAS in the same canvas.
-- Breadcrumb items navigate to any ancestor scope.
+- A group becomes a real React Flow parent container when expanded; its children use `parentId`, `extent="parent"`, and relative coordinates.
+- Multiple groups may be expanded together. Double-click and `+ / −` perform the same inline toggle; there is no scope navigation or Back control.
 
 ### 3.2. Dependency
 - Searchable targets include assets, groups, clusters, NAS, DBaaS and external endpoints.
-- `Impact`, `Dependencies`, and `Both` modes use deterministic cycle-safe traversal with depth 1/2/3/All.
-- ELK lays out the selected target between impacted entities and its dependencies in the RIGHT direction.
+- Dependency reuses the complete topology and current positions. Cycle-safe traversal produces highlight metadata rather than an isolated node subset.
+- Operators choose only a target and connection range. Direction is explained by `영향 대상` and `필요 자원` styling.
+- Dependency does not run a separate layout; the selected target and both traversal directions are styled on the shared full-topology coordinates.
 - A calculated blast-radius summary and the right context drawer combine related SOP, software/EOSL and policy/actual evidence without merging their source models.
 
-Both views support 20px-snapped manual correction, view/scope-isolated persistence, and explicit Auto Layout recalculation.
+Both views share 20px-snapped manual corrections and project-level persistence. Only explicit structure triggers and Auto Layout recalculate node positions.
 
 ---
 
-## 4. Breadcrumb Navigation Hierarchy
+## 4. Inline Expansion Hierarchy
 
-The canvas header features an interactive breadcrumb bar:
-```
-Project Group  >  System  >  Environment  >  Domain  >  Logical Group  >  Asset
-```
-- Example: `RPA Portal > A360 > PROD > Memory > A360 Memory (PROD)`
-- Clicking any parent segment navigates back to that level without losing pan/zoom state.
-- A "Reset View" button returns directly to the top-level Overview canvas.
+The canvas always retains every root system. A group card toggles between its compact summary and a compound parent container through `+ / −` or double-click. Each expanded container may expose child groups, or leaf assets when no child group exists. Multiple branches stay open together; `Collapse all` returns to the grouped first view and `Expand one level` expands only the currently visible group tier.
 
 ---
 

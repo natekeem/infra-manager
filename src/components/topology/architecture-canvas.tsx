@@ -3,11 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background, BaseEdge, ConnectionLineType, ConnectionMode, Controls, EdgeLabelRenderer, Handle,
-  MarkerType, MiniMap, Position, ReactFlow, applyNodeChanges, getSmoothStepPath,
+  MarkerType, MiniMap, Position, ReactFlow, applyNodeChanges, getSmoothStepPath, reconnectEdge,
   type Connection, type Edge, type EdgeProps, type Node, type NodeChange, type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import type { ArchitectureRelation, Asset, ClusterEntity, NasAsset, NetworkStatus, RelationType, SoftwareInstall, SoftwareProduct, SoftwareRelease, SopDocument, TopologyGroup } from "@/domain/models";
+import type { ArchitectureRelation, Asset, ClusterEntity, NasAsset, NetworkPolicy, NetworkStatus, RelationType, SoftwareInstall, SoftwareProduct, SoftwareRelease, SopDocument, TopologyGroup } from "@/domain/models";
 import { layoutCompoundGraph } from "@/architecture/layout/compound-layout";
 import { RELATION_LAYOUT_PRIORITY } from "@/architecture/layout/layout-presets";
 import { traverseDependencies, type DependencyDepth } from "@/architecture/layout/dependency-layout";
@@ -19,6 +19,7 @@ import { ConnectionDrawer } from "@/components/network/connection-drawer";
 import { ClusterDrawer } from "@/components/cluster/cluster-drawer";
 import { NasDrawer } from "@/components/storage/nas-drawer";
 import { GroupDrawer, type GroupDrawerData } from "@/components/topology/group-drawer";
+import { RelationEditorDrawer } from "@/components/topology/relation-editor-drawer";
 import { SoftwareDetailDrawer } from "@/components/software/software-detail-drawer";
 import { SlideDrawer } from "@/components/common/slide-drawer";
 import { SearchIcon } from "@/components/common/icons";
@@ -89,6 +90,7 @@ export function ArchitectureCanvas({ vms, statuses, software, sops, clusters = [
   const [relationFilters, setRelationFilters] = useState<Record<RelationType, boolean>>({ SERVICE: true, DATABASE: true, STORAGE: true, MONITORING: false, MANAGEMENT: true, CLUSTER: true, EXTERNAL: true, OTHER: true }); const [currentRelations, setCurrentRelations] = useState(relations); const [liveNodes, setLiveNodes] = useState<Node<TopologyNodeData>[]>([]); const [liveEdges, setLiveEdges] = useState<Edge<TopologyEdgeData>[]>([]); const [manualPositions, setManualPositions] = useState<Record<string, { x: number; y: number }>>({}); const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [selectedVm, setSelectedVm] = useState<Asset | null>(null); const [selectedCluster, setSelectedCluster] = useState<ClusterEntity | null>(null); const [selectedNas, setSelectedNas] = useState<NasAsset | null>(null); const [selectedGroup, setSelectedGroup] = useState<GroupDrawerData | null>(null); const [selectedConnection, setSelectedConnection] = useState<NetworkStatus | null>(null); const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null); const [selectedRelease, setSelectedRelease] = useState<SoftwareRelease | null>(null); const [dependencyDrawerEntity, setDependencyDrawerEntity] = useState<SemanticEntity | null>(null); const [edgeHandles, setEdgeHandles] = useState<Record<string, { source?: HandleDirection; target?: HandleDirection }>>({});
   const flowInstance = useRef<{ fitView: (options?: Record<string, unknown>) => Promise<boolean> } | null>(null); const positionsRef = useRef(manualPositions); const lastMoveRef = useRef<{ id: string; from: { x: number; y: number }; to: { x: number; y: number } } | null>(null); const dragStartRef = useRef<Record<string, { x: number; y: number }>>({});
+  const [editingRelation, setEditingRelation] = useState<{ relation: ArchitectureRelation; sourceName: string; targetName: string; isNew?: boolean } | null>(null); const reconnectRef = useRef<Edge | null>(null); const prevParentMapRef = useRef<Map<string, string | undefined>>(new Map());
 
   useEffect(() => { managementRepo.getRelations().then((items) => setCurrentRelations(items.length ? items : relations)); }, [relations]);
   useEffect(() => { setExpandedGroupIds(new Set()); setDependencyFocusId(null); }, [activeProject.id, environment]);
@@ -101,45 +103,407 @@ export function ArchitectureCanvas({ vms, statuses, software, sops, clusters = [
   const catalog = useMemo(() => buildEntityCatalog(projectGroups, projectAssets, projectClusters, projectNas, projectRelations), [projectGroups, projectAssets, projectClusters, projectNas, projectRelations]); const searchableEntities = useMemo(() => [...catalog.values()].sort((a, b) => a.label.localeCompare(b.label)), [catalog]);
   const expandedRelations = useMemo(() => { const result = [...projectRelations]; for (const relation of projectRelations) { const group = projectGroups.find((item) => item.id === relation.sourceEntityId); if (group) for (const asset of groupAssets(group, projectAssets).filter((item) => item.role === "AP" || item.assetType === "K8S_WORKLOAD")) result.push({ ...relation, id: `${relation.id}:member:${asset.id}`, sourceEntityType: "ASSET", sourceEntityId: asset.id }); } for (const status of projectStatuses) if (status.policy.targetVmId) result.push({ id: `policy:${status.policy.id}`, projectGroupId: activeProject.id, sourceEntityType: "ASSET", sourceEntityId: status.policy.sourceVmId, targetEntityType: "ASSET", targetEntityId: status.policy.targetVmId, relationType: "SERVICE", protocol: status.policy.protocol, port: status.policy.port }); return result; }, [projectRelations, projectGroups, projectAssets, projectStatuses, activeProject.id]);
   const dependencyGraph = useMemo(() => dependencyFocusId ? traverseDependencies(dependencyFocusId, expandedRelations, "both", dependencyDepth, relationFilters) : { visits: [], relations: [] }, [dependencyFocusId, expandedRelations, dependencyDepth, relationFilters]);
-  const toggleGroup = useCallback((id: string) => setExpandedGroupIds((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; }), []);
+  const storageKey = `rpa-topology-layout:v5:${activeProject.id}`;
+  const toggleGroup = useCallback((id: string) => {
+    positionsRef.current = {};
+    setManualPositions({});
+    try { localStorage.removeItem(storageKey); } catch {}
+    setExpandedGroupIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, [storageKey]);
 
   const topologyGraph = useMemo(() => {
-    const byGroupId = new Map(projectGroups.map((group) => [group.id, group])); const allowed = (group: TopologyGroup): boolean => environment === "ALL" || !group.environment || group.environment === environment || projectGroups.some((child) => child.parentGroupId === group.id && allowed(child)); const nodes: Node<TopologyNodeData>[] = []; const seen = new Set<string>();
-    const addEntity = (id: string, parentId?: string) => { if (seen.has(id)) return; const entity = catalog.get(id); if (!entity) return; const node = entityNode(entity, projectAssets); node.parentId = parentId; if (parentId) node.extent = "parent"; nodes.push(node); seen.add(id); };
-    const addGroup = (group: TopologyGroup, parentId?: string) => { if (!allowed(group) || seen.has(group.id)) return; addEntity(group.id, parentId); const node = nodes.at(-1)!; const expanded = expandedGroupIds.has(group.id); node.type = expanded ? "groupContainer" : "scopeCard"; node.data.expanded = expanded; node.data.onToggle = () => toggleGroup(group.id); if (!expanded) return; const childGroups = projectGroups.filter((item) => item.parentGroupId === group.id && allowed(item)); if (childGroups.length) childGroups.sort((a, b) => a.name.localeCompare(b.name)).forEach((child) => addGroup(child, group.id)); else { projectAssets.filter((asset) => assetMatchesGroup(asset, group) && asset.assetType !== "NAS").forEach((asset) => addEntity(asset.id, group.id)); projectClusters.filter((cluster) => (!group.domain || cluster.domain === group.domain) && (!group.system || cluster.system === group.system) && (!group.environment || cluster.environment === group.environment)).forEach((cluster) => addEntity(cluster.id, group.id)); projectNas.filter((nas) => assetMatchesGroup(nas, group)).forEach((nas) => addEntity(nas.id, group.id)); } };
+    const byGroupId = new Map(projectGroups.map((group) => [group.id, group]));
+    const allowed = (group: TopologyGroup): boolean =>
+      environment === "ALL" || !group.environment || group.environment === environment || projectGroups.some((child) => child.parentGroupId === group.id && allowed(child));
+    const nodes: Node<TopologyNodeData>[] = [];
+    const seen = new Set<string>();
+
+    const addEntity = (id: string, parentId?: string) => {
+      if (seen.has(id)) return;
+      const entity = catalog.get(id);
+      if (!entity) return;
+      const node = entityNode(entity, projectAssets);
+      node.parentId = parentId;
+      if (parentId) node.extent = "parent";
+      nodes.push(node);
+      seen.add(id);
+    };
+
+    const addGroup = (group: TopologyGroup, parentId?: string) => {
+      if (!allowed(group) || seen.has(group.id)) return;
+      addEntity(group.id, parentId);
+      const node = nodes.at(-1)!;
+      const expanded = expandedGroupIds.has(group.id);
+      node.type = expanded ? "groupContainer" : "scopeCard";
+      node.data.expanded = expanded;
+      node.data.onToggle = () => toggleGroup(group.id);
+      if (!expanded) return;
+      const childGroups = projectGroups.filter((item) => item.parentGroupId === group.id && allowed(item));
+      if (childGroups.length) childGroups.sort((a, b) => a.name.localeCompare(b.name)).forEach((child) => addGroup(child, group.id));
+      else {
+        projectAssets.filter((asset) => assetMatchesGroup(asset, group) && asset.assetType !== "NAS").forEach((asset) => addEntity(asset.id, group.id));
+        projectClusters.filter((cluster) => (!group.domain || cluster.domain === group.domain) && (!group.system || cluster.system === group.system) && (!group.environment || cluster.environment === group.environment)).forEach((cluster) => addEntity(cluster.id, group.id));
+        projectNas.filter((nas) => assetMatchesGroup(nas, group)).forEach((nas) => addEntity(nas.id, group.id));
+      }
+    };
+
     projectGroups.filter((group) => !group.parentGroupId).sort((a, b) => a.name.localeCompare(b.name)).forEach((group) => addGroup(group));
-    const visible = new Set(nodes.map((node) => node.id)); const depths = new Map(projectGroups.map((group) => [group.id, groupDepth(group, byGroupId)]));
-    const nearest = (id: string) => { if (visible.has(id)) return id; const entity = catalog.get(id); const asset = entity?.asset ?? entity?.nas; if (asset) return projectGroups.filter((group) => visible.has(group.id) && assetMatchesGroup(asset, group)).sort((a, b) => (depths.get(b.id) ?? 0) - (depths.get(a.id) ?? 0))[0]?.id; if (entity?.cluster) return projectGroups.filter((group) => visible.has(group.id) && (!group.domain || group.domain === entity.cluster!.domain) && (!group.system || group.system === entity.cluster!.system) && (!group.environment || group.environment === entity.cluster!.environment)).sort((a, b) => (depths.get(b.id) ?? 0) - (depths.get(a.id) ?? 0))[0]?.id; if (entity?.group) { let current = entity.group; while (current.parentGroupId) { const parent = byGroupId.get(current.parentGroupId); if (!parent) break; if (visible.has(parent.id)) return parent.id; current = parent; } } return undefined; };
-    const edgeMap = new Map<string, Edge<TopologyEdgeData>>(); for (const relation of projectRelations) { const source = nearest(relation.sourceEntityId); const target = nearest(relation.targetEntityId); if (!source || !target || source === target) continue; const key = `${source}:${target}:${relation.relationType}`; const existing = edgeMap.get(key); if (existing) { existing.data!.aggregateCount = (existing.data!.aggregateCount ?? 1) + 1; continue; } edgeMap.set(key, makeEdge({ ...relation, id: key }, source, target)); }
-    for (const status of projectStatuses) { const source = nearest(status.policy.sourceVmId); const target = status.policy.targetVmId ? nearest(status.policy.targetVmId) : undefined; if (!source || !target || source === target) continue; const key = `${source}:${target}:SERVICE`; const edge = edgeMap.get(key) ?? makeEdge({ id: key, projectGroupId: activeProject.id, sourceEntityType: "ASSET", sourceEntityId: status.policy.sourceVmId, targetEntityType: "ASSET", targetEntityId: status.policy.targetVmId!, relationType: "SERVICE", protocol: status.policy.protocol, port: status.policy.port }, source, target); const related = [...(edge.data?.relatedStatuses ?? []), status]; edge.data = { ...edge.data!, status, relatedStatuses: related, issueCount: related.filter((item) => item.overall !== "NORMAL").length, secondary: overlay === "policy" ? status.policy.approvalStatus : `TCP ${status.observation?.tcp ?? "NO_DATA"}` }; edgeMap.set(key, edge); }
+    const visible = new Set(nodes.map((node) => node.id));
+    const depths = new Map(projectGroups.map((group) => [group.id, groupDepth(group, byGroupId)]));
+
+    const nearest = (id: string): string | undefined => {
+      if (visible.has(id)) return id;
+      const entity = catalog.get(id);
+      const asset = entity?.asset ?? entity?.nas;
+      if (asset) return projectGroups.filter((group) => visible.has(group.id) && assetMatchesGroup(asset, group)).sort((a, b) => (depths.get(b.id) ?? 0) - (depths.get(a.id) ?? 0))[0]?.id;
+      if (entity?.cluster) return projectGroups.filter((group) => visible.has(group.id) && (!group.domain || group.domain === entity.cluster!.domain) && (!group.system || group.system === entity.cluster!.system) && (!group.environment || group.environment === entity.cluster!.environment)).sort((a, b) => (depths.get(b.id) ?? 0) - (depths.get(a.id) ?? 0))[0]?.id;
+      if (entity?.group) {
+        let current = entity.group;
+        while (current.parentGroupId) {
+          const parent = byGroupId.get(current.parentGroupId);
+          if (!parent) break;
+          if (visible.has(parent.id)) return parent.id;
+          current = parent;
+        }
+      }
+      return undefined;
+    };
+
+    const resolveEndpoints = (id: string, isSource: boolean): string[] => {
+      if (expandedGroupIds.has(id)) {
+        const group = projectGroups.find((g) => g.id === id);
+        if (group) {
+          const members = groupAssets(group, projectAssets);
+          const apMembers = members.filter((m) => m.role === "AP" || m.assetType === "K8S_WORKLOAD");
+          const targetPool = apMembers.length ? apMembers : members;
+          const visibleMembers = targetPool.map((m) => m.id).filter((mid) => visible.has(mid));
+          if (visibleMembers.length > 0) return visibleMembers;
+        }
+      }
+      if (visible.has(id)) return [id];
+      const near = nearest(id);
+      return near ? [near] : [];
+    };
+
+    const edgeMap = new Map<string, Edge<TopologyEdgeData>>();
+    for (const relation of projectRelations) {
+      const sources = resolveEndpoints(relation.sourceEntityId, true);
+      const targets = resolveEndpoints(relation.targetEntityId, false);
+      for (const source of sources) {
+        for (const target of targets) {
+          if (!source || !target || source === target) continue;
+          const key = `${source}:${target}:${relation.relationType}`;
+          const existing = edgeMap.get(key);
+          if (existing) {
+            existing.data!.aggregateCount = (existing.data!.aggregateCount ?? 1) + 1;
+            continue;
+          }
+          edgeMap.set(key, makeEdge({ ...relation, id: key }, source, target));
+        }
+      }
+    }
+
+    for (const status of projectStatuses) {
+      const sources = resolveEndpoints(status.policy.sourceVmId, true);
+      const targets = status.policy.targetVmId ? resolveEndpoints(status.policy.targetVmId, false) : [];
+      for (const source of sources) {
+        for (const target of targets) {
+          if (!source || !target || source === target) continue;
+          const key = `${source}:${target}:SERVICE`;
+          const edge = edgeMap.get(key) ?? makeEdge({
+            id: key,
+            projectGroupId: activeProject.id,
+            sourceEntityType: "ASSET",
+            sourceEntityId: status.policy.sourceVmId,
+            targetEntityType: "ASSET",
+            targetEntityId: status.policy.targetVmId!,
+            relationType: "SERVICE",
+            protocol: status.policy.protocol,
+            port: status.policy.port,
+          }, source, target);
+          const related = [...(edge.data?.relatedStatuses ?? []), status];
+          edge.data = {
+            ...edge.data!,
+            status,
+            relatedStatuses: related,
+            issueCount: related.filter((item) => item.overall !== "NORMAL").length,
+            secondary: overlay === "policy" ? status.policy.approvalStatus : `TCP ${status.observation?.tcp ?? "NO_DATA"}`,
+          };
+          edgeMap.set(key, edge);
+        }
+      }
+    }
     return { nodes, edges: [...edgeMap.values()] };
   }, [projectGroups, projectAssets, projectClusters, projectNas, projectRelations, projectStatuses, catalog, expandedGroupIds, environment, activeProject.id, overlay, toggleGroup]);
 
-  const layoutFingerprint = useMemo(() => JSON.stringify({ project: activeProject.id, environment, expanded: [...expandedGroupIds].sort(), nodes: topologyGraph.nodes.map((node) => [node.id, node.parentId]).sort(), revision: layoutRevision }), [activeProject.id, environment, expandedGroupIds, topologyGraph.nodes, layoutRevision]); const storageKey = `rpa-topology-layout:v5:${activeProject.id}`;
+  const layoutFingerprint = useMemo(() => JSON.stringify({ project: activeProject.id, environment, expanded: [...expandedGroupIds].sort(), nodes: topologyGraph.nodes.map((node) => [node.id, node.parentId]).sort(), revision: layoutRevision }), [activeProject.id, environment, expandedGroupIds, topologyGraph.nodes, layoutRevision]);
   useEffect(() => { try { const next = JSON.parse(localStorage.getItem(storageKey) ?? "{}"); positionsRef.current = next; setManualPositions(next); } catch { positionsRef.current = {}; setManualPositions({}); } }, [storageKey]);
   useEffect(() => { try { const v3 = localStorage.getItem(`rpa-topology-handles:v3:${activeProject.id}`); const legacy = localStorage.getItem(`rpa-topology-handles:v2:${activeProject.id}`); const next = normalizeHandleMap(JSON.parse(v3 ?? legacy ?? "{}")); setEdgeHandles(next); if (!v3) localStorage.setItem(`rpa-topology-handles:v3:${activeProject.id}`, JSON.stringify(next)); } catch { setEdgeHandles({}); } }, [activeProject.id]);
-  useEffect(() => { let cancelled = false; setIsLayouting(true); layoutCompoundGraph(topologyGraph.nodes, topologyGraph.edges).then((result) => { if (cancelled) return; setLiveNodes(result.nodes.map((node) => ({ ...node, position: positionsRef.current[node.id] ?? node.position }))); setLiveEdges(result.edges); setIsLayouting(false); requestAnimationFrame(() => requestAnimationFrame(() => flowInstance.current?.fitView({ padding: .16, duration: 240 }))); }); return () => { cancelled = true; }; }, [layoutFingerprint]);
+  useEffect(() => { let cancelled = false; setIsLayouting(true); layoutCompoundGraph(topologyGraph.nodes, topologyGraph.edges).then((result) => { if (cancelled) return; const prevMap = prevParentMapRef.current; const staleIds = new Set<string>(); for (const node of result.nodes) { const prev = prevMap.get(node.id); if (prev !== undefined && prev !== node.parentId) staleIds.add(node.id); } const cleaned = { ...positionsRef.current }; for (const id of staleIds) delete cleaned[id]; if (staleIds.size) { positionsRef.current = cleaned; localStorage.setItem(storageKey, JSON.stringify(cleaned)); setManualPositions(cleaned); } prevParentMapRef.current = new Map(result.nodes.map((n) => [n.id, n.parentId])); setLiveNodes(result.nodes.map((node) => ({ ...node, position: cleaned[node.id] ?? node.position }))); setLiveEdges(result.edges); setIsLayouting(false); requestAnimationFrame(() => requestAnimationFrame(() => flowInstance.current?.fitView({ padding: .16, duration: 240 }))); }); return () => { cancelled = true; }; }, [layoutFingerprint]);
   useEffect(() => { setLiveEdges(topologyGraph.edges); }, [topologyGraph.edges]);
 
   const visitMap = useMemo(() => new Map(dependencyGraph.visits.map((visit) => [visit.id, visit])), [dependencyGraph.visits]); const relatedRelations = useMemo(() => new Map(dependencyGraph.relations.map((relation) => [relation.id.split(":member:")[0], relation])), [dependencyGraph.relations]);
   const resolvedNodes = useMemo(() => liveNodes.map((node) => { const current = topologyGraph.nodes.find((item) => item.id === node.id); const visit = visitMap.get(node.id); let relatedHiddenCount = 0; if (node.data.group && dependencyFocusId) relatedHiddenCount = groupAssets(node.data.group, projectAssets).filter((asset) => visitMap.has(asset.id)).length; const matchesSearch = !query.trim() || `${node.data.label} ${node.data.vm?.ipAddress ?? ""}`.toLowerCase().includes(query.toLowerCase()); const issueMatch = !issuesOnly || (node.data.issueCount ?? (node.data.vm?.health === "healthy" ? 0 : 1)) > 0; const focusOpacity = mode === "dependency" && dependencyFocusId ? visit ? visit.depth <= 1 ? 1 : visit.depth === 2 ? .85 : .65 : relatedHiddenCount ? .9 : .15 : matchesSearch && issueMatch ? 1 : .16; return { ...node, type: current?.type ?? node.type, parentId: current?.parentId, extent: current?.extent, data: { ...(current?.data ?? node.data), width: node.data.width, height: node.data.height, isEditing: layoutEdit, selectedTarget: dependencyFocusId === node.id, dependencySide: visit?.side, dependencyDepth: visit?.depth, relatedHiddenCount, focusOpacity }, style: node.data.expanded ? { width: node.data.width, height: node.data.height } : undefined }; }), [liveNodes, topologyGraph.nodes, visitMap, dependencyFocusId, projectAssets, mode, query, issuesOnly, layoutEdit]);
-  const resolvedEdges = useMemo(() => liveEdges.filter((edge) => relationFilters[edge.data?.relationType ?? "OTHER"] !== false).map((edge) => { const baseId = edge.data?.relation?.id.split(":member:")[0]; const focusRelation = baseId ? relatedRelations.get(baseId) : undefined; const sourceVisit = visitMap.get(edge.source); const targetVisit = visitMap.get(edge.target); const side = sourceVisit?.side === "impact" || targetVisit?.side === "impact" ? "impact" : sourceVisit?.side === "dependency" || targetVisit?.side === "dependency" ? "dependency" : undefined; const related = Boolean(focusRelation || (sourceVisit && targetVisit)); const tcpUp = edge.data?.relatedStatuses?.some((status) => status.observation?.tcp === "UP") ?? false; return { ...edge, sourceHandle: normalizeHandleSide(edgeHandles[edge.id]?.source, mode === "dependency" ? "r" : "b"), targetHandle: normalizeHandleSide(edgeHandles[edge.id]?.target, mode === "dependency" ? "l" : "t"), data: { ...edge.data!, showLabel: showLabels, focusOpacity: mode === "dependency" && dependencyFocusId ? related ? 1 : .1 : 1, dependencySide: related ? side : undefined, dependencyDepth: Math.max(sourceVisit?.depth ?? 0, targetVisit?.depth ?? 0), flowActive: flowAnimation && tcpUp && (mode !== "dependency" || related) } }; }), [liveEdges, relationFilters, relatedRelations, visitMap, edgeHandles, mode, showLabels, flowAnimation, dependencyFocusId]);
+
+  const nodeCenterMap = useMemo(() => {
+    const map = new Map<string, { cx: number; cy: number }>();
+    const byId = new Map(liveNodes.map((n) => [n.id, n]));
+    for (const node of liveNodes) {
+      const dim = NODE_DIMENSIONS[node.data.kind] ?? NODE_DIMENSIONS.asset;
+      const w = node.data.width ?? dim.width;
+      const h = node.data.height ?? dim.height;
+      let absX = node.position.x;
+      let absY = node.position.y;
+      if (node.parentId) {
+        const parent = byId.get(node.parentId);
+        if (parent) {
+          absX += parent.position.x;
+          absY += parent.position.y;
+        }
+      }
+      map.set(node.id, { cx: absX + w / 2, cy: absY + h / 2 });
+    }
+    return map;
+  }, [liveNodes]);
+
+  const computeAutoHandles = useCallback((sourceId: string, targetId: string): { source: HandleDirection; target: HandleDirection } => {
+    const s = nodeCenterMap.get(sourceId);
+    const t = nodeCenterMap.get(targetId);
+    if (!s || !t) return { source: "b", target: "t" };
+    const dx = t.cx - s.cx;
+    const dy = t.cy - s.cy;
+    if (Math.abs(dy) >= Math.abs(dx)) {
+      return dy >= 0 ? { source: "b", target: "t" } : { source: "t", target: "b" };
+    } else {
+      return dx >= 0 ? { source: "r", target: "l" } : { source: "l", target: "r" };
+    }
+  }, [nodeCenterMap]);
+
+  const resolvedEdges = useMemo(() => liveEdges.filter((edge) => relationFilters[edge.data?.relationType ?? "OTHER"] !== false).map((edge) => {
+    const baseId = edge.data?.relation?.id.split(":member:")[0];
+    const focusRelation = baseId ? relatedRelations.get(baseId) : undefined;
+    const sourceVisit = visitMap.get(edge.source);
+    const targetVisit = visitMap.get(edge.target);
+    const side = sourceVisit?.side === "impact" || targetVisit?.side === "impact" ? "impact" : sourceVisit?.side === "dependency" || targetVisit?.side === "dependency" ? "dependency" : undefined;
+    const related = Boolean(focusRelation || (sourceVisit && targetVisit));
+    const tcpUp = edge.data?.relatedStatuses?.some((status) => status.observation?.tcp === "UP") ?? false;
+    const autoHandles = computeAutoHandles(edge.source, edge.target);
+    const sourceHandle = normalizeHandleSide(edgeHandles[edge.id]?.source, autoHandles.source);
+    const targetHandle = normalizeHandleSide(edgeHandles[edge.id]?.target, autoHandles.target);
+    return {
+      ...edge,
+      sourceHandle,
+      targetHandle,
+      data: {
+        ...edge.data!,
+        showLabel: showLabels,
+        focusOpacity: mode === "dependency" && dependencyFocusId ? (related ? 1 : .1) : 1,
+        dependencySide: related ? side : undefined,
+        dependencyDepth: Math.max(sourceVisit?.depth ?? 0, targetVisit?.depth ?? 0),
+        flowActive: flowAnimation && tcpUp && (mode !== "dependency" || related),
+      }
+    };
+  }), [liveEdges, relationFilters, relatedRelations, visitMap, edgeHandles, mode, showLabels, flowAnimation, dependencyFocusId, computeAutoHandles]);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => setLiveNodes((nodes) => applyNodeChanges(changes, nodes) as Node<TopologyNodeData>[]), []);
   const savePosition = (node: Node) => { const from = dragStartRef.current[node.id] ?? node.position; const position = { x: Math.round(node.position.x / 20) * 20, y: Math.round(node.position.y / 20) * 20 }; lastMoveRef.current = { id: node.id, from, to: position }; setManualPositions((current) => { const next = { ...current, [node.id]: position }; positionsRef.current = next; localStorage.setItem(storageKey, JSON.stringify(next)); return next; }); };
   const undoMove = () => { const move = lastMoveRef.current; if (!move) return; setLiveNodes((nodes) => nodes.map((node) => node.id === move.id ? { ...node, position: move.from } : node)); setManualPositions((current) => { const next = { ...current, [move.id]: move.from }; positionsRef.current = next; localStorage.setItem(storageKey, JSON.stringify(next)); return next; }); lastMoveRef.current = null; };
-  const autoLayout = () => { localStorage.removeItem(storageKey); positionsRef.current = {}; setManualPositions({}); setLayoutRevision((value) => value + 1); }; const updateHandles = (id: string, value: { source?: HandleDirection; target?: HandleDirection }) => setEdgeHandles((current) => { const next = { ...current, [id]: { source: normalizeHandleSide(value.source), target: normalizeHandleSide(value.target) } }; localStorage.setItem(`rpa-topology-handles:v3:${activeProject.id}`, JSON.stringify(next)); return next; });
+  const autoLayout = () => { localStorage.removeItem(storageKey); positionsRef.current = {}; setManualPositions({}); setLayoutRevision((value) => value + 1); };
+  const updateHandles = useCallback((id: string, value: { source?: HandleDirection; target?: HandleDirection }) => setEdgeHandles((current) => { const next = { ...current, [id]: { source: normalizeHandleSide(value.source), target: normalizeHandleSide(value.target) } }; localStorage.setItem(`rpa-topology-handles:v3:${activeProject.id}`, JSON.stringify(next)); return next; }), [activeProject.id]);
   const selectEntity = (id: string) => { const entity = catalog.get(id); if (!entity) return; setSelectedEntityId(id); if (mode === "dependency") { setDependencyFocusId(id); setDependencyQuery(entity.label); setDependencyDrawerEntity(entity); } else if (entity.asset) setSelectedVm(entity.asset); else if (entity.cluster) setSelectedCluster(entity.cluster); else if (entity.nas) setSelectedNas(entity.nas); else if (entity.group) { const members = groupAssets(entity.group, projectAssets); setSelectedGroup({ groupName: entity.label, groupType: entity.group.groupType, environment: entity.group.environment, domain: entity.group.domain, system: entity.group.system, description: entity.group.description, assets: members, statuses: projectStatuses.filter((status) => members.some((asset) => asset.id === status.policy.sourceVmId || asset.id === status.policy.targetVmId)), software, sops }); } };
   const openDependency = (id: string) => { const entity = catalog.get(id); setDependencyFocusId(id); setDependencyQuery(entity?.label ?? id); setMode("dependency"); setDependencyDrawerEntity(entity ?? null); }; const chooseDependencyQuery = (value: string) => { setDependencyQuery(value); const q = value.trim().toLowerCase(); const hit = searchableEntities.find((item) => item.id === value || item.label.toLowerCase() === q) ?? searchableEntities.find((item) => item.aliases.some((alias) => alias.toLowerCase().includes(q))); if (hit) { setDependencyFocusId(hit.id); setDependencyDrawerEntity(hit); } };
-  const expandVisible = () => setExpandedGroupIds((current) => { const next = new Set(current); projectGroups.filter((group) => !group.parentGroupId || current.has(group.parentGroupId)).forEach((group) => next.add(group.id)); return next; });
+  const expandVisible = () => {
+    positionsRef.current = {};
+    setManualPositions({});
+    try { localStorage.removeItem(storageKey); } catch {}
+    setExpandedGroupIds((current) => {
+      const next = new Set(current);
+      projectGroups.filter((group) => !group.parentGroupId || current.has(group.parentGroupId)).forEach((group) => next.add(group.id));
+      return next;
+    });
+  };
+  const collapseAll = () => {
+    positionsRef.current = {};
+    setManualPositions({});
+    try { localStorage.removeItem(storageKey); } catch {}
+    setExpandedGroupIds(new Set());
+  };
   const impactSummary = { direct: dependencyGraph.visits.filter((visit) => visit.depth === 1).length, impact: dependencyGraph.visits.filter((visit) => visit.side === "impact").length, dependency: dependencyGraph.visits.filter((visit) => visit.side === "dependency").length, failed: projectStatuses.filter((status) => status.overall !== "NORMAL" && dependencyGraph.visits.some((visit) => visit.id === status.policy.sourceVmId || visit.id === status.policy.targetVmId)).length, sops: sops.filter((sop) => sop.relatedVmIds.some((id) => visitMap.has(id))).length, eosl: software.filter((item) => visitMap.has(item.vmId) && item.eoslDate && new Date(item.eoslDate).getTime() < Date.now()).length };
-  const onConnect = async (connection: Connection) => { if (!connection.source || !connection.target || connection.source === connection.target) return; const source = catalog.get(connection.source); const target = catalog.get(connection.target); if (!source || !target) return; const relationType: RelationType = target.kind === "cluster" || target.kind === "dbaas" ? "DATABASE" : target.kind === "nas" ? "STORAGE" : "SERVICE"; const entityType = (entity: SemanticEntity): ArchitectureRelation["sourceEntityType"] => entity.kind === "group" ? "TOPOLOGY_GROUP" : entity.kind === "cluster" ? "CLUSTER" : entity.kind === "external" ? "EXTERNAL" : "ASSET"; const relation: ArchitectureRelation = { id: `manual-${Date.now()}`, projectGroupId: activeProject.id, sourceEntityType: entityType(source), sourceEntityId: connection.source, targetEntityType: target.kind === "nas" ? "NAS" : entityType(target), targetEntityId: connection.target, relationType, protocol: target.kind === "nas" ? "NFS" : "TCP", port: target.kind === "cluster" ? 1433 : target.kind === "nas" ? 2049 : 8080 }; await managementRepo.createRelation(relation); setCurrentRelations((items) => [relation, ...items]); updateHandles(`${connection.source}:${connection.target}:${relationType}`, { source: normalizeHandleSide(connection.sourceHandle, "r"), target: normalizeHandleSide(connection.targetHandle, "l") }); };
+
+  const onConnect = async (connection: Connection) => {
+    if (!connection.source || !connection.target || connection.source === connection.target) return;
+    const source = catalog.get(connection.source);
+    const target = catalog.get(connection.target);
+    if (!source || !target) return;
+    const relationType: RelationType =
+      target.kind === "cluster" || target.kind === "dbaas"
+        ? "DATABASE"
+        : target.kind === "nas"
+          ? "STORAGE"
+          : "SERVICE";
+    const entityType = (entity: SemanticEntity): ArchitectureRelation["sourceEntityType"] =>
+      entity.kind === "group" ? "TOPOLOGY_GROUP" : entity.kind === "cluster" ? "CLUSTER" : entity.kind === "external" ? "EXTERNAL" : "ASSET";
+
+    const defaultProtocol = target.kind === "nas" ? "NFS" : "TCP";
+    const defaultPort = target.kind === "cluster" ? 1433 : target.kind === "nas" ? 2049 : 8080;
+
+    const relation: ArchitectureRelation = {
+      id: `manual-${Date.now()}`,
+      projectGroupId: activeProject.id,
+      sourceEntityType: entityType(source),
+      sourceEntityId: connection.source,
+      targetEntityType: target.kind === "nas" ? "NAS" : entityType(target),
+      targetEntityId: connection.target,
+      relationType,
+      protocol: defaultProtocol,
+      port: defaultPort,
+      name: `${source.label} → ${target.label}`,
+      description: "아키텍처 캔버스 신규 연결 (설정 필요)",
+    };
+
+    const sourceVm = source.asset;
+    const targetVm = target.asset;
+    const draftPolicy: NetworkPolicy = {
+      id: `pol-draft-${Date.now()}`,
+      projectGroupId: activeProject.id,
+      requestId: `REQ-DRAFT-${Date.now().toString().slice(-4)}`,
+      sourceVmId: sourceVm?.id ?? connection.source,
+      sourceName: source.label,
+      sourceIp: sourceVm?.ipAddress ?? "미설정 (??)",
+      targetVmId: targetVm?.id ?? (target.kind === "nas" ? target.nas?.id : connection.target),
+      targetName: target.label,
+      targetIp: targetVm?.ipAddress ?? target.cluster?.vip ?? target.nas?.ipAddress ?? "미설정 (??)",
+      protocol: "TCP",
+      port: defaultPort,
+      direction: "ONE_WAY",
+      approvalStatus: "PENDING",
+      purpose: "아키텍처 캔버스 신규 연결 (설정 필요)",
+      expiresAt: "",
+      requestedAt: new Date().toISOString(),
+    };
+
+    await Promise.all([
+      managementRepo.createRelation(relation),
+      managementRepo.createPolicy(draftPolicy),
+    ]);
+
+    setCurrentRelations((items) => [relation, ...items]);
+    updateHandles(`${connection.source}:${connection.target}:${relationType}`, {
+      source: normalizeHandleSide(connection.sourceHandle),
+      target: normalizeHandleSide(connection.targetHandle),
+    });
+    setEditingRelation({ relation, sourceName: source.label, targetName: target.label, isNew: true });
+  };
+
+  const onReconnect = useCallback((oldEdge: Edge, newConnection: Connection) => {
+    if (!newConnection.source || !newConnection.target || newConnection.source === newConnection.target) return;
+    const relation = (oldEdge.data as TopologyEdgeData)?.relation;
+    if (relation) {
+      const source = catalog.get(newConnection.source);
+      const target = catalog.get(newConnection.target);
+      const entityType = (entity?: SemanticEntity): ArchitectureRelation["sourceEntityType"] =>
+        entity?.kind === "group" ? "TOPOLOGY_GROUP" : entity?.kind === "cluster" ? "CLUSTER" : entity?.kind === "external" ? "EXTERNAL" : "ASSET";
+      const updated: ArchitectureRelation = {
+        ...relation,
+        sourceEntityId: newConnection.source,
+        sourceEntityType: entityType(source),
+        targetEntityId: newConnection.target,
+        targetEntityType: target?.kind === "nas" ? "NAS" : entityType(target),
+      };
+      managementRepo.updateRelation(relation.id, updated).catch(() => {});
+      setCurrentRelations((items) => items.map((r) => (r.id === relation.id ? updated : r)));
+      if (newConnection.sourceHandle || newConnection.targetHandle) {
+        updateHandles(`${newConnection.source}:${newConnection.target}:${relation.relationType}`, {
+          source: normalizeHandleSide(newConnection.sourceHandle),
+          target: normalizeHandleSide(newConnection.targetHandle),
+        });
+      }
+    }
+    setLiveEdges((edges) => reconnectEdge(oldEdge, newConnection, edges) as Edge<TopologyEdgeData>[]);
+  }, [catalog, updateHandles]);
+
+  const onReconnectStart = useCallback((_: unknown, edge: Edge) => { reconnectRef.current = edge; }, []);
+  const onReconnectEnd = useCallback((_: unknown, edge: Edge) => { if (reconnectRef.current?.id === edge.id) reconnectRef.current = null; }, []);
+
+  const handleEdgeClick = (_: unknown, edge: Edge) => {
+    const relation = (edge.data as TopologyEdgeData)?.relation;
+    if (layoutEdit && relation) {
+      const source = catalog.get(relation.sourceEntityId) ?? catalog.get(edge.source);
+      const target = catalog.get(relation.targetEntityId) ?? catalog.get(edge.target);
+      setEditingRelation({ relation, sourceName: source?.label ?? edge.source, targetName: target?.label ?? edge.target });
+      return;
+    }
+    const status = edge.data?.status as NetworkStatus | undefined;
+    if (status) {
+      setSelectedEdgeId(edge.id);
+      setSelectedConnection(status);
+    } else if (relation) {
+      const source = catalog.get(relation.sourceEntityId) ?? catalog.get(edge.source);
+      const target = catalog.get(relation.targetEntityId) ?? catalog.get(edge.target);
+      setEditingRelation({ relation, sourceName: source?.label ?? edge.source, targetName: target?.label ?? edge.target });
+    }
+  };
+
+  const onRelationSave = async (updated: ArchitectureRelation) => {
+    await managementRepo.updateRelation(updated.id, updated);
+    setCurrentRelations((items) => items.map((r) => (r.id === updated.id ? updated : r)));
+    try {
+      const policies = await managementRepo.getPolicies();
+      const match = policies.find(
+        (p) =>
+          (p.sourceVmId === updated.sourceEntityId && p.targetVmId === updated.targetEntityId) ||
+          updated.id.includes(p.id)
+      );
+      if (match) {
+        await managementRepo.updatePolicy(match.id, {
+          protocol: updated.protocol === "UDP" ? "UDP" : "TCP",
+          port: updated.port ?? match.port,
+          purpose: updated.description ?? match.purpose,
+        });
+      }
+    } catch {}
+    setEditingRelation(null);
+  };
+
+  const onRelationDelete = async (id: string) => {
+    await managementRepo.deleteRelation(id);
+    setCurrentRelations((items) => items.filter((r) => r.id !== id));
+    setEditingRelation(null);
+  };
+
+  const onRelationCancel = async () => {
+    if (editingRelation?.isNew && editingRelation.relation.id) {
+      const relId = editingRelation.relation.id;
+      await managementRepo.deleteRelation(relId).catch(() => {});
+      try {
+        const policies = await managementRepo.getPolicies();
+        const draftPol = policies.find(
+          (p) =>
+            p.id.includes(relId) ||
+            (editingRelation.relation.sourceEntityId === p.sourceVmId &&
+              editingRelation.relation.targetEntityId === p.targetVmId &&
+              p.id.startsWith("pol-draft"))
+        );
+        if (draftPol) {
+          await managementRepo.deletePolicy(draftPol.id).catch(() => {});
+        }
+      } catch {}
+      setCurrentRelations((items) => items.filter((r) => r.id !== relId));
+      setLiveEdges((edges) => edges.filter((e) => (e.data as TopologyEdgeData)?.relation?.id !== relId));
+    }
+    setEditingRelation(null);
+  };
 
   return <div className="space-y-2"><div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2 text-[10px]"><div className="flex flex-wrap items-center gap-2"><div className="flex rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-0.5">{(["topology", "dependency"] as ArchitectureMode[]).map((view) => <button key={view} type="button" onClick={() => setMode(view)} className={`h-6 rounded px-2.5 text-[9px] font-semibold ${mode === view ? "bg-[var(--surface)] shadow-sm" : "text-[var(--muted)]"}`}>{view === "topology" ? "전체 구성" : "Dependency"}</button>)}</div><label className="flex items-center gap-1 text-[var(--muted)]">Project <span className="rounded border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1 text-[var(--foreground)]">{activeProject.name}</span></label><label className="flex items-center gap-1 text-[var(--muted)]">Environment <select value={environment} onChange={(event) => setEnvironment(event.target.value)} className="h-7 rounded border border-[var(--border)] bg-[var(--surface)] px-2"><option>ALL</option><option>PROD</option><option>QA</option><option>DEV</option></select></label>{mode === "dependency" && <><label className="flex items-center gap-1 text-[var(--muted)]">대상 <span className="flex h-7 w-52 items-center gap-1 rounded border border-[var(--border)] px-2"><SearchIcon className="h-3 w-3" /><input list="dependency-targets" value={dependencyQuery} onChange={(event) => chooseDependencyQuery(event.target.value)} className="w-full bg-transparent outline-none" placeholder="자산 / 그룹 검색" /><datalist id="dependency-targets">{searchableEntities.map((item) => <option key={item.id} value={item.label}>{item.id}</option>)}</datalist></span></label><label className="text-[var(--muted)]">연결 범위 <select value={String(dependencyDepth)} onChange={(event) => setDependencyDepth(event.target.value === "all" ? "all" : Number(event.target.value) as 1 | 2 | 3)} className="ml-1 h-7 rounded border border-[var(--border)] bg-[var(--surface)] px-2"><option value="1">직접 연결</option><option value="2">2단계</option><option value="3">3단계</option><option value="all">전체</option></select></label></>}</div><div className="flex flex-wrap items-center gap-1.5"><button type="button" onClick={() => setOverlay((value) => value === "policy" ? "live" : "policy")} className="h-7 rounded border border-[var(--border)] px-2">{overlay === "policy" ? "Policy" : "Actual"}</button><Toggle label="Flow" active={flowAnimation} onClick={() => setFlowAnimation((value) => !value)} /><Toggle label="Labels" active={showLabels} onClick={() => setShowLabels((value) => !value)} /><Toggle label="Edit Layout" active={layoutEdit} onClick={() => setLayoutEdit((value) => !value)} /><button type="button" onClick={() => flowInstance.current?.fitView({ padding: .16, duration: 240 })} className="h-7 rounded border border-[var(--border)] px-2">Fit</button><button type="button" onClick={autoLayout} className="h-7 rounded border border-[var(--border)] px-2">Auto Layout</button>{lastMoveRef.current && <button type="button" onClick={undoMove} className="h-7 rounded border border-[var(--border)] px-2">Undo move</button>}{selectedEntityId && mode === "topology" && <button type="button" onClick={() => openDependency(selectedEntityId)} className="h-7 rounded border border-[#5750f1]/40 px-2 text-[#5750f1]">Dependency 보기</button>}</div></div>
-    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-[9px]"><div className="flex flex-wrap gap-1">{(Object.keys(relationFilters) as RelationType[]).map((type) => <label key={type} className="flex items-center gap-1 rounded border border-[var(--border)] bg-[var(--surface-2)] px-1.5 py-0.5"><input type="checkbox" checked={relationFilters[type]} onChange={(event) => setRelationFilters((current) => ({ ...current, [type]: event.target.checked }))} className="h-3 w-3 accent-[#5750f1]" />{type}</label>)}</div><div className="flex items-center gap-2"><button type="button" onClick={() => setExpandedGroupIds(new Set())} className="rounded border border-[var(--border)] px-2 py-1">Collapse all</button><button type="button" onClick={expandVisible} className="rounded border border-[var(--border)] px-2 py-1">Expand one level</button><span className="flex h-6 w-44 items-center gap-1 rounded border border-[var(--border)] px-2"><SearchIcon className="h-3 w-3" /><input value={query} onChange={(event) => setQuery(event.target.value)} className="w-full bg-transparent outline-none" placeholder="hostname / IP" /></span><label className="flex items-center gap-1"><input type="checkbox" checked={issuesOnly} onChange={(event) => setIssuesOnly(event.target.checked)} />Issues only</label></div></div>
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-[9px]"><div className="flex flex-wrap gap-1">{(Object.keys(relationFilters) as RelationType[]).map((type) => <label key={type} className="flex items-center gap-1 rounded border border-[var(--border)] bg-[var(--surface-2)] px-1.5 py-0.5"><input type="checkbox" checked={relationFilters[type]} onChange={(event) => setRelationFilters((current) => ({ ...current, [type]: event.target.checked }))} className="h-3 w-3 accent-[#5750f1]" />{type}</label>)}</div><div className="flex items-center gap-2"><button type="button" onClick={collapseAll} className="rounded border border-[var(--border)] px-2 py-1">Collapse all</button><button type="button" onClick={expandVisible} className="rounded border border-[var(--border)] px-2 py-1">Expand one level</button><span className="flex h-6 w-44 items-center gap-1 rounded border border-[var(--border)] px-2"><SearchIcon className="h-3 w-3" /><input value={query} onChange={(event) => setQuery(event.target.value)} className="w-full bg-transparent outline-none" placeholder="hostname / IP" /></span><label className="flex items-center gap-1"><input type="checkbox" checked={issuesOnly} onChange={(event) => setIssuesOnly(event.target.checked)} />Issues only</label></div></div>
     {mode === "dependency" && dependencyFocusId && <><ImpactSummary values={impactSummary} /><div className="flex items-center gap-4 rounded border border-[var(--border)] bg-[var(--surface)] px-3 py-1 text-[8px]"><span><i className="mr-1 inline-block h-2 w-2 rounded-full bg-[#5750f1]" />선택 대상</span><span className="text-[#0e9384]">← 영향 대상</span><span className="text-[#5750f1]">→ 필요 자원</span></div></>}
-    <div className="relative h-[calc(100vh-260px)] min-h-[510px] overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)]">{isLayouting && <div className="absolute right-3 top-3 z-30 rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[9px] text-[var(--muted)] shadow">Calculating layout...</div>}{layoutEdit && <div className="absolute left-3 top-3 z-30 rounded border border-[#5750f1]/40 bg-[var(--surface)] px-2 py-1 text-[8px] font-semibold text-[#5750f1] shadow">EDIT MODE · 20px Grid Snap</div>}<ReactFlow nodes={resolvedNodes} edges={resolvedEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} minZoom={.18} maxZoom={1.6} nodesDraggable={layoutEdit} nodesConnectable={layoutEdit} connectionMode={ConnectionMode.Loose} connectionLineType={ConnectionLineType.SmoothStep} snapToGrid snapGrid={[20, 20]} onInit={(instance) => { flowInstance.current = instance as unknown as typeof flowInstance.current; }} onNodesChange={onNodesChange} onNodeDragStart={(_, node) => { dragStartRef.current[node.id] = { ...node.position }; }} onNodeDragStop={(_, node) => savePosition(node)} onConnect={onConnect} onNodeClick={(_, node) => selectEntity(node.id)} onNodeDoubleClick={(event, node) => { if (catalog.get(node.id)?.group) { event.stopPropagation(); toggleGroup(node.id); } }} onPaneClick={() => { if (mode === "dependency") { setDependencyFocusId(null); setDependencyQuery(""); } }} onEdgeClick={(_, edge) => { const status = edge.data?.status as NetworkStatus | undefined; if (status) { setSelectedEdgeId(edge.id); setSelectedConnection(status); } }}><Background gap={20} size={1} color="var(--border)" /><Controls showInteractive={false} /><MiniMap pannable zoomable className="!border-[var(--border)] !bg-[var(--surface)]" nodeColor={(node) => node.data.selectedTarget ? "#5750f1" : node.type === "clusterCard" ? "#a855f7" : node.type === "nasCard" ? "#0ea5e9" : "#98a2b3"} /></ReactFlow><div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded border border-[var(--border)] bg-[var(--surface)]/95 px-3 py-1 text-[8px] text-[var(--muted)] shadow">Policy (Should Be) · Actual (TCP Probe) · Group +/− inline expand · 20px Grid Snap</div></div>
-    <GroupDrawer data={selectedGroup} open={!!selectedGroup} onClose={() => setSelectedGroup(null)} onSelectAsset={(asset) => setSelectedVm(asset)} onDrillDown={() => { if (selectedEntityId) toggleGroup(selectedEntityId); setSelectedGroup(null); }} /><VmDrawer vm={selectedVm} network={projectStatuses} software={software} sops={sops} open={!!selectedVm} onClose={() => setSelectedVm(null)} onSelectSoftware={(item) => { const release = matchLegacySoftwareRelease(item, softwareProducts, softwareReleases); if (release) setSelectedRelease(release); }} /><ConnectionDrawer sourceHandle={edgeHandles[selectedEdgeId ?? ""]?.source} targetHandle={edgeHandles[selectedEdgeId ?? ""]?.target} onUpdateHandles={(value) => selectedEdgeId && updateHandles(selectedEdgeId, value)} status={selectedConnection} relatedStatuses={selectedConnection ? [selectedConnection] : []} open={!!selectedConnection} onClose={() => setSelectedConnection(null)} /><ClusterDrawer cluster={selectedCluster} open={!!selectedCluster} onClose={() => setSelectedCluster(null)} /><NasDrawer nas={selectedNas} open={!!selectedNas} onClose={() => setSelectedNas(null)} onSelectVm={(hostname) => setSelectedVm(projectAssets.find((item) => item.hostname === hostname) ?? null)} /><SoftwareDetailDrawer release={selectedRelease} open={!!selectedRelease} onClose={() => setSelectedRelease(null)} /><DependencyDrawer entity={dependencyDrawerEntity} open={!!dependencyDrawerEntity} onClose={() => setDependencyDrawerEntity(null)} visits={dependencyGraph.visits} catalog={catalog} statuses={projectStatuses} software={software} sops={sops} assets={projectAssets} />
+    <div className="relative h-[calc(100vh-260px)] min-h-[510px] overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)]">{isLayouting && <div className="absolute right-3 top-3 z-30 rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[9px] text-[var(--muted)] shadow">Calculating layout...</div>}{layoutEdit && <div className="absolute left-3 top-3 z-30 rounded border border-[#5750f1]/40 bg-[var(--surface)] px-2 py-1 text-[8px] font-semibold text-[#5750f1] shadow">EDIT MODE · Drag handles to reconnect · 20px Grid Snap</div>}<ReactFlow nodes={resolvedNodes} edges={resolvedEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} minZoom={.18} maxZoom={1.6} nodesDraggable={layoutEdit} nodesConnectable={layoutEdit} edgesReconnectable={layoutEdit} connectionMode={ConnectionMode.Loose} connectionLineType={ConnectionLineType.SmoothStep} snapToGrid snapGrid={[20, 20]} onInit={(instance) => { flowInstance.current = instance as unknown as typeof flowInstance.current; }} onNodesChange={onNodesChange} onNodeDragStart={(_, node) => { dragStartRef.current[node.id] = { ...node.position }; }} onNodeDragStop={(_, node) => savePosition(node)} onConnect={onConnect} onReconnect={onReconnect} onReconnectStart={onReconnectStart} onReconnectEnd={onReconnectEnd} onNodeClick={(_, node) => selectEntity(node.id)} onNodeDoubleClick={(event, node) => { if (catalog.get(node.id)?.group) { event.stopPropagation(); toggleGroup(node.id); } }} onPaneClick={() => { if (mode === "dependency") { setDependencyFocusId(null); setDependencyQuery(""); } }} onEdgeClick={handleEdgeClick}><Background gap={20} size={1} color="var(--border)" /><Controls showInteractive={false} /><MiniMap pannable zoomable className="!border-[var(--border)] !bg-[var(--surface)]" nodeColor={(node) => node.data.selectedTarget ? "#5750f1" : node.type === "clusterCard" ? "#a855f7" : node.type === "nasCard" ? "#0ea5e9" : "#98a2b3"} /></ReactFlow><div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded border border-[var(--border)] bg-[var(--surface)]/95 px-3 py-1 text-[8px] text-[var(--muted)] shadow">Policy (Should Be) · Actual (TCP Probe) · Group +/− inline expand · 20px Grid Snap</div></div>
+    <GroupDrawer data={selectedGroup} open={!!selectedGroup} onClose={() => setSelectedGroup(null)} onSelectAsset={(asset) => setSelectedVm(asset)} onDrillDown={() => { if (selectedEntityId) toggleGroup(selectedEntityId); setSelectedGroup(null); }} /><VmDrawer vm={selectedVm} network={projectStatuses} software={software} sops={sops} open={!!selectedVm} onClose={() => setSelectedVm(null)} onSelectSoftware={(item) => { const release = matchLegacySoftwareRelease(item, softwareProducts, softwareReleases); if (release) setSelectedRelease(release); }} /><ConnectionDrawer sourceHandle={edgeHandles[selectedEdgeId ?? ""]?.source} targetHandle={edgeHandles[selectedEdgeId ?? ""]?.target} onUpdateHandles={(value) => selectedEdgeId && updateHandles(selectedEdgeId, value)} status={selectedConnection} relatedStatuses={selectedConnection ? [selectedConnection] : []} open={!!selectedConnection} onClose={() => setSelectedConnection(null)} onEdit={() => { if (!selectedConnection) return; const currentEdge = liveEdges.find((e) => e.id === selectedEdgeId); const rel: ArchitectureRelation = currentEdge?.data?.relation ?? { id: `pol-rel-${selectedConnection.policy.id}`, projectGroupId: activeProject.id, sourceEntityType: "ASSET", sourceEntityId: selectedConnection.policy.sourceVmId, targetEntityType: "ASSET", targetEntityId: selectedConnection.policy.targetVmId ?? "", relationType: "SERVICE", protocol: selectedConnection.policy.protocol, port: selectedConnection.policy.port, name: `${selectedConnection.policy.sourceName} → ${selectedConnection.policy.targetName}`, description: selectedConnection.policy.purpose ?? undefined }; setSelectedConnection(null); setEditingRelation({ relation: rel, sourceName: selectedConnection.policy.sourceName, targetName: selectedConnection.policy.targetName }); }} /><ClusterDrawer cluster={selectedCluster} open={!!selectedCluster} onClose={() => setSelectedCluster(null)} /><NasDrawer nas={selectedNas} open={!!selectedNas} onClose={() => setSelectedNas(null)} onSelectVm={(hostname) => setSelectedVm(projectAssets.find((item) => item.hostname === hostname) ?? null)} /><SoftwareDetailDrawer release={selectedRelease} open={!!selectedRelease} onClose={() => setSelectedRelease(null)} /><DependencyDrawer entity={dependencyDrawerEntity} open={!!dependencyDrawerEntity} onClose={() => setDependencyDrawerEntity(null)} visits={dependencyGraph.visits} catalog={catalog} statuses={projectStatuses} software={software} sops={sops} assets={projectAssets} /><RelationEditorDrawer relation={editingRelation?.relation ?? null} open={!!editingRelation} onClose={onRelationCancel} onCancel={onRelationCancel} onSave={onRelationSave} onDelete={onRelationDelete} sourceName={editingRelation?.sourceName} targetName={editingRelation?.targetName} />
   </div>;
 }
 

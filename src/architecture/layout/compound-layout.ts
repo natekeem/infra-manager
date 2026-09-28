@@ -5,8 +5,8 @@ import { NODE_DIMENSIONS, type LayoutEdgeData, type LayoutNodeData } from "./typ
 
 const elk = new ELK();
 const GROUP_HEADER = 38;
-const GROUP_PADDING_X = 28;
-const GROUP_PADDING_BOTTOM = 28;
+const GROUP_PADDING_X = 32;
+const GROUP_PADDING_BOTTOM = 32;
 
 export interface CompoundNodeData extends LayoutNodeData {
   expanded?: boolean;
@@ -53,13 +53,39 @@ export async function layoutCompoundGraph<N extends CompoundNodeData, E extends 
       const target = directChild(edge.target, parent);
       if (source && target && source !== target) localEdges.set(`${source}:${target}`, { source, target });
     }
+
+    if (parent !== "root" && localEdges.size === 0 && ids.length >= 2) {
+      const cols = ids.length <= 4 ? 2 : 3;
+      const gapX = 36;
+      const gapY = 28;
+      let maxW = 0;
+      let maxH = 0;
+      ids.sort().forEach((id, idx) => {
+        const node = byId.get(id)!;
+        const size = sizeOf(node);
+        const col = idx % cols;
+        const row = Math.floor(idx / cols);
+        const x = col * (size.width + gapX) + GROUP_PADDING_X;
+        const y = row * (size.height + gapY) + GROUP_HEADER;
+        node.position = { x, y };
+        maxW = Math.max(maxW, x + size.width + GROUP_PADDING_X);
+        maxH = Math.max(maxH, y + size.height + GROUP_PADDING_BOTTOM);
+      });
+      const group = byId.get(parent);
+      if (group) {
+        group.data.width = Math.max(340, maxW);
+        group.data.height = Math.max(210, maxH);
+      }
+      return;
+    }
+
     const graph: ElkNode = {
       id: parent,
       layoutOptions: {
         ...elkPreset("DOWN"),
         "elk.padding": "[top=0,left=0,bottom=0,right=0]",
-        "elk.spacing.nodeNode": "42",
-        "elk.layered.spacing.nodeNodeBetweenLayers": "72",
+        "elk.spacing.nodeNode": "56",
+        "elk.layered.spacing.nodeNodeBetweenLayers": "90",
       },
       children: ids.sort().map((id) => ({ id, ...sizeOf(byId.get(id)!) })),
       edges: [...localEdges.entries()].map(([id, edge]) => ({ id, sources: [edge.source], targets: [edge.target] })),
@@ -74,7 +100,7 @@ export async function layoutCompoundGraph<N extends CompoundNodeData, E extends 
     if (parent !== "root") {
       const group = byId.get(parent);
       if (group) {
-        group.data.width = Math.max(320, (result.width ?? 0) + GROUP_PADDING_X * 2);
+        group.data.width = Math.max(340, (result.width ?? 0) + GROUP_PADDING_X * 2);
         group.data.height = Math.max(210, (result.height ?? 0) + GROUP_HEADER + GROUP_PADDING_BOTTOM);
       }
     }

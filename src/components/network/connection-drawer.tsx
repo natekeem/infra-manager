@@ -16,6 +16,7 @@ export function ConnectionDrawer({
   sourceHandle,
   targetHandle,
   onUpdateHandles,
+  onEdit,
 }: {
   status: NetworkStatus | null;
   relatedStatuses?: NetworkStatus[];
@@ -24,6 +25,7 @@ export function ConnectionDrawer({
   sourceHandle?: HandleDirection;
   targetHandle?: HandleDirection;
   onUpdateHandles?: (handles: { source?: HandleDirection; target?: HandleDirection }) => void;
+  onEdit?: () => void;
 }) {
   const [activeStatus, setActiveStatus] = useState<NetworkStatus | null>(status);
 
@@ -75,6 +77,15 @@ export function ConnectionDrawer({
           <div className="flex items-center gap-2">
             <Badge tone={isBidi ? "info" : "neutral"}>{isBidi ? "BIDIRECTIONAL" : "ONE_WAY"}</Badge>
             <span className="font-mono text-[9px] text-[var(--muted)]">{p.requestId ?? "요청 ID 없음"}</span>
+            {onEdit && (
+              <button
+                type="button"
+                onClick={onEdit}
+                className="rounded border border-[#5750f1]/30 bg-[#5750f1]/10 px-2 py-0.5 text-[9px] font-semibold text-[#5750f1] hover:bg-[#5750f1]/20 transition"
+              >
+                연결 정보 편집
+              </button>
+            )}
           </div>
         </div>
 

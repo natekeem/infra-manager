@@ -260,6 +260,11 @@ export function RelationManagementView({
                 </td>
                 <td className="px-3 py-2 font-mono text-[10px]">
                   {r.protocol || "TCP"} / {r.port || "-"}
+                  {(!r.port || r.id.startsWith("manual-") || r.description?.includes("설정 필요")) && (
+                    <span className="ml-1.5 rounded bg-amber-500/15 px-1 py-0.5 text-[7.5px] font-semibold text-amber-700 dark:text-amber-400">
+                      설정 필요
+                    </span>
+                  )}
                 </td>
                 <td className="px-3 py-2 text-[var(--muted)] max-w-[280px] truncate">{r.description || "-"}</td>
                 <td className="px-3 py-2 text-right">

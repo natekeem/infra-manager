@@ -1,22 +1,56 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import type { NetworkStatus, ProbeState } from "@/domain/models";
+import { useEffect, useMemo, useState } from "react";
+import type { NetworkPolicy, NetworkStatus, ProbeState } from "@/domain/models";
 import { ConnectionDrawer } from "./connection-drawer";
 import { StatusBadge } from "./status-badge";
 import { Badge } from "@/components/tailgrids/core/badge";
 import { SearchIcon } from "@/components/common/icons";
 import { useProjectGroup } from "@/context/project-group-context";
+import { managementRepo } from "@/services/management/mock-repository";
 
 export function NetworkTable({ statuses }: { statuses: NetworkStatus[] }) {
   const { activeProject } = useProjectGroup();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("ALL");
   const [selected, setSelected] = useState<NetworkStatus | null>(null);
+  const [repoPolicies, setRepoPolicies] = useState<NetworkPolicy[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    managementRepo.getPolicies().then((policies) => {
+      if (!isMounted) return;
+      setRepoPolicies(policies);
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const mergedStatuses = useMemo(() => {
+    const existingIds = new Set(statuses.map((s) => s.policy.id));
+    const extra: NetworkStatus[] = [];
+    for (const p of repoPolicies) {
+      if (!existingIds.has(p.id)) {
+        extra.push({
+          policy: p,
+          observation: undefined,
+          reverseObservation: undefined,
+          overall: p.approvalStatus === "APPROVED" ? "NORMAL" : "UNKNOWN",
+          diagnostic:
+            !p.port || p.port === 0
+              ? "아키텍처에서 생성된 신규 연결입니다. 포트 및 프로토콜 설정이 필요합니다."
+              : `신규 등록된 정책입니다 (${p.approvalStatus}).`,
+          isBidirectional: p.direction === "BIDIRECTIONAL",
+        });
+      }
+    }
+    return [...statuses, ...extra];
+  }, [statuses, repoPolicies]);
 
   const scopedStatuses = useMemo(
-    () => statuses.filter((s) => !s.policy.projectGroupId || s.policy.projectGroupId === activeProject.id),
-    [statuses, activeProject.id]
+    () => mergedStatuses.filter((s) => !s.policy.projectGroupId || s.policy.projectGroupId === activeProject.id),
+    [mergedStatuses, activeProject.id]
   );
 
   const filtered = useMemo(
@@ -153,7 +187,13 @@ export function NetworkTable({ statuses }: { statuses: NetworkStatus[] }) {
                     </td>
 
                     <td className="px-3 py-1.5 font-mono text-[10px] font-semibold tabular-nums">
-                      {p.protocol}/{p.port}
+                      {(!p.port || p.port === 0) ? (
+                        <span className="inline-flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[8.5px] font-bold text-amber-600">
+                          {p.protocol || "??"} / ?? <span className="font-sans font-normal">(설정 필요)</span>
+                        </span>
+                      ) : (
+                        `${p.protocol}/${p.port}`
+                      )}
                     </td>
 
                     <td className="px-3 py-1.5">
@@ -170,6 +210,11 @@ export function NetworkTable({ statuses }: { statuses: NetworkStatus[] }) {
                           {p.approvalStatus}
                         </Badge>
                         {p.requestId && <span className="font-mono text-[8px] text-[var(--muted)]">{p.requestId}</span>}
+                        {(!p.port || p.port === 0 || p.id.startsWith("pol-draft")) && (
+                          <span className="rounded bg-amber-500/15 px-1 py-0.5 text-[7.5px] font-semibold text-amber-700 dark:text-amber-400">
+                            설정 필요
+                          </span>
+                        )}
                       </div>
                     </td>
 

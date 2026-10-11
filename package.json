@@ -12,6 +12,7 @@
     "import:normalized": "tsx scripts/import-normalized-json.ts"
   },
   "dependencies": {
+    "@maxgraph/core": "^0.24.0",
     "@xyflow/react": "12.11.6",
     "clsx": "^2.1.1",
     "elkjs": "^0.12.0",

@@ -1,5 +1,5 @@
 import { PageHeader } from "@/components/common/page-header";
-import { ArchitectureCanvas } from "@/components/topology/architecture-canvas";
+import { MaxGraphArchitecture } from "@/components/architecture-maxgraph/maxgraph-architecture";
 import {
   getClusters,
   getNasAssets,
@@ -42,9 +42,9 @@ export default async function ArchitecturePage() {
     <>
       <PageHeader
         title="Architecture"
-        description="전체 구성에서 필요한 그룹을 펼치고 Dependency에서 자산·그룹·클러스터의 의존성과 장애 영향 범위를 확인합니다."
+        description="전체 시스템 구성을 그룹 단위로 펼쳐 보고, 노드를 선택해 의존성과 상세 운영 정보를 확인합니다."
       />
-      <ArchitectureCanvas
+      <MaxGraphArchitecture
         vms={vms}
         statuses={statuses}
         software={software}

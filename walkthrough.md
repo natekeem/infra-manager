@@ -197,3 +197,36 @@ Verified in `DATA_SOURCE=mock` on the live Next.js page:
 - 390×844 QA: grouped default, toolbar controls, canvas, minimap, right-side navigation separation이 유지됐다. 기존 fixed admin shell의 높은 밀도는 이번 Architecture 범위에서 변경하지 않았다.
 - mock adapter와 기존 Policy/Actual, bidirectional diagnosis, VM/Cluster/NAS/Software/SOP drawer 계약은 유지한다.
 - Full undo history는 범위 밖이며 현재는 마지막 node move 1건만 되돌리는 최소 지원이다.
+
+## Architecture Engine Migration — maxGraph
+
+상세 구현 기록은 [`docs/MAXGRAPH_ARCHITECTURE_WALKTHROUGH.md`](docs/MAXGRAPH_ARCHITECTURE_WALKTHROUGH.md)에 분리했다. 아래는 요청된 migration 체크리스트의 요약이다.
+
+1. 기존 React Flow Architecture는 ELK 좌표, custom group expansion, visible endpoint promotion, handle routing, dependency state가 한 renderer에 결합되어 있었다.
+2. Architecture route는 무료 Apache-2.0 `@maxgraph/core` 0.24.0으로 교체했다. 외부 SaaS, 별도 backend, iframe, AI layout은 추가하지 않았다.
+3. maxGraph는 `"use client"` component의 mount effect에서만 생성하며 SSR 중 DOM/window에 접근하지 않는다.
+4. Graph instance, listener, native `UndoManager`, grid, panning, connection handler는 mount당 한 번 구성하고 cleanup에서 해제한다.
+5. Domain adapter는 Asset/Group/Cluster/Relation을 ID 기반 `GraphCellMeta`로 연결하며 전체 domain object를 cell에 저장하지 않는다.
+6. Asset vertex는 공통 compact image node를 사용한다. IP, CPU, memory, owner, OS, EOSL, policy, probe, software, SOP 상세는 canvas에 표시하지 않는다.
+7. server/database/NAS/cluster/Kubernetes/network 표현은 repository에 포함한 local authored SVG를 사용하며 runtime CDN 의존이 없다.
+8. Group은 maxGraph parent-child cell이고 child 이동과 edge terminal 추적은 graph model에 맡긴다.
+9. Collapse/Expand는 native `foldCells()`와 renderer control을 사용한다. local SVG control 전달을 위한 최소 pointer bridge도 최종 호출은 `foldCells()`에 위임한다.
+10. Collapsed group label은 AP/DB/NAS 집계만 표시한다.
+11. Child relation terminal은 유지하고 folded parent로의 승격은 maxGraph view가 처리한다. 별도 nearest-visible endpoint와 routed point를 만들지 않는다.
+12. Relation type은 기존 SERVICE/DATABASE/STORAGE/MONITORING/MANAGEMENT/CLUSTER/EXTERNAL/OTHER를 edge style로만 매핑한다.
+13. Edit OFF에서는 selection/pan/zoom/fold/Drawer를 유지하고 move/resize/connect/delete를 제한한다. Edit ON은 native 기능을 활성화한다.
+14. Grid snap은 maxGraph native 20 px grid를 사용한다.
+15. Move/fold/create/delete history는 native `UndoManager`에 연결한다.
+16. Hierarchical, Compact Tree, Swimlane, Composite를 toolbar에서 비교할 수 있다. nested scope는 deepest-first hierarchical, top-level은 hierarchical인 Composite 조합을 기본으로 선택했다.
+17. Auto Layout은 initial/project/environment/explicit button에서만 실행한다. click, Drawer, label, policy, actual, dependency focus, relation 추가는 layout trigger가 아니다.
+18. Dependency는 depth 2 traversal 결과를 전체 graph의 style metadata로 적용하고 subset graph를 만들지 않는다.
+19. Node click은 기존 VM/NAS/Cluster/Group/Connection/Software Drawer state로 연결한다. 빈 canvas는 focus를 해제한다.
+20. Search는 hostname/display name/IP/group/cluster/external ID를 찾고 필요한 ancestor만 펼쳐 select/reveal한다.
+21. Architecture Relation, Policy SHOULD BE, Telegraf ACTUAL은 분리한다. Policy/Actual은 기존 결과를 warning overlay로만 표현한다.
+22. Software/EOSL/SOP 정보는 기존 Drawer와 repository 경로를 그대로 사용한다.
+23. layout은 `rpa-maxgraph-layout:v1`에 project/entity geometry와 collapsed 상태를 저장한다.
+24. 최종 `/infrastructure/architecture` route는 maxGraph를 사용한다. 이전 React Flow/ELK code와 package는 전체 edit/create/delete/drag regression 완료 전까지 안전하게 유지한다.
+25. Browser QA에서 grouped production render, fold/expand, promoted edge, VM right Drawer, dependency dimming, Edit indicator, console warning/error 0건을 확인했다.
+26. 자동화된 drag 시 캔버스 스크롤 좌표 불일치로 과도한 이동이 발생해 native history 등록은 확인했으나, AP01/group drag와 live edge tracking은 target operator viewport에서 추가 수동 회귀 확인이 필요하다.
+27. `npm run build`, `npx tsc --noEmit`, `git diff --check`를 통과했다.
+28. Probe Flow animation과 old renderer 제거는 남은 TODO다. Flow는 migration 우선순위를 막지 않도록 의도적으로 보류했다.

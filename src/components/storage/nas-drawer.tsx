@@ -48,7 +48,7 @@ export function NasDrawer({
         {/* Capacity Gauge */}
         <section className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-3">
           <div className="mb-1.5 flex items-center justify-between text-[11px]">
-            <span className="font-semibold text-[var(--foreground)]">Storage Allocation</span>
+            <span className="font-semibold text-[var(--foreground)]">스토리지 할당량</span>
             <span className="font-mono text-[var(--muted)]">
               {nas.usedCapacityTb} / {nas.capacityTb} TB ({usedPct}%)
             </span>
@@ -67,25 +67,25 @@ export function NasDrawer({
             />
           </div>
           <div className="mt-2 flex justify-between text-[9px] text-[var(--muted)]">
-            <span>Used: {nas.usedCapacityTb} TB</span>
-            <span>Available: {freeTb} TB</span>
+            <span>사용 중: {nas.usedCapacityTb} TB</span>
+            <span>여유 공간: {freeTb} TB</span>
           </div>
         </section>
 
         {/* Storage Properties */}
         <section>
           <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--muted)]">
-            Storage Specification
+            스토리지 상세 사양
           </h3>
           <div className="text-[10px]">
-            <KV k="Vendor / Model" v={`${nas.vendor} ${nas.model ?? "-"}`} />
-            <KV k="IP Address" v={<span className="font-mono">{nas.ipAddress}</span>} />
-            <KV k="Protocol" v={nas.protocol} />
-            <KV k="Mount Path" v={<span className="font-mono">{nas.mountPath ?? "-"}</span>} />
-            <KV k="Environment" v={nas.environment} />
-            <KV k="Zone" v={nas.zone} />
-            <KV k="Criticality" v={<Badge tone={nas.criticality === "CRITICAL" ? "danger" : "neutral"}>{nas.criticality}</Badge>} />
-            <KV k="Owner" v={nas.owner ?? "-"} />
+            <KV k="벤더 / 모델" v={`${nas.vendor} ${nas.model ?? "-"}`} />
+            <KV k="IP 주소" v={<span className="font-mono">{nas.ipAddress}</span>} />
+            <KV k="프로토콜" v={nas.protocol} />
+            <KV k="마운트 경로" v={<span className="font-mono">{nas.mountPath ?? "-"}</span>} />
+            <KV k="환경" v={nas.environment} />
+            <KV k="영역" v={nas.zone} />
+            <KV k="중요도" v={<Badge tone={nas.criticality === "CRITICAL" ? "danger" : "neutral"}>{nas.criticality}</Badge>} />
+            <KV k="담당자" v={nas.owner ?? "-"} />
           </div>
         </section>
 
@@ -94,9 +94,9 @@ export function NasDrawer({
           <section>
             <div className="mb-2 flex items-center justify-between">
               <h3 className="text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--muted)]">
-                Mounted Target VMs ({nas.targetVms.length})
+                마운트된 대상 VM ({nas.targetVms.length}대)
               </h3>
-              <span className="text-[9px] text-[var(--muted)]">Client Nodes</span>
+              <span className="text-[9px] text-[var(--muted)]">클라이언트 노드</span>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {nas.targetVms.map((vm) => (

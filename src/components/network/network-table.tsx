@@ -1,20 +1,61 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import type { NetworkStatus, ProbeState } from "@/domain/models";
+import { useEffect, useMemo, useState } from "react";
+import type { NetworkPolicy, NetworkStatus, ProbeState } from "@/domain/models";
 import { ConnectionDrawer } from "./connection-drawer";
 import { StatusBadge } from "./status-badge";
 import { Badge } from "@/components/tailgrids/core/badge";
 import { SearchIcon } from "@/components/common/icons";
+import { useProjectGroup } from "@/context/project-group-context";
+import { managementRepo } from "@/services/management/mock-repository";
 
 export function NetworkTable({ statuses }: { statuses: NetworkStatus[] }) {
+  const { activeProject } = useProjectGroup();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("ALL");
   const [selected, setSelected] = useState<NetworkStatus | null>(null);
+  const [repoPolicies, setRepoPolicies] = useState<NetworkPolicy[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    managementRepo.getPolicies().then((policies) => {
+      if (!isMounted) return;
+      setRepoPolicies(policies);
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const mergedStatuses = useMemo(() => {
+    const existingIds = new Set(statuses.map((s) => s.policy.id));
+    const extra: NetworkStatus[] = [];
+    for (const p of repoPolicies) {
+      if (!existingIds.has(p.id)) {
+        extra.push({
+          policy: p,
+          observation: undefined,
+          reverseObservation: undefined,
+          overall: p.approvalStatus === "APPROVED" ? "NORMAL" : "UNKNOWN",
+          diagnostic:
+            !p.port || p.port === 0
+              ? "아키텍처에서 생성된 신규 연결입니다. 포트 및 프로토콜 설정이 필요합니다."
+              : `신규 등록된 정책입니다 (${p.approvalStatus}).`,
+          isBidirectional: p.direction === "BIDIRECTIONAL",
+        });
+      }
+    }
+    return [...statuses, ...extra];
+  }, [statuses, repoPolicies]);
+
+  const scopedStatuses = useMemo(
+    () => mergedStatuses.filter((s) => !s.policy.projectGroupId || s.policy.projectGroupId === activeProject.id),
+    [mergedStatuses, activeProject.id]
+  );
 
   const filtered = useMemo(
     () =>
-      statuses.filter((s) => {
+      scopedStatuses.filter((s) => {
         const q =
           `${s.policy.sourceName} ${s.policy.sourceIp} ${s.policy.targetName} ${s.policy.targetIp} ${s.policy.port} ${s.policy.requestId ?? ""} ${s.policy.purpose ?? ""}`.toLowerCase();
         const hit = q.includes(query.toLowerCase());
@@ -42,10 +83,10 @@ export function NetworkTable({ statuses }: { statuses: NetworkStatus[] }) {
 
         return hit && f;
       }),
-    [statuses, query, filter]
+    [scopedStatuses, query, filter]
   );
 
-  const tcpFailures = statuses.filter(
+  const tcpFailures = scopedStatuses.filter(
     (s) => s.observation?.tcp === "DOWN" || s.reverseObservation?.tcp === "DOWN"
   ).length;
 
@@ -59,7 +100,7 @@ export function NetworkTable({ statuses }: { statuses: NetworkStatus[] }) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="w-full bg-transparent text-[11px] outline-none"
-              placeholder="Search source, target, IP, port, request ID..."
+              placeholder="출발지, 목적지, IP, 포트, 요청 ID 검색..."
             />
           </div>
 
@@ -68,16 +109,16 @@ export function NetworkTable({ statuses }: { statuses: NetworkStatus[] }) {
             onChange={(e) => setFilter(e.target.value)}
             className="h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2.5 text-[10px] outline-none"
           >
-            <option value="ALL">All ({statuses.length})</option>
-            <option value="ISSUES">Issues ({statuses.filter((s) => s.overall !== "NORMAL").length})</option>
-            <option value="TCP_FAILED">TCP Failed ({tcpFailures})</option>
-            <option value="EXPIRING">Expiring Soon (≤30d)</option>
-            <option value="EXPIRED">Policy Expired</option>
-            <option value="PENDING">Pending / Unapproved</option>
+            <option value="ALL">전체 ({statuses.length})</option>
+            <option value="ISSUES">이슈 ({statuses.filter((s) => s.overall !== "NORMAL").length})</option>
+            <option value="TCP_FAILED">TCP 실패 ({tcpFailures})</option>
+            <option value="EXPIRING">만료 예정 (≤30일)</option>
+            <option value="EXPIRED">정책 만료</option>
+            <option value="PENDING">대기 / 미승인</option>
           </select>
 
           <span className="ml-auto text-[10px] tabular-nums text-[var(--muted)]">
-            <b>{filtered.length}</b> / {statuses.length} policy connections
+            <b>{filtered.length}</b> / {scopedStatuses.length}개 정책 연결
           </span>
         </div>
 
@@ -96,24 +137,24 @@ export function NetworkTable({ statuses }: { statuses: NetworkStatus[] }) {
             <thead>
               <tr className="border-b border-[var(--border)] bg-[var(--surface-2)] text-[9px] uppercase tracking-[0.04em] text-[var(--muted)]">
                 <th colSpan={5} className="border-r border-[var(--border)] px-3 py-1.5 font-semibold text-[var(--foreground)]">
-                  Connection / Policy baseline
+                  연결 / 정책 기준 (Should Be)
                 </th>
                 <th colSpan={4} className="border-r border-[var(--border)] px-3 py-1.5 font-semibold text-[var(--foreground)]">
-                  Actual / Telegraf probe
+                  실측 / Telegraf 프로브 (Actual)
                 </th>
-                <th className="px-3 py-1.5 font-semibold text-[var(--foreground)]">Evaluation</th>
+                <th className="px-3 py-1.5 font-semibold text-[var(--foreground)]">상태 진단</th>
               </tr>
               <tr className="h-8 border-b border-[var(--border)] bg-[var(--surface-2)] text-[9px] uppercase tracking-[0.04em] text-[var(--muted)]">
-                <th className="px-3 py-1.5 font-medium">Source → Target</th>
-                <th className="px-3 py-1.5 font-medium">Direction</th>
-                <th className="px-3 py-1.5 font-medium">Protocol / Port</th>
-                <th className="px-3 py-1.5 font-medium">Approval</th>
-                <th className="border-r border-[var(--border)] px-3 py-1.5 font-medium">Expiry</th>
+                <th className="px-3 py-1.5 font-medium">출발지 → 목적지</th>
+                <th className="px-3 py-1.5 font-medium">방향</th>
+                <th className="px-3 py-1.5 font-medium">프로토콜 / 포트</th>
+                <th className="px-3 py-1.5 font-medium">승인 상태</th>
+                <th className="border-r border-[var(--border)] px-3 py-1.5 font-medium">만료일</th>
                 <th className="px-3 py-1.5 font-medium">Ping</th>
                 <th className="px-3 py-1.5 font-medium">TCP</th>
                 <th className="px-3 py-1.5 font-medium">RTT</th>
-                <th className="border-r border-[var(--border)] px-3 py-1.5 font-medium">Last Check</th>
-                <th className="px-3 py-1.5 font-medium">Status</th>
+                <th className="border-r border-[var(--border)] px-3 py-1.5 font-medium">최근 확인</th>
+                <th className="px-3 py-1.5 font-medium">상태</th>
               </tr>
             </thead>
             <tbody>
@@ -146,7 +187,13 @@ export function NetworkTable({ statuses }: { statuses: NetworkStatus[] }) {
                     </td>
 
                     <td className="px-3 py-1.5 font-mono text-[10px] font-semibold tabular-nums">
-                      {p.protocol}/{p.port}
+                      {(!p.port || p.port === 0) ? (
+                        <span className="inline-flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[8.5px] font-bold text-amber-600">
+                          {p.protocol || "??"} / ?? <span className="font-sans font-normal">(설정 필요)</span>
+                        </span>
+                      ) : (
+                        `${p.protocol}/${p.port}`
+                      )}
                     </td>
 
                     <td className="px-3 py-1.5">
@@ -163,6 +210,11 @@ export function NetworkTable({ statuses }: { statuses: NetworkStatus[] }) {
                           {p.approvalStatus}
                         </Badge>
                         {p.requestId && <span className="font-mono text-[8px] text-[var(--muted)]">{p.requestId}</span>}
+                        {(!p.port || p.port === 0 || p.id.startsWith("pol-draft")) && (
+                          <span className="rounded bg-amber-500/15 px-1 py-0.5 text-[7.5px] font-semibold text-amber-700 dark:text-amber-400">
+                            설정 필요
+                          </span>
+                        )}
                       </div>
                     </td>
 

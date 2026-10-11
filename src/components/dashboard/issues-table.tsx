@@ -16,13 +16,13 @@ export function IssuesTable({
       <table className="w-full min-w-[720px] border-collapse text-left text-[10px]">
         <thead>
           <tr className="border-b border-[var(--border)] bg-[var(--surface-2)] text-[9px] uppercase tracking-[0.04em] text-[var(--muted)]">
-            <th className="px-3 py-2 font-medium">Status</th>
-            <th className="px-3 py-2 font-medium">Source</th>
-            <th className="px-3 py-2 font-medium">Target</th>
-            <th className="px-3 py-2 font-medium">Port</th>
+            <th className="px-3 py-2 font-medium">상태</th>
+            <th className="px-3 py-2 font-medium">출발지</th>
+            <th className="px-3 py-2 font-medium">목적지</th>
+            <th className="px-3 py-2 font-medium">포트</th>
             <th className="px-3 py-2 font-medium">Ping</th>
             <th className="px-3 py-2 font-medium">TCP</th>
-            <th className="px-3 py-2 font-medium">Expiry / Request</th>
+            <th className="px-3 py-2 font-medium">만료 / 요청</th>
           </tr>
         </thead>
         <tbody>

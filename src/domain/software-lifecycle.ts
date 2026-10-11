@@ -1,10 +1,15 @@
 import type {
   AssetSoftwareInstallation,
+  LifecycleStatus,
+  ProjectSoftwareScope,
   SoftwareInstall,
+  SoftwareLifecyclePhase,
   SoftwareProduct,
+  SoftwareProductAlias,
   SoftwareRelease,
 } from "./models";
 import { daysUntil } from "./network-status";
+import { getAppNow } from "./app-time";
 
 /**
  * Compare two dot-separated version strings (e.g. "17.0.8" vs "17.0").
@@ -102,8 +107,8 @@ export function matchVersionRule(
  */
 export function deriveLifecycleStatus(
   eoslDate: string | null | undefined,
-  now = new Date()
-): "SUPPORTED" | "D180" | "D90" | "D30" | "EOSL" | "UNMAPPED" {
+  now = getAppNow()
+): LifecycleStatus {
   if (!eoslDate) return "UNMAPPED";
   const days = daysUntil(eoslDate, now);
   if (days === null) return "UNMAPPED";
@@ -112,6 +117,80 @@ export function deriveLifecycleStatus(
   if (days <= 90) return "D90";
   if (days <= 180) return "D180";
   return "SUPPORTED";
+}
+
+export function daysUntilEosl(eoslDate: string | null | undefined, now = getAppNow()) {
+  return daysUntil(eoslDate, now);
+}
+
+export function matchProductAliases(
+  installedName: string,
+  products: SoftwareProduct[],
+  aliases: SoftwareProductAlias[]
+): { status: "MATCHED" | "UNMAPPED" | "AMBIGUOUS"; productIds: string[] } {
+  const value = installedName.trim().toLowerCase();
+  const matches = new Set<string>();
+  for (const product of products) {
+    if (product.name.trim().toLowerCase() === value) matches.add(product.id);
+  }
+  for (const rule of aliases) {
+    const alias = rule.alias.trim().toLowerCase();
+    let matched = false;
+    if (rule.matchType === "EXACT") matched = value === alias;
+    if (rule.matchType === "CONTAINS") matched = value.includes(alias);
+    if (rule.matchType === "REGEX") {
+      try { matched = new RegExp(rule.alias, "i").test(installedName); } catch { matched = false; }
+    }
+    if (matched) matches.add(rule.productId);
+  }
+  const productIds = [...matches];
+  return { status: productIds.length === 1 ? "MATCHED" : productIds.length > 1 ? "AMBIGUOUS" : "UNMAPPED", productIds };
+}
+
+export function getReleaseTimeline(release: SoftwareRelease, phases: SoftwareLifecyclePhase[]) {
+  const explicit = phases.filter((phase) => phase.releaseId === release.id);
+  if (explicit.length) return explicit;
+  if (!release.releaseDate || !release.eoslDate) return [];
+  return [{
+    id: `known-${release.id}`,
+    releaseId: release.id,
+    phaseType: "OTHER" as const,
+    startDate: release.releaseDate,
+    endDate: release.eoslDate,
+    label: "Known lifecycle range",
+  }];
+}
+
+export function getCenteredReleaseWindow<T extends { id: string }>(
+  releases: T[], selectedId?: string | null, size = 7
+): T[] {
+  if (releases.length <= size || !selectedId) return releases;
+  const index = Math.max(0, releases.findIndex((release) => release.id === selectedId));
+  const half = Math.floor(size / 2);
+  const start = Math.max(0, Math.min(index - half, releases.length - size));
+  return releases.slice(start, start + size);
+}
+
+export function getProjectUsedProductIds(
+  projectGroupId: string,
+  scopes: ProjectSoftwareScope[],
+  installations: AssetSoftwareInstallation[]
+) {
+  return new Set([
+    ...scopes.filter((scope) => scope.projectGroupId === projectGroupId && scope.usageStatus !== "RETIRED").map((scope) => scope.productId),
+    ...installations.filter((installation) => !installation.projectGroupId || installation.projectGroupId === projectGroupId).map((installation) => installation.productId),
+  ]);
+}
+
+export function getProjectSoftwareRisk(installations: AssetSoftwareInstallation[]) {
+  const counts: Record<LifecycleStatus | "AMBIGUOUS", number> = {
+    SUPPORTED: 0, D180: 0, D90: 0, D30: 0, EOSL: 0, UNMAPPED: 0, AMBIGUOUS: 0,
+  };
+  for (const installation of installations) {
+    if (installation.matchStatus === "AMBIGUOUS") counts.AMBIGUOUS += 1;
+    else counts[installation.lifecycleStatus] += 1;
+  }
+  return counts;
 }
 
 /**
@@ -187,39 +266,58 @@ export function enrichLegacySoftware(
  */
 export function enrichInstallations(
   installations: AssetSoftwareInstallation[],
-  releases: SoftwareRelease[]
+  releases: SoftwareRelease[],
+  products: SoftwareProduct[] = [],
+  aliases: SoftwareProductAlias[] = [],
+  now = getAppNow()
 ): AssetSoftwareInstallation[] {
   const releaseById = new Map(releases.map((r) => [r.id, r]));
 
   return installations.map((inst) => {
+    let productId = inst.productId;
+    if (!productId || !products.some((product) => product.id === productId)) {
+      const productMatch = matchProductAliases(inst.detectedProductName ?? inst.productName, products, aliases);
+      if (productMatch.status !== "MATCHED") {
+        return { ...inst, productId: productId || "unmapped", matchedReleaseId: null, matchedReleaseVersion: null,
+          eoslDate: null, lifecycleStatus: "UNMAPPED", matchStatus: productMatch.status, candidateProductIds: productMatch.productIds };
+      }
+      productId = productMatch.productIds[0];
+    }
+
     // 1. Direct release ID match
     if (inst.matchedReleaseId && releaseById.has(inst.matchedReleaseId)) {
       const rel = releaseById.get(inst.matchedReleaseId)!;
       return {
         ...inst,
+        productId,
         matchedReleaseVersion: rel.version,
         eoslDate: rel.eoslDate,
-        lifecycleStatus: rel.status,
+        lifecycleStatus: deriveLifecycleStatus(rel.eoslDate, now),
+        matchStatus: "MATCHED",
       };
     }
 
     // 2. Match by productId + versionMatchRule
-    const candidateReleases = releases.filter(
-      (r) => r.productId === inst.productId || r.productName.toLowerCase() === inst.productName.toLowerCase()
-    );
+    const candidateReleases = releases.filter((r) => r.productId === productId);
 
-    for (const rel of candidateReleases) {
-      if (
-        matchVersionRule(inst.detectedVersion, rel.versionMatchRule, rel.matchPattern, rel.version)
-      ) {
+    const matchedReleases = candidateReleases.filter((rel) =>
+      matchVersionRule(inst.detectedVersion, rel.versionMatchRule, rel.matchPattern, rel.version)
+    );
+    if (matchedReleases.length === 1) {
+      const rel = matchedReleases[0];
         return {
           ...inst,
+          productId,
           matchedReleaseId: rel.id,
           matchedReleaseVersion: rel.version,
           eoslDate: rel.eoslDate,
-          lifecycleStatus: rel.status,
+          lifecycleStatus: deriveLifecycleStatus(rel.eoslDate, now),
+          matchStatus: "MATCHED",
         };
-      }
+    }
+    if (matchedReleases.length > 1) {
+      return { ...inst, productId, matchedReleaseId: null, matchedReleaseVersion: null, eoslDate: null,
+        lifecycleStatus: "UNMAPPED", matchStatus: "AMBIGUOUS", candidateReleaseIds: matchedReleases.map((release) => release.id) };
     }
 
     // 3. Match failed -> UNMAPPED without guessing EOSL
@@ -229,6 +327,7 @@ export function enrichInstallations(
       matchedReleaseVersion: null,
       eoslDate: null,
       lifecycleStatus: "UNMAPPED",
+      matchStatus: "UNMAPPED",
     };
   });
 }

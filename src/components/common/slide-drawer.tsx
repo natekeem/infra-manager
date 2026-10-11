@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { CloseIcon } from "./icons";
 import { cn } from "@/utils/cn";
 
@@ -18,6 +19,21 @@ export function SlideDrawer({
   children: React.ReactNode;
   width?: number;
 }) {
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open, onClose]);
+
   return (
     <>
       <button

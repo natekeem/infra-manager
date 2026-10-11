@@ -2,1625 +2,512 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Background,
-  BaseEdge,
-  Controls,
-  EdgeLabelRenderer,
-  Handle,
-  MiniMap,
-  MarkerType,
-  Position,
-  ReactFlow,
-  applyNodeChanges,
-  getBezierPath,
-  getSmoothStepPath,
-  type Edge,
-  type EdgeProps,
-  type Node,
-  type NodeChange,
-  type NodeProps,
+  Background, BaseEdge, ConnectionLineType, ConnectionMode, Controls, EdgeLabelRenderer, Handle,
+  MarkerType, MiniMap, Position, ReactFlow, applyNodeChanges, getSmoothStepPath, reconnectEdge,
+  type Connection, type Edge, type EdgeProps, type Node, type NodeChange, type NodeProps,
 } from "@xyflow/react";
-import type {
-  ClusterEntity,
-  NasAsset,
-  NetworkStatus,
-  SoftwareInstall,
-  SoftwareProduct,
-  SoftwareRelease,
-  SopDocument,
-  VmAsset,
-} from "@/domain/models";
+import "@xyflow/react/dist/style.css";
+import type { ArchitectureRelation, Asset, ClusterEntity, NasAsset, NetworkPolicy, NetworkStatus, RelationType, SoftwareInstall, SoftwareProduct, SoftwareRelease, SopDocument, TopologyGroup } from "@/domain/models";
+import { layoutCompoundGraph } from "@/architecture/layout/compound-layout";
+import { RELATION_LAYOUT_PRIORITY } from "@/architecture/layout/layout-presets";
+import { traverseDependencies, type DependencyDepth } from "@/architecture/layout/dependency-layout";
+import { assetMatchesGroup, buildEntityCatalog, groupAssets, type SemanticEntity } from "@/architecture/layout/semantic-layout";
+import { NODE_DIMENSIONS } from "@/architecture/layout/types";
+import { normalizeHandleMap, normalizeHandleSide, type HandleDirection } from "@/architecture/interaction/handle-utils";
 import { VmDrawer } from "@/components/infrastructure/vm-drawer";
 import { ConnectionDrawer } from "@/components/network/connection-drawer";
 import { ClusterDrawer } from "@/components/cluster/cluster-drawer";
 import { NasDrawer } from "@/components/storage/nas-drawer";
-import { TierDrawer, type TierDrawerData } from "@/components/topology/tier-drawer";
+import { GroupDrawer, type GroupDrawerData } from "@/components/topology/group-drawer";
+import { RelationEditorDrawer } from "@/components/topology/relation-editor-drawer";
 import { SoftwareDetailDrawer } from "@/components/software/software-detail-drawer";
-import { MaximizeIcon, SearchIcon } from "@/components/common/icons";
+import { SlideDrawer } from "@/components/common/slide-drawer";
+import { SearchIcon } from "@/components/common/icons";
 import { matchLegacySoftwareRelease } from "@/domain/software-lifecycle";
+import { managementRepo } from "@/services/management/mock-repository";
+import { useProjectGroup } from "@/context/project-group-context";
 
-type ViewMode = "overview" | "service" | "vm";
+type ArchitectureMode = "topology" | "dependency";
 type OverlayMode = "policy" | "live";
+type FocusSide = "impact" | "dependency" | "selected";
 
-export type TopologyNodeData = {
-  kind: "group" | "vm" | "external" | "cluster" | "nas";
-  key: string;
-  label: string;
-  sublabel?: string;
-  count?: number;
-  healthyCount?: number;
-  warningCount?: number;
-  criticalCount?: number;
-  connectionsCount?: number;
-  issueCount?: number;
-  vm?: VmAsset;
-  cluster?: ClusterEntity;
-  nas?: NasAsset;
-};
-
-export type TopologyEdgeData = {
-  label: string;
-  secondary: string;
-  issueCount: number;
-  status?: NetworkStatus;
-  relatedStatuses?: NetworkStatus[];
-  flowActive?: boolean;
-  showLabel?: boolean;
-  onSelect?: () => void;
-  edgeIndex?: number;
-  totalEdges?: number;
-  lineStyle?: "bezier" | "smoothstep";
-};
-
-const zoneOrder = ["WEB", "APP", "DB", "CONTROL", "BOT", "VDI", "SUPPORT", "EXTERNAL"];
-const zonePos: Record<string, { x: number; y: number }> = {
-  WEB: { x: 420, y: 60 },
-  APP: { x: 420, y: 260 },
-  DB: { x: 420, y: 470 },
-  CONTROL: { x: 60, y: 150 },
-  BOT: { x: 60, y: 350 },
-  VDI: { x: 60, y: 530 },
-  SUPPORT: { x: 780, y: 470 },
-  EXTERNAL: { x: 780, y: 180 },
-};
-
-function statusColor(issueCount: number, status?: NetworkStatus) {
-  if (status?.overall === "RETURN_DIRECTION_FAILED") return "#d92d20";
-  if (status?.overall.includes("UNREACHABLE") || status?.overall === "UNREACHABLE") return "#f04438";
-  if (status?.overall === "EXPIRING" || status?.overall.includes("EXPIRED")) return "#f79009";
-  return issueCount > 0 ? "#f79009" : "#98a2b3";
+export interface TopologyNodeData extends Record<string, unknown> {
+  kind: "group" | "asset" | "cluster" | "nas" | "dbaas" | "external";
+  key: string; label: string; sortKey: string; sublabel?: string; isEditing?: boolean;
+  selectedTarget?: boolean; dependencySide?: FocusSide; dependencyDepth?: number; focusOpacity?: number;
+  count?: number; healthyCount?: number; warningCount?: number; criticalCount?: number; issueCount?: number;
+  apCount?: number; dbCount?: number; nasCount?: number; relatedHiddenCount?: number;
+  environment?: string; domain?: string; system?: string; groupType?: string; description?: string;
+  group?: TopologyGroup; vm?: Asset; cluster?: ClusterEntity; nas?: NasAsset;
+  expanded?: boolean; width?: number; height?: number; onToggle?: () => void;
 }
 
-function NodeHandles({ color = "!bg-[#98a2b3]" }: { color?: string }) {
-  return (
-    <>
-      {/* 4-Way Source & Target Handles */}
-      <Handle id="t-src" type="source" position={Position.Top} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
-      <Handle id="t-tgt" type="target" position={Position.Top} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
-      <Handle id="b-src" type="source" position={Position.Bottom} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
-      <Handle id="b-tgt" type="target" position={Position.Bottom} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
-      <Handle id="l-src" type="source" position={Position.Left} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
-      <Handle id="l-tgt" type="target" position={Position.Left} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
-      <Handle id="r-src" type="source" position={Position.Right} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
-      <Handle id="r-tgt" type="target" position={Position.Right} className={`!h-1.5 !w-1.5 !border-0 ${color}`} />
-
-      {/* Aliases for backwards compatibility */}
-      <Handle id="t" type="target" position={Position.Top} style={{ opacity: 0, pointerEvents: "none" }} />
-      <Handle id="b" type="source" position={Position.Bottom} style={{ opacity: 0, pointerEvents: "none" }} />
-      <Handle id="l" type="target" position={Position.Left} style={{ opacity: 0, pointerEvents: "none" }} />
-      <Handle id="r" type="source" position={Position.Right} style={{ opacity: 0, pointerEvents: "none" }} />
-    </>
-  );
+export interface TopologyEdgeData extends Record<string, unknown> {
+  label: string; secondary: string; issueCount: number; status?: NetworkStatus;
+  relatedStatuses?: NetworkStatus[]; relation?: ArchitectureRelation; relationType?: RelationType;
+  flowActive?: boolean; showLabel?: boolean; layoutPriority?: number; focusOpacity?: number;
+  dependencySide?: Exclude<FocusSide, "selected">; dependencyDepth?: number; aggregateCount?: number;
 }
 
-function GroupNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
-  const isExternal = data.kind === "external";
-  return (
-    <div
-      className={`h-[116px] w-[200px] rounded-md border bg-[var(--surface)] p-2.5 shadow-sm transition ${
-        selected ? "border-[#5750f1] ring-1 ring-[#5750f1]/20" : "border-[var(--border-strong)]"
-      }`}
-    >
-      <NodeHandles />
-
-      <div className="flex items-center justify-between gap-1 border-b border-[var(--border)] pb-1.5">
-        <span className="truncate text-[11px] font-bold tracking-tight text-[var(--foreground)]">{data.label}</span>
-        {data.issueCount ? (
-          <span className="rounded bg-[var(--danger-soft)] px-1.5 py-0.5 text-[8px] font-semibold text-[#b42318]">
-            {data.issueCount} issue
-          </span>
-        ) : (
-          <span className="h-1.5 w-1.5 rounded-full bg-[#12b76a]" />
-        )}
-      </div>
-
-      {isExternal ? (
-        <div className="mt-2 flex items-center justify-between text-[10px] text-[var(--muted)]">
-          <span>{data.count ?? 1} External Target(s)</span>
-          <span className="text-[9px] uppercase tracking-wider text-[var(--muted-2)]">External</span>
-        </div>
-      ) : (
-        <div className="mt-2 space-y-1 text-[10px]">
-          <div className="flex items-center justify-between font-semibold">
-            <span className="text-[12px] tabular-nums">{data.count ?? 0} VMs</span>
-            <span className="text-[9px] font-normal text-[var(--muted)]">{data.connectionsCount ?? 0} Connections</span>
-          </div>
-          <div className="flex items-center gap-2 text-[9px]">
-            <span className="text-[#067647] dark:text-[#75e0aa]">{data.healthyCount ?? 0} Healthy</span>
-            {(data.warningCount ?? 0) > 0 && (
-              <span className="text-[#b54708] dark:text-[#fdbf5a] font-medium">{data.warningCount} Warning</span>
-            )}
-            {(data.criticalCount ?? 0) > 0 && (
-              <span className="text-[#b42318] dark:text-[#ff8a82] font-semibold">{data.criticalCount} Critical</span>
-            )}
-          </div>
-        </div>
-      )}
-
-      <div className="mt-2 flex items-center justify-between border-t border-[var(--border)] pt-1 text-[8px] text-[var(--muted-2)]">
-        <span>{isExternal ? "Dependency" : "Click: Overview · Double-click: Expand"}</span>
-        <span>→</span>
-      </div>
-    </div>
-  );
+function NodeHandles({ editing }: { editing?: boolean }) {
+  const cls = editing ? "!h-3 !w-3 !rounded-full !border-2 !border-white !bg-[#5750f1] shadow ring-2 ring-[#5750f1]/30" : "!h-1.5 !w-1.5 !rounded-full !border-0 !bg-[#98a2b3] opacity-0 group-hover:opacity-40";
+  return <>{([[Position.Top, "t"], [Position.Bottom, "b"], [Position.Left, "l"], [Position.Right, "r"]] as const).map(([position, id]) => <Handle key={id} id={id} type="source" position={position} isConnectable={editing} className={cls} />)}</>;
 }
 
-function VmNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
-  const vm = data.vm!;
-  return (
-    <div
-      className={`w-[230px] h-[125px] rounded-md border bg-[var(--surface)] p-2.5 shadow-sm transition flex flex-col justify-between ${
-        selected ? "border-[#5750f1] ring-1 ring-[#5750f1]/20" : "border-[var(--border)]"
-      }`}
-    >
-      <NodeHandles />
-
-      {/* Row 1: Hostname + Health dot */}
-      <div className="flex items-center justify-between gap-1">
-        <span className="truncate text-[11px] font-semibold text-[var(--foreground)]" title={vm.hostname}>
-          {vm.hostname}
-        </span>
-        <div className="flex items-center gap-1.5">
-          <span className="rounded bg-[var(--surface-2)] px-1 py-0.5 font-mono text-[8px] text-[var(--muted)]">
-            {vm.role}
-          </span>
-          <span
-            className={`h-2 w-2 rounded-full ${
-              vm.health === "healthy" ? "bg-[#12b76a]" : vm.health === "critical" ? "bg-[#f04438]" : "bg-[#f79009]"
-            }`}
-          />
-        </div>
-      </div>
-
-      {/* Row 2: IP + Env / Zone */}
-      <div className="flex items-center justify-between text-[9px] text-[var(--muted)]">
-        <span className="font-mono text-[var(--foreground)]">{vm.ipAddress}</span>
-        <div className="flex items-center gap-1 font-mono text-[8px]">
-          <span className="rounded border border-[var(--border)] px-1 py-0.2">{vm.environment}</span>
-          <span className="rounded bg-[var(--surface-2)] px-1 py-0.2">{vm.zone}</span>
-        </div>
-      </div>
-
-      {/* Row 3: Compact Metrics */}
-      <div className="grid grid-cols-3 gap-1 text-center text-[8px]">
-        <Metric k="CPU" v={vm.cpuPct} />
-        <Metric k="MEM" v={vm.memoryPct} />
-        <Metric k="DISK" v={vm.diskPct} />
-      </div>
-
-      {/* Row 4: OS Summary */}
-      <div className="flex items-center justify-between border-t border-[var(--border)] pt-1 text-[8px] text-[var(--muted-2)]">
-        <span className="truncate">{vm.osName}</span>
-        <span className="font-mono text-[7.5px]">{vm.service}</span>
-      </div>
-    </div>
-  );
+function CardShell({ data, selected, children, accent = "border-[var(--border)]" }: NodeProps<Node<TopologyNodeData>> & { children: React.ReactNode; accent?: string }) {
+  const size = NODE_DIMENSIONS[data.kind];
+  return <div style={{ width: size.width, height: size.height, opacity: data.focusOpacity ?? 1 }} className={`group relative flex flex-col justify-between rounded-md border bg-[var(--surface)] p-2.5 shadow-sm transition-opacity ${data.selectedTarget || selected ? "border-[#5750f1] ring-2 ring-[#5750f1]/30" : accent}`}><NodeHandles editing={data.isEditing} />{children}</div>;
 }
+function Metric({ label, value }: { label: string; value?: number }) { return <div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-1"><div className="text-[7px] text-[var(--muted)]">{label}</div><div className="text-[10px] font-bold">{value ?? 0}</div></div>; }
 
-function ClusterNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
-  const cluster = data.cluster!;
-  return (
-    <div
-      className={`w-[230px] h-[135px] rounded-md border bg-[var(--surface)] p-2.5 shadow-sm transition flex flex-col justify-between border-purple-500/40 ${
-        selected ? "border-purple-600 ring-1 ring-purple-500/20" : ""
-      }`}
-    >
-      <NodeHandles color="!bg-purple-400" />
-
-      {/* Row 1: Cluster Name + Type Badge */}
-      <div className="flex items-center justify-between gap-1">
-        <div className="flex items-center gap-1.5">
-          <span className="rounded bg-purple-500/10 px-1.5 py-0.5 font-mono text-[8px] font-bold text-purple-600 dark:text-purple-400">
-            {cluster.type}
-          </span>
-          <span className="truncate text-[11px] font-bold text-[var(--foreground)]" title={cluster.name}>
-            {cluster.name}
-          </span>
-        </div>
-        <span className="h-2 w-2 rounded-full bg-[#12b76a]" />
-      </div>
-
-      {/* Row 2: Virtual IP */}
-      <div className="flex items-center justify-between text-[9px]">
-        <span className="text-[var(--muted)]">VIP:</span>
-        <span className="font-mono font-bold text-[#5750f1]">{cluster.vip}</span>
-        <span className="rounded bg-[var(--surface-2)] px-1 py-0.2 font-mono text-[8px] text-[var(--muted)]">
-          {cluster.zone}
-        </span>
-      </div>
-
-      {/* Row 3: Cluster Members */}
-      <div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-1 text-[8px]">
-        <div className="flex justify-between text-[var(--muted)] mb-0.5">
-          <span>Active / Passive Nodes:</span>
-          <span>{cluster.members.length} nodes</span>
-        </div>
-        <div className="flex gap-1">
-          {cluster.members.map((m) => (
-            <span
-              key={m.assetId}
-              className={`rounded px-1 py-0.5 font-mono font-medium ${
-                m.role === "ACTIVE"
-                  ? "bg-purple-600/15 text-purple-700 dark:text-purple-300"
-                  : "bg-[var(--surface-3)] text-[var(--muted)]"
-              }`}
-            >
-              {m.hostname} ({m.role.slice(0, 1)})
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {/* Row 4: Clustered Service */}
-      <div className="flex items-center justify-between border-t border-[var(--border)] pt-1 text-[8px] text-[var(--muted-2)]">
-        <span>HA Database Cluster</span>
-        <span className="font-mono text-[7.5px]">Port 1433</span>
-      </div>
-    </div>
-  );
+function ScopeNode(props: NodeProps<Node<TopologyNodeData>>) {
+  const { data } = props;
+  return <CardShell {...props}><div className="flex items-start justify-between gap-2 border-b border-[var(--border)] pb-1.5"><div className="min-w-0"><div className="truncate text-[11px] font-bold">{data.label}</div><div className="truncate text-[8px] text-[var(--muted)]">{data.sublabel}</div></div><div className="flex items-center gap-1">{data.relatedHiddenCount ? <span className="rounded bg-[#5750f1]/10 px-1 text-[7px] text-[#5750f1]">{data.relatedHiddenCount} related</span> : null}<button type="button" aria-label={`${data.label} ${data.expanded ? "collapse" : "expand"}`} onClick={(event) => { event.stopPropagation(); data.onToggle?.(); }} className="nodrag flex h-5 w-5 items-center justify-center rounded border border-[var(--border)] text-[11px] font-bold text-[#5750f1]">{data.expanded ? "−" : "+"}</button></div></div><div className="grid grid-cols-3 gap-1 text-center text-[8px]"><Metric label="AP" value={data.apCount} /><Metric label="DB" value={data.dbCount} /><Metric label="NAS" value={data.nasCount} /></div><div className="flex items-center justify-between border-t border-[var(--border)] pt-1 text-[8px]"><span className="text-emerald-600">{data.healthyCount ?? 0} Healthy</span><span className="text-[var(--muted)]">{data.count ?? 0} assets</span></div></CardShell>;
 }
+function GroupContainer(props: NodeProps<Node<TopologyNodeData>>) { const { data } = props; return <div style={{ width: data.width, height: data.height, opacity: data.focusOpacity ?? 1 }} className={`group relative rounded-lg border-2 bg-[var(--surface-2)]/55 shadow-sm transition-opacity ${data.selectedTarget ? "border-[#5750f1]" : "border-[var(--border-strong)]"}`}><NodeHandles editing={data.isEditing} /><div className="flex h-[38px] items-center justify-between border-b border-[var(--border)] px-3"><div className="min-w-0"><span className="text-[10px] font-bold">{data.label}</span><span className="ml-2 text-[8px] text-[var(--muted)]">{data.count ?? 0} assets</span>{data.relatedHiddenCount ? <span className="ml-2 rounded bg-[#5750f1]/10 px-1.5 py-0.5 text-[7px] text-[#5750f1]">{data.relatedHiddenCount} related</span> : null}</div><button type="button" aria-label={`${data.label} collapse`} onClick={(event) => { event.stopPropagation(); data.onToggle?.(); }} className="nodrag flex h-5 w-5 items-center justify-center rounded border border-[var(--border)] text-[11px] font-bold text-[#5750f1]">−</button></div></div>; }
+function AssetNode(props: NodeProps<Node<TopologyNodeData>>) { const vm = props.data.vm!; return <CardShell {...props} accent={vm.health === "critical" ? "border-red-500/50" : vm.health === "warning" ? "border-amber-500/50" : "border-[var(--border)]"}><div className="flex items-center justify-between gap-2"><span className="truncate text-[11px] font-semibold">{vm.hostname}</span><span className="rounded bg-[var(--surface-2)] px-1 text-[8px]">{props.data.selectedTarget ? "SELECTED" : vm.role}</span></div><div className="flex items-center justify-between text-[9px]"><span className="font-mono">{vm.ipAddress}</span><span className="text-[var(--muted)]">{vm.environment} · {vm.domain ?? "UNMAPPED"}</span></div><div className="grid grid-cols-3 gap-1 text-center text-[8px]"><Metric label="CPU" value={vm.cpuPct} /><Metric label="MEM" value={vm.memoryPct} /><Metric label="DISK" value={vm.diskPct} /></div><div className="flex justify-between border-t border-[var(--border)] pt-1 text-[8px] text-[var(--muted)]"><span className="truncate">{vm.service}</span>{props.data.dependencySide && props.data.dependencySide !== "selected" && <span>{props.data.dependencySide === "impact" ? "영향 대상" : "필요 자원"} D{props.data.dependencyDepth}</span>}</div></CardShell>; }
+function ClusterNode(props: NodeProps<Node<TopologyNodeData>>) { const c = props.data.cluster!; return <CardShell {...props} accent="border-purple-500/40"><div className="flex justify-between"><span className="text-[8px] font-bold text-purple-600">{c.type}</span>{props.data.selectedTarget && <span className="text-[7px] font-bold text-[#5750f1]">SELECTED</span>}</div><div className="truncate text-[11px] font-bold">{c.name}</div><div className="font-mono text-[9px] text-[#5750f1]">VIP {c.vip}</div><div className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-1 text-[8px]">{c.members.map((m) => `${m.hostname} ${m.role}`).join(" · ")}</div></CardShell>; }
+function NasNode(props: NodeProps<Node<TopologyNodeData>>) { const n = props.data.nas!; const pct = n.capacityTb ? Math.round(n.usedCapacityTb / n.capacityTb * 100) : 0; return <CardShell {...props} accent="border-cyan-500/40"><div className="flex justify-between"><span className="text-[8px] font-bold text-cyan-600">NAS · {n.protocol}</span>{props.data.selectedTarget && <span className="text-[7px] font-bold text-[#5750f1]">SELECTED</span>}</div><div className="truncate text-[11px] font-semibold">{n.hostname}</div><div className="font-mono text-[9px]">{n.ipAddress}</div><div><div className="mb-1 flex justify-between text-[8px] text-[var(--muted)]"><span>Capacity</span><span>{n.usedCapacityTb}/{n.capacityTb} TB</span></div><div className="h-1.5 rounded bg-[var(--surface-3)]"><div className="h-full rounded bg-cyan-500" style={{ width: `${Math.min(100, pct)}%` }} /></div></div></CardShell>; }
 
-function NasNode({ data, selected }: NodeProps<Node<TopologyNodeData>>) {
-  const nas = data.nas!;
-  const usedPct = nas.capacityTb > 0 ? Math.round((nas.usedCapacityTb / nas.capacityTb) * 100) : 0;
+function FlowEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, selected }: EdgeProps<Edge<TopologyEdgeData>>) { const [path, lx, ly] = getSmoothStepPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, borderRadius: 8 }); const issue = data?.status?.overall === "RETURN_DIRECTION_FAILED" || data?.status?.overall.includes("UNREACHABLE"); const color = data?.dependencySide === "dependency" ? "#5750f1" : data?.dependencySide === "impact" ? "#0e9384" : issue ? "#f04438" : data?.issueCount ? "#f79009" : "#98a2b3"; return <><BaseEdge id={id} path={path} style={{ stroke: color, strokeWidth: selected || data?.dependencySide ? 2.25 : 1.4, opacity: data?.focusOpacity ?? 1, transition: "opacity 160ms" }} />{data?.flowActive && <circle r={3} fill={color}><animateMotion dur="2.4s" repeatCount="indefinite" path={path} /></circle>}{data?.showLabel && <EdgeLabelRenderer><div style={{ position: "absolute", transform: `translate(-50%, -50%) translate(${lx}px,${ly}px)`, pointerEvents: "all", opacity: data.focusOpacity ?? 1 }} className="nodrag nopan rounded border border-[var(--border)] bg-[var(--surface)] px-1.5 py-0.5 font-mono text-[8px] shadow-sm">{data.aggregateCount && data.aggregateCount > 1 ? `${data.aggregateCount} connections` : data.label}</div></EdgeLabelRenderer>}</>; }
 
-  return (
-    <div
-      className={`w-[220px] h-[120px] rounded-md border bg-[var(--surface)] p-2.5 shadow-sm transition flex flex-col justify-between border-cyan-500/40 ${
-        selected ? "border-cyan-600 ring-1 ring-cyan-500/20" : ""
-      }`}
-    >
-      <NodeHandles color="!bg-cyan-400" />
-
-      {/* Row 1: Hostname + Protocol */}
-      <div className="flex items-center justify-between gap-1">
-        <div className="flex items-center gap-1.5">
-          <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[8px] font-bold text-cyan-700 dark:text-cyan-300">
-            NAS
-          </span>
-          <span className="truncate text-[11px] font-semibold text-[var(--foreground)]" title={nas.hostname}>
-            {nas.hostname}
-          </span>
-        </div>
-        <span className="h-2 w-2 rounded-full bg-[#12b76a]" />
-      </div>
-
-      {/* Row 2: IP + Protocol */}
-      <div className="flex items-center justify-between text-[9px] text-[var(--muted)]">
-        <span className="font-mono text-[var(--foreground)]">{nas.ipAddress}</span>
-        <span className="rounded border border-[var(--border)] px-1 py-0.2 font-mono text-[8px]">{nas.protocol}</span>
-      </div>
-
-      {/* Row 3: Capacity Bar */}
-      <div className="space-y-1 text-[8px]">
-        <div className="flex justify-between text-[var(--muted)]">
-          <span>Capacity:</span>
-          <span className="font-mono">{nas.usedCapacityTb} / {nas.capacityTb} TB ({usedPct}%)</span>
-        </div>
-        <div className="h-1.5 w-full overflow-hidden rounded bg-[var(--surface-3)]">
-          <div
-            className={`h-full rounded transition-all ${
-              usedPct >= 90 ? "bg-[var(--danger)]" : usedPct >= 75 ? "bg-[var(--warning)]" : "bg-cyan-500"
-            }`}
-            style={{ width: `${Math.min(100, usedPct)}%` }}
-          />
-        </div>
-      </div>
-
-      {/* Row 4: Mount targets */}
-      <div className="flex items-center justify-between border-t border-[var(--border)] pt-1 text-[8px] text-[var(--muted-2)]">
-        <span>{nas.vendor} {nas.model ?? ""}</span>
-        <span>{nas.targetVms?.length ?? 0} VMs mounted</span>
-      </div>
-    </div>
-  );
-}
-
-function Metric({ k, v }: { k: string; v?: number }) {
-  const val = v ?? 0;
-  const isHigh = val >= 85;
-  return (
-    <div className={`rounded px-1 py-0.5 ${isHigh ? "bg-[var(--warning-soft)] text-[#b54708]" : "bg-[var(--surface-2)]"}`}>
-      <div className="text-[7px] text-[var(--muted)]">{k}</div>
-      <div className="font-semibold tabular-nums">{val}%</div>
-    </div>
-  );
-}
-
-function FlowEdge(props: EdgeProps<Edge<TopologyEdgeData>>) {
-  const { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition } = props;
-  const data = props.data!;
-  const isBezier = data.lineStyle !== "smoothstep";
-  const [path] = isBezier
-    ? getBezierPath({
-        sourceX,
-        sourceY,
-        sourcePosition,
-        targetX,
-        targetY,
-        targetPosition,
-        curvature: 0.25,
-      })
-    : getSmoothStepPath({
-        sourceX,
-        sourceY,
-        sourcePosition,
-        targetX,
-        targetY,
-        targetPosition,
-        borderRadius: 8,
-      });
-
-  const color = statusColor(data.issueCount, data.status);
-  const isTcpUp = data.status?.observation?.tcp === "UP";
-  const isBidi = data.status?.isBidirectional;
-  const isReverseUp = isBidi && data.status?.reverseObservation?.tcp === "UP";
-  const flowActive = data.flowActive ?? true;
-
-  // Source-anchored sticky badge positioning with orientation-aware stagger:
-  const edgeIdx = data.edgeIndex ?? 0;
-  const totalEdg = data.totalEdges ?? 1;
-  const stagger = (edgeIdx - (totalEdg - 1) / 2) * 20;
-
-  let labelX = sourceX;
-  let labelY = sourceY;
-
-  if (sourcePosition === Position.Top) {
-    labelX = sourceX + stagger;
-    labelY = sourceY - 32;
-  } else if (sourcePosition === Position.Bottom) {
-    labelX = sourceX + stagger;
-    labelY = sourceY + 32;
-  } else if (sourcePosition === Position.Left) {
-    labelX = sourceX - 44;
-    labelY = sourceY + stagger;
-  } else {
-    // Position.Right or default
-    labelX = sourceX + 44;
-    labelY = sourceY + stagger;
-  }
-
-  return (
-    <>
-      <BaseEdge
-        path={path}
-        markerStart={props.markerStart}
-        markerEnd={props.markerEnd}
-        interactionWidth={18}
-        style={{
-          stroke: color,
-          strokeWidth: data.issueCount ? 1.8 : 1.2,
-          strokeDasharray: data.status?.observation?.tcp === "DOWN" ? "5 4" : undefined,
-        }}
-      />
-
-      {/* SVG Probe Flow Particle Animation */}
-      {flowActive && isTcpUp && (
-        <circle r="3" fill={color}>
-          <animateMotion dur="2.4s" repeatCount="indefinite" path={path} />
-        </circle>
-      )}
-      {flowActive && isReverseUp && (
-        <circle r="2.5" fill="#12b76a">
-          <animateMotion dur="2.4s" repeatCount="indefinite" path={path} keyPoints="1;0" keyTimes="0;1" calcMode="linear" />
-        </circle>
-      )}
-
-      {data.showLabel && (
-        <EdgeLabelRenderer>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              data.onSelect?.();
-            }}
-            style={{ transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)` }}
-            className={`nodrag nopan group absolute z-20 flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-left shadow-sm backdrop-blur-sm transition-all hover:scale-105 hover:z-30 ${
-              data.issueCount > 0
-                ? "border-rose-500/40 bg-[var(--surface)] text-rose-500 hover:border-rose-500 dark:bg-[#182331]"
-                : "border-[var(--border)] bg-[var(--surface)]/95 text-[var(--foreground)] hover:border-[#5750f1] hover:text-[#5750f1] dark:bg-[#182331]"
-            }`}
-          >
-            <span
-              className={`h-1.5 w-1.5 rounded-full shrink-0 ${
-                data.issueCount > 0 ? "bg-rose-500" : isTcpUp ? "bg-emerald-500" : "bg-slate-400"
-              }`}
-            />
-            <span className="font-mono text-[8.5px] font-semibold">{data.label}</span>
-            {data.secondary && (
-              <span className="text-[7.5px] text-[var(--muted)] group-hover:text-[var(--foreground)]">
-                {data.secondary}
-              </span>
-            )}
-          </button>
-        </EdgeLabelRenderer>
-      )}
-    </>
-  );
-}
-
-const nodeTypes = {
-  tier: GroupNode,
-  vm: VmNode,
-  cluster: ClusterNode,
-  nas: NasNode,
-};
+const nodeTypes = { scopeCard: ScopeNode, groupContainer: GroupContainer, assetCard: AssetNode, dbaasCard: AssetNode, externalCard: ScopeNode, clusterCard: ClusterNode, nasCard: NasNode };
 const edgeTypes = { flow: FlowEdge };
 
-export type HandleDirection = "t" | "b" | "l" | "r";
-
-function getSmartHandlePair(
-  sourcePos?: { x: number; y: number },
-  targetPos?: { x: number; y: number },
-  sourceDim = { w: 200, h: 116 },
-  targetDim = { w: 200, h: 116 }
-): { sourceHandle: string; targetHandle: string } {
-  if (!sourcePos || !targetPos) {
-    return { sourceHandle: "r-src", targetHandle: "l-tgt" };
-  }
-
-  const scx = sourcePos.x + sourceDim.w / 2;
-  const scy = sourcePos.y + sourceDim.h / 2;
-  const tcx = targetPos.x + targetDim.w / 2;
-  const tcy = targetPos.y + targetDim.h / 2;
-
-  const dx = tcx - scx;
-  const dy = tcy - scy;
-
-  // Decide dominant orientation based on delta
-  if (Math.abs(dx) >= Math.abs(dy)) {
-    if (dx >= 0) {
-      return { sourceHandle: "r-src", targetHandle: "l-tgt" };
-    } else {
-      return { sourceHandle: "l-src", targetHandle: "r-tgt" };
-    }
-  } else {
-    if (dy >= 0) {
-      return { sourceHandle: "b-src", targetHandle: "t-tgt" };
-    } else {
-      return { sourceHandle: "t-src", targetHandle: "b-tgt" };
-    }
-  }
+function entityNode(entity: SemanticEntity, assets: Asset[]): Node<TopologyNodeData> {
+  if (entity.group) { const members = groupAssets(entity.group, assets); return { id: entity.id, type: "scopeCard", position: { x: 0, y: 0 }, data: { kind: "group", key: entity.id, label: entity.label, sortKey: `${entity.group.groupType}:${entity.label}:${entity.id}`, sublabel: [entity.group.system, entity.group.environment, entity.group.domain].filter(Boolean).join(" · "), count: members.length, healthyCount: members.filter((a) => a.health === "healthy").length, issueCount: members.filter((a) => a.health !== "healthy").length, apCount: members.filter((a) => a.role === "AP").length, dbCount: members.filter((a) => a.role === "DB").length, nasCount: members.filter((a) => a.assetType === "NAS").length, group: entity.group } }; }
+  if (entity.cluster) return { id: entity.id, type: "clusterCard", position: { x: 0, y: 0 }, data: { kind: "cluster", key: entity.id, label: entity.label, sortKey: `cluster:${entity.label}`, cluster: entity.cluster } };
+  if (entity.nas) return { id: entity.id, type: "nasCard", position: { x: 0, y: 0 }, data: { kind: "nas", key: entity.id, label: entity.label, sortKey: `nas:${entity.label}`, nas: entity.nas } };
+  if (entity.asset) return { id: entity.id, type: entity.kind === "dbaas" ? "dbaasCard" : "assetCard", position: { x: 0, y: 0 }, data: { kind: entity.kind === "dbaas" ? "dbaas" : "asset", key: entity.id, label: entity.label, sortKey: `${entity.asset.role}:${entity.label}`, vm: entity.asset } };
+  return { id: entity.id, type: "externalCard", position: { x: 0, y: 0 }, data: { kind: "external", key: entity.id, label: entity.label, sortKey: `external:${entity.label}`, count: 0 } };
 }
+function makeEdge(relation: ArchitectureRelation, source: string, target: string): Edge<TopologyEdgeData> { return { id: relation.id, type: "flow", source, target, markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 }, data: { label: `${relation.protocol ?? relation.relationType}${relation.port ? `/${relation.port}` : ""}`, secondary: relation.relationType, issueCount: 0, relation, relationType: relation.relationType, layoutPriority: RELATION_LAYOUT_PRIORITY[relation.relationType] } }; }
+function groupDepth(group: TopologyGroup, byId: Map<string, TopologyGroup>) { let depth = 0; let current = group; const seen = new Set<string>(); while (current.parentGroupId && !seen.has(current.id)) { seen.add(current.id); const parent = byId.get(current.parentGroupId); if (!parent) break; depth += 1; current = parent; } return depth; }
 
-export function ArchitectureCanvas({
-  vms,
-  statuses,
-  software,
-  sops,
-  clusters = [],
-  nasAssets = [],
-  softwareReleases = [],
-  softwareProducts = [],
-}: {
-  vms: VmAsset[];
-  statuses: NetworkStatus[];
-  software: SoftwareInstall[];
-  sops: SopDocument[];
-  clusters?: ClusterEntity[];
-  nasAssets?: NasAsset[];
-  softwareReleases?: SoftwareRelease[];
-  softwareProducts?: SoftwareProduct[];
-}) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [mode, setMode] = useState<ViewMode>("overview");
-  const [envFilter, setEnvFilter] = useState("ALL");
-  const [zone, setZone] = useState("ALL");
-  const [overlay, setOverlay] = useState<OverlayMode>("live");
-  const [issuesOnly, setIssuesOnly] = useState(false);
-  const [flowAnimation, setFlowAnimation] = useState(false);
-  const [lineStyle, setLineStyle] = useState<"bezier" | "smoothstep">("bezier");
-  const [showEdgeLabels, setShowEdgeLabels] = useState(true);
-  const [layoutEditMode, setLayoutEditMode] = useState(false);
-  const [positionOverrides, setPositionOverrides] = useState<Record<string, { x: number; y: number }>>({});
-  const [edgeHandleOverrides, setEdgeHandleOverrides] = useState<
-    Record<string, { source?: HandleDirection; target?: HandleDirection }>
-  >({});
-  const [canvasRevision, setCanvasRevision] = useState(0);
-  const [query, setQuery] = useState("");
+export function ArchitectureCanvas({ vms, statuses, software, sops, clusters = [], nasAssets = [], softwareReleases = [], softwareProducts = [], relations = [], topologyGroups = [] }: { vms: Asset[]; statuses: NetworkStatus[]; software: SoftwareInstall[]; sops: SopDocument[]; clusters?: ClusterEntity[]; nasAssets?: NasAsset[]; softwareReleases?: SoftwareRelease[]; softwareProducts?: SoftwareProduct[]; relations?: ArchitectureRelation[]; topologyGroups?: TopologyGroup[] }) {
+  const { activeProject } = useProjectGroup();
+  const [mode, setMode] = useState<ArchitectureMode>("topology"); const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(new Set()); const [environment, setEnvironment] = useState("ALL"); const [overlay, setOverlay] = useState<OverlayMode>("live"); const [issuesOnly, setIssuesOnly] = useState(false); const [flowAnimation, setFlowAnimation] = useState(false); const [showLabels, setShowLabels] = useState(false); const [layoutEdit, setLayoutEdit] = useState(false); const [isLayouting, setIsLayouting] = useState(false); const [layoutRevision, setLayoutRevision] = useState(0); const [query, setQuery] = useState(""); const [dependencyQuery, setDependencyQuery] = useState(""); const [dependencyFocusId, setDependencyFocusId] = useState<string | null>(null); const [dependencyDepth, setDependencyDepth] = useState<DependencyDepth>(2);
+  const [relationFilters, setRelationFilters] = useState<Record<RelationType, boolean>>({ SERVICE: true, DATABASE: true, STORAGE: true, MONITORING: false, MANAGEMENT: true, CLUSTER: true, EXTERNAL: true, OTHER: true }); const [currentRelations, setCurrentRelations] = useState(relations); const [liveNodes, setLiveNodes] = useState<Node<TopologyNodeData>[]>([]); const [liveEdges, setLiveEdges] = useState<Edge<TopologyEdgeData>[]>([]); const [manualPositions, setManualPositions] = useState<Record<string, { x: number; y: number }>>({}); const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
+  const [selectedVm, setSelectedVm] = useState<Asset | null>(null); const [selectedCluster, setSelectedCluster] = useState<ClusterEntity | null>(null); const [selectedNas, setSelectedNas] = useState<NasAsset | null>(null); const [selectedGroup, setSelectedGroup] = useState<GroupDrawerData | null>(null); const [selectedConnection, setSelectedConnection] = useState<NetworkStatus | null>(null); const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null); const [selectedRelease, setSelectedRelease] = useState<SoftwareRelease | null>(null); const [dependencyDrawerEntity, setDependencyDrawerEntity] = useState<SemanticEntity | null>(null); const [edgeHandles, setEdgeHandles] = useState<Record<string, { source?: HandleDirection; target?: HandleDirection }>>({});
+  const flowInstance = useRef<{ fitView: (options?: Record<string, unknown>) => Promise<boolean> } | null>(null); const positionsRef = useRef(manualPositions); const lastMoveRef = useRef<{ id: string; from: { x: number; y: number }; to: { x: number; y: number } } | null>(null); const dragStartRef = useRef<Record<string, { x: number; y: number }>>({});
+  const [editingRelation, setEditingRelation] = useState<{ relation: ArchitectureRelation; sourceName: string; targetName: string; isNew?: boolean } | null>(null); const reconnectRef = useRef<Edge | null>(null); const prevParentMapRef = useRef<Map<string, string | undefined>>(new Map());
 
-  // Drawers
-  const [selectedVm, setSelectedVm] = useState<VmAsset | null>(null);
-  const [selectedConnection, setSelectedConnection] = useState<NetworkStatus | null>(null);
-  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
-  const [selectedRelatedStatuses, setSelectedRelatedStatuses] = useState<NetworkStatus[]>([]);
-  const [selectedTier, setSelectedTier] = useState<TierDrawerData | null>(null);
-  const [selectedCluster, setSelectedCluster] = useState<ClusterEntity | null>(null);
-  const [selectedNas, setSelectedNas] = useState<NasAsset | null>(null);
-  const [selectedRelease, setSelectedRelease] = useState<SoftwareRelease | null>(null);
-
-  // Filter VMs by environment
-  const envVms = useMemo(
-    () => vms.filter((v) => envFilter === "ALL" || v.environment === envFilter),
-    [vms, envFilter]
-  );
-  const envVmIds = useMemo(() => new Set(envVms.map((v) => v.id)), [envVms]);
-
-  // Filter statuses matching filtered VMs
-  const envStatuses = useMemo(
-    () => statuses.filter((s) => envVmIds.has(s.policy.sourceVmId)),
-    [statuses, envVmIds]
-  );
-
-  const issueVmIds = useMemo(
-    () =>
-      new Set(
-        envStatuses
-          .filter((s) => s.overall !== "NORMAL")
-          .flatMap((s) => [s.policy.sourceVmId, s.policy.targetVmId].filter(Boolean) as string[])
-      ),
-    [envStatuses]
-  );
-
-  const handleSelectConnection = useCallback(
-    (edgeId: string, status: NetworkStatus, relatedStatuses: NetworkStatus[]) => {
-      setSelectedEdgeId(edgeId);
-      setSelectedConnection(status);
-      setSelectedRelatedStatuses(relatedStatuses);
-    },
-    []
-  );
-
-  const { nodes, edges } = useMemo(() => {
-    if (mode === "overview") {
-      return buildOverview(envVms, envStatuses, issuesOnly, overlay, query, flowAnimation, handleSelectConnection);
-    }
-    if (mode === "service") {
-      return buildServices(envVms, envStatuses, issuesOnly, overlay, query, flowAnimation, handleSelectConnection);
-    }
-    return buildVms(
-      envVms,
-      envStatuses,
-      zone,
-      issuesOnly,
-      issueVmIds,
-      overlay,
-      query,
-      flowAnimation,
-      clusters,
-      nasAssets,
-      handleSelectConnection
-    );
-  }, [
-    mode,
-    envVms,
-    envStatuses,
-    zone,
-    issuesOnly,
-    issueVmIds,
-    overlay,
-    query,
-    flowAnimation,
-    clusters,
-    nasAssets,
-    handleSelectConnection,
-  ]);
-
-  const layoutStorageKey = `rpa-topology-layout:v2:${mode}:${envFilter}:${zone}`;
-
-  useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(layoutStorageKey);
-      setPositionOverrides(saved ? JSON.parse(saved) : {});
-    } catch {
-      setPositionOverrides({});
-    }
-  }, [layoutStorageKey]);
-
-  useEffect(() => {
-    try {
-      const savedHandles = window.localStorage.getItem("rpa-topology-handles:v1");
-      if (savedHandles) setEdgeHandleOverrides(JSON.parse(savedHandles));
-    } catch {
-      setEdgeHandleOverrides({});
-    }
-  }, []);
-
-  function updateEdgeHandles(edgeId: string, handles: { source?: HandleDirection; target?: HandleDirection }) {
-    setEdgeHandleOverrides((prev) => {
-      const next = { ...prev, [edgeId]: handles };
-      try {
-        window.localStorage.setItem("rpa-topology-handles:v1", JSON.stringify(next));
-      } catch {}
+  useEffect(() => { managementRepo.getRelations().then((items) => setCurrentRelations(items.length ? items : relations)); }, [relations]);
+  useEffect(() => { setExpandedGroupIds(new Set()); setDependencyFocusId(null); }, [activeProject.id, environment]);
+  const projectAssets = useMemo(() => vms.filter((item) => (!item.projectGroupId || item.projectGroupId === activeProject.id) && (environment === "ALL" || item.environment === environment)), [vms, activeProject.id, environment]);
+  const projectGroups = useMemo(() => topologyGroups.filter((item) => item.projectGroupId === activeProject.id), [topologyGroups, activeProject.id]);
+  const projectClusters = useMemo(() => clusters.filter((item) => (!item.projectGroupId || item.projectGroupId === activeProject.id) && (environment === "ALL" || item.environment === environment)), [clusters, activeProject.id, environment]);
+  const projectNas = useMemo(() => nasAssets.filter((item) => (!item.projectGroupId || item.projectGroupId === activeProject.id) && (environment === "ALL" || item.environment === environment)), [nasAssets, activeProject.id, environment]);
+  const projectRelations = useMemo(() => currentRelations.filter((item) => item.projectGroupId === activeProject.id), [currentRelations, activeProject.id]);
+  const projectStatuses = useMemo(() => statuses.filter((item) => !item.policy.projectGroupId || item.policy.projectGroupId === activeProject.id), [statuses, activeProject.id]);
+  const catalog = useMemo(() => buildEntityCatalog(projectGroups, projectAssets, projectClusters, projectNas, projectRelations), [projectGroups, projectAssets, projectClusters, projectNas, projectRelations]); const searchableEntities = useMemo(() => [...catalog.values()].sort((a, b) => a.label.localeCompare(b.label)), [catalog]);
+  const expandedRelations = useMemo(() => { const result = [...projectRelations]; for (const relation of projectRelations) { const group = projectGroups.find((item) => item.id === relation.sourceEntityId); if (group) for (const asset of groupAssets(group, projectAssets).filter((item) => item.role === "AP" || item.assetType === "K8S_WORKLOAD")) result.push({ ...relation, id: `${relation.id}:member:${asset.id}`, sourceEntityType: "ASSET", sourceEntityId: asset.id }); } for (const status of projectStatuses) if (status.policy.targetVmId) result.push({ id: `policy:${status.policy.id}`, projectGroupId: activeProject.id, sourceEntityType: "ASSET", sourceEntityId: status.policy.sourceVmId, targetEntityType: "ASSET", targetEntityId: status.policy.targetVmId, relationType: "SERVICE", protocol: status.policy.protocol, port: status.policy.port }); return result; }, [projectRelations, projectGroups, projectAssets, projectStatuses, activeProject.id]);
+  const dependencyGraph = useMemo(() => dependencyFocusId ? traverseDependencies(dependencyFocusId, expandedRelations, "both", dependencyDepth, relationFilters) : { visits: [], relations: [] }, [dependencyFocusId, expandedRelations, dependencyDepth, relationFilters]);
+  const storageKey = `rpa-topology-layout:v5:${activeProject.id}`;
+  const toggleGroup = useCallback((id: string) => {
+    positionsRef.current = {};
+    setManualPositions({});
+    try { localStorage.removeItem(storageKey); } catch {}
+    setExpandedGroupIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
-  }
+  }, [storageKey]);
 
-  // Real-time smooth dragging state with ghost twin preview
-  const [liveNodes, setLiveNodes] = useState<Node<TopologyNodeData>[]>([]);
-  const [dragOrigin, setDragOrigin] = useState<{ id: string; position: { x: number; y: number } } | null>(null);
+  const topologyGraph = useMemo(() => {
+    const byGroupId = new Map(projectGroups.map((group) => [group.id, group]));
+    const allowed = (group: TopologyGroup): boolean =>
+      environment === "ALL" || !group.environment || group.environment === environment || projectGroups.some((child) => child.parentGroupId === group.id && allowed(child));
+    const nodes: Node<TopologyNodeData>[] = [];
+    const seen = new Set<string>();
 
-  useEffect(() => {
-    setLiveNodes(
-      nodes.map((node) => ({
-        ...node,
-        position: positionOverrides[node.id] ?? node.position,
-      }))
-    );
-  }, [nodes, positionOverrides]);
-
-  const onNodesChange = useCallback((changes: NodeChange[]) => {
-    setLiveNodes((nds) => applyNodeChanges(changes, nds) as Node<TopologyNodeData>[]);
-  }, []);
-
-  function saveNodePosition(nodeId: string, position: { x: number; y: number }) {
-    const snapped = { x: Math.round(position.x / 20) * 20, y: Math.round(position.y / 20) * 20 };
-    setPositionOverrides((current) => {
-      const next = { ...current, [nodeId]: snapped };
-      window.localStorage.setItem(layoutStorageKey, JSON.stringify(next));
-      return next;
-    });
-  }
-
-  const onNodeDragStart = useCallback((_: any, node: Node) => {
-    setDragOrigin({ id: node.id, position: { ...node.position } });
-  }, []);
-
-  const onNodeDragStop = useCallback((_: any, node: Node) => {
-    setDragOrigin(null);
-    saveNodePosition(node.id, node.position);
-  }, [layoutStorageKey]);
-
-  function resetLayout() {
-    window.localStorage.removeItem(layoutStorageKey);
-    setPositionOverrides({});
-    setCanvasRevision((value) => value + 1);
-  }
-
-  const displayNodes = useMemo(() => {
-    if (!dragOrigin) return liveNodes;
-    const originNode = liveNodes.find((n) => n.id === dragOrigin.id);
-    if (!originNode) return liveNodes;
-
-    const ghostNode: Node<TopologyNodeData> = {
-      id: `${dragOrigin.id}-ghost`,
-      type: originNode.type,
-      position: dragOrigin.position,
-      style: {
-        ...originNode.style,
-        opacity: 0.38,
-        pointerEvents: "none",
-        filter: "grayscale(60%)",
-      },
-      className: "react-flow__node-ghost",
-      data: {
-        ...originNode.data,
-        label: `${originNode.data.label} (Original)`,
-      },
-      draggable: false,
-      selectable: false,
+    const addEntity = (id: string, parentId?: string) => {
+      if (seen.has(id)) return;
+      const entity = catalog.get(id);
+      if (!entity) return;
+      const node = entityNode(entity, projectAssets);
+      node.parentId = parentId;
+      if (parentId) node.extent = "parent";
+      nodes.push(node);
+      seen.add(id);
     };
 
-    return [ghostNode, ...liveNodes];
-  }, [liveNodes, dragOrigin]);
-
-  // Dynamically resolve edge connection handles (4-way) and properties
-  const resolvedEdges = useMemo(() => {
-    const nodeMap = new Map<string, { x: number; y: number; w: number; h: number }>();
-    for (const n of liveNodes) {
-      const w = (n.style?.width as number) || 200;
-      const h = (n.style?.height as number) || 116;
-      nodeMap.set(n.id, { x: n.position.x, y: n.position.y, w, h });
-    }
-
-    return edges.map((e) => {
-      const override = edgeHandleOverrides[e.id];
-      let sourceHandle = override?.source ? `${override.source}-src` : undefined;
-      let targetHandle = override?.target ? `${override.target}-tgt` : undefined;
-
-      if (!sourceHandle || !targetHandle) {
-        const src = nodeMap.get(e.source);
-        const tgt = nodeMap.get(e.target);
-        const smart = getSmartHandlePair(
-          src,
-          tgt,
-          src ? { w: src.w, h: src.h } : undefined,
-          tgt ? { w: tgt.w, h: tgt.h } : undefined
-        );
-        if (!sourceHandle) sourceHandle = smart.sourceHandle;
-        if (!targetHandle) targetHandle = smart.targetHandle;
+    const addGroup = (group: TopologyGroup, parentId?: string) => {
+      if (!allowed(group) || seen.has(group.id)) return;
+      addEntity(group.id, parentId);
+      const node = nodes.at(-1)!;
+      const expanded = expandedGroupIds.has(group.id);
+      node.type = expanded ? "groupContainer" : "scopeCard";
+      node.data.expanded = expanded;
+      node.data.onToggle = () => toggleGroup(group.id);
+      if (!expanded) return;
+      const childGroups = projectGroups.filter((item) => item.parentGroupId === group.id && allowed(item));
+      if (childGroups.length) childGroups.sort((a, b) => a.name.localeCompare(b.name)).forEach((child) => addGroup(child, group.id));
+      else {
+        projectAssets.filter((asset) => assetMatchesGroup(asset, group) && asset.assetType !== "NAS").forEach((asset) => addEntity(asset.id, group.id));
+        projectClusters.filter((cluster) => (!group.domain || cluster.domain === group.domain) && (!group.system || cluster.system === group.system) && (!group.environment || cluster.environment === group.environment)).forEach((cluster) => addEntity(cluster.id, group.id));
+        projectNas.filter((nas) => assetMatchesGroup(nas, group)).forEach((nas) => addEntity(nas.id, group.id));
       }
+    };
 
-      return {
-        ...e,
-        sourceHandle,
-        targetHandle,
-        data: {
-          ...e.data,
-          lineStyle,
-          showLabel: showEdgeLabels,
-        },
-      };
-    });
-  }, [edges, liveNodes, edgeHandleOverrides, lineStyle, showEdgeLabels]);
+    projectGroups.filter((group) => !group.parentGroupId).sort((a, b) => a.name.localeCompare(b.name)).forEach((group) => addGroup(group));
+    const visible = new Set(nodes.map((node) => node.id));
+    const depths = new Map(projectGroups.map((group) => [group.id, groupDepth(group, byGroupId)]));
 
-  function handleSearch(val: string) {
-    setQuery(val);
-    const q = val.trim().toLowerCase();
-    if (!q) return;
+    const nearest = (id: string): string | undefined => {
+      if (visible.has(id)) return id;
+      const entity = catalog.get(id);
+      const asset = entity?.asset ?? entity?.nas;
+      if (asset) return projectGroups.filter((group) => visible.has(group.id) && assetMatchesGroup(asset, group)).sort((a, b) => (depths.get(b.id) ?? 0) - (depths.get(a.id) ?? 0))[0]?.id;
+      if (entity?.cluster) return projectGroups.filter((group) => visible.has(group.id) && (!group.domain || group.domain === entity.cluster!.domain) && (!group.system || group.system === entity.cluster!.system) && (!group.environment || group.environment === entity.cluster!.environment)).sort((a, b) => (depths.get(b.id) ?? 0) - (depths.get(a.id) ?? 0))[0]?.id;
+      if (entity?.group) {
+        let current = entity.group;
+        while (current.parentGroupId) {
+          const parent = byGroupId.get(current.parentGroupId);
+          if (!parent) break;
+          if (visible.has(parent.id)) return parent.id;
+          current = parent;
+        }
+      }
+      return undefined;
+    };
 
-    // Check if query directly matches a VM hostname or IP
-    const hit = envVms.find((v) => `${v.hostname} ${v.ipAddress}`.toLowerCase().includes(q));
-    if (hit) {
-      setMode("vm");
-      setZone(hit.zone);
-      setSelectedVm(hit);
+    const resolveEndpoints = (id: string, isSource: boolean): string[] => {
+      if (expandedGroupIds.has(id)) {
+        const group = projectGroups.find((g) => g.id === id);
+        if (group) {
+          const members = groupAssets(group, projectAssets);
+          const apMembers = members.filter((m) => m.role === "AP" || m.assetType === "K8S_WORKLOAD");
+          const targetPool = apMembers.length ? apMembers : members;
+          const visibleMembers = targetPool.map((m) => m.id).filter((mid) => visible.has(mid));
+          if (visibleMembers.length > 0) return visibleMembers;
+        }
+      }
+      if (visible.has(id)) return [id];
+      const near = nearest(id);
+      return near ? [near] : [];
+    };
+
+    const edgeMap = new Map<string, Edge<TopologyEdgeData>>();
+    for (const relation of projectRelations) {
+      const sources = resolveEndpoints(relation.sourceEntityId, true);
+      const targets = resolveEndpoints(relation.targetEntityId, false);
+      for (const source of sources) {
+        for (const target of targets) {
+          if (!source || !target || source === target) continue;
+          const key = `${source}:${target}:${relation.relationType}`;
+          const existing = edgeMap.get(key);
+          if (existing) {
+            existing.data!.aggregateCount = (existing.data!.aggregateCount ?? 1) + 1;
+            continue;
+          }
+          edgeMap.set(key, makeEdge({ ...relation, id: key }, source, target));
+        }
+      }
     }
-  }
 
-  function toggleFullscreen() {
-    if (!containerRef.current) return;
-    if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen?.().catch(() => {});
+    for (const status of projectStatuses) {
+      const sources = resolveEndpoints(status.policy.sourceVmId, true);
+      const targets = status.policy.targetVmId ? resolveEndpoints(status.policy.targetVmId, false) : [];
+      for (const source of sources) {
+        for (const target of targets) {
+          if (!source || !target || source === target) continue;
+          const key = `${source}:${target}:SERVICE`;
+          const edge = edgeMap.get(key) ?? makeEdge({
+            id: key,
+            projectGroupId: activeProject.id,
+            sourceEntityType: "ASSET",
+            sourceEntityId: status.policy.sourceVmId,
+            targetEntityType: "ASSET",
+            targetEntityId: status.policy.targetVmId!,
+            relationType: "SERVICE",
+            protocol: status.policy.protocol,
+            port: status.policy.port,
+          }, source, target);
+          const related = [...(edge.data?.relatedStatuses ?? []), status];
+          edge.data = {
+            ...edge.data!,
+            status,
+            relatedStatuses: related,
+            issueCount: related.filter((item) => item.overall !== "NORMAL").length,
+            secondary: overlay === "policy" ? status.policy.approvalStatus : `TCP ${status.observation?.tcp ?? "NO_DATA"}`,
+          };
+          edgeMap.set(key, edge);
+        }
+      }
+    }
+    return { nodes, edges: [...edgeMap.values()] };
+  }, [projectGroups, projectAssets, projectClusters, projectNas, projectRelations, projectStatuses, catalog, expandedGroupIds, environment, activeProject.id, overlay, toggleGroup]);
+
+  const layoutFingerprint = useMemo(() => JSON.stringify({ project: activeProject.id, environment, expanded: [...expandedGroupIds].sort(), nodes: topologyGraph.nodes.map((node) => [node.id, node.parentId]).sort(), revision: layoutRevision }), [activeProject.id, environment, expandedGroupIds, topologyGraph.nodes, layoutRevision]);
+  useEffect(() => { try { const next = JSON.parse(localStorage.getItem(storageKey) ?? "{}"); positionsRef.current = next; setManualPositions(next); } catch { positionsRef.current = {}; setManualPositions({}); } }, [storageKey]);
+  useEffect(() => { try { const v3 = localStorage.getItem(`rpa-topology-handles:v3:${activeProject.id}`); const legacy = localStorage.getItem(`rpa-topology-handles:v2:${activeProject.id}`); const next = normalizeHandleMap(JSON.parse(v3 ?? legacy ?? "{}")); setEdgeHandles(next); if (!v3) localStorage.setItem(`rpa-topology-handles:v3:${activeProject.id}`, JSON.stringify(next)); } catch { setEdgeHandles({}); } }, [activeProject.id]);
+  useEffect(() => { let cancelled = false; setIsLayouting(true); layoutCompoundGraph(topologyGraph.nodes, topologyGraph.edges).then((result) => { if (cancelled) return; const prevMap = prevParentMapRef.current; const staleIds = new Set<string>(); for (const node of result.nodes) { const prev = prevMap.get(node.id); if (prev !== undefined && prev !== node.parentId) staleIds.add(node.id); } const cleaned = { ...positionsRef.current }; for (const id of staleIds) delete cleaned[id]; if (staleIds.size) { positionsRef.current = cleaned; localStorage.setItem(storageKey, JSON.stringify(cleaned)); setManualPositions(cleaned); } prevParentMapRef.current = new Map(result.nodes.map((n) => [n.id, n.parentId])); setLiveNodes(result.nodes.map((node) => ({ ...node, position: cleaned[node.id] ?? node.position }))); setLiveEdges(result.edges); setIsLayouting(false); requestAnimationFrame(() => requestAnimationFrame(() => flowInstance.current?.fitView({ padding: .16, duration: 240 }))); }); return () => { cancelled = true; }; }, [layoutFingerprint]);
+  useEffect(() => { setLiveEdges(topologyGraph.edges); }, [topologyGraph.edges]);
+
+  const visitMap = useMemo(() => new Map(dependencyGraph.visits.map((visit) => [visit.id, visit])), [dependencyGraph.visits]); const relatedRelations = useMemo(() => new Map(dependencyGraph.relations.map((relation) => [relation.id.split(":member:")[0], relation])), [dependencyGraph.relations]);
+  const resolvedNodes = useMemo(() => liveNodes.map((node) => { const current = topologyGraph.nodes.find((item) => item.id === node.id); const visit = visitMap.get(node.id); let relatedHiddenCount = 0; if (node.data.group && dependencyFocusId) relatedHiddenCount = groupAssets(node.data.group, projectAssets).filter((asset) => visitMap.has(asset.id)).length; const matchesSearch = !query.trim() || `${node.data.label} ${node.data.vm?.ipAddress ?? ""}`.toLowerCase().includes(query.toLowerCase()); const issueMatch = !issuesOnly || (node.data.issueCount ?? (node.data.vm?.health === "healthy" ? 0 : 1)) > 0; const focusOpacity = mode === "dependency" && dependencyFocusId ? visit ? visit.depth <= 1 ? 1 : visit.depth === 2 ? .85 : .65 : relatedHiddenCount ? .9 : .15 : matchesSearch && issueMatch ? 1 : .16; return { ...node, type: current?.type ?? node.type, parentId: current?.parentId, extent: current?.extent, data: { ...(current?.data ?? node.data), width: node.data.width, height: node.data.height, isEditing: layoutEdit, selectedTarget: dependencyFocusId === node.id, dependencySide: visit?.side, dependencyDepth: visit?.depth, relatedHiddenCount, focusOpacity }, style: node.data.expanded ? { width: node.data.width, height: node.data.height } : undefined }; }), [liveNodes, topologyGraph.nodes, visitMap, dependencyFocusId, projectAssets, mode, query, issuesOnly, layoutEdit]);
+
+  const nodeCenterMap = useMemo(() => {
+    const map = new Map<string, { cx: number; cy: number }>();
+    const byId = new Map(liveNodes.map((n) => [n.id, n]));
+    for (const node of liveNodes) {
+      const dim = NODE_DIMENSIONS[node.data.kind] ?? NODE_DIMENSIONS.asset;
+      const w = node.data.width ?? dim.width;
+      const h = node.data.height ?? dim.height;
+      let absX = node.position.x;
+      let absY = node.position.y;
+      if (node.parentId) {
+        const parent = byId.get(node.parentId);
+        if (parent) {
+          absX += parent.position.x;
+          absY += parent.position.y;
+        }
+      }
+      map.set(node.id, { cx: absX + w / 2, cy: absY + h / 2 });
+    }
+    return map;
+  }, [liveNodes]);
+
+  const computeAutoHandles = useCallback((sourceId: string, targetId: string): { source: HandleDirection; target: HandleDirection } => {
+    const s = nodeCenterMap.get(sourceId);
+    const t = nodeCenterMap.get(targetId);
+    if (!s || !t) return { source: "b", target: "t" };
+    const dx = t.cx - s.cx;
+    const dy = t.cy - s.cy;
+    if (Math.abs(dy) >= Math.abs(dx)) {
+      return dy >= 0 ? { source: "b", target: "t" } : { source: "t", target: "b" };
     } else {
-      document.exitFullscreen?.().catch(() => {});
+      return dx >= 0 ? { source: "r", target: "l" } : { source: "l", target: "r" };
     }
-  }
+  }, [nodeCenterMap]);
 
-  return (
-    <div ref={containerRef} className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)]">
-      {/* Top Architecture Controls Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] p-2">
-        {/* Left side: View Mode, Environment, and Zone */}
-        <div className="flex items-center gap-2">
-          {/* View: Overview / Service / VM */}
-          <Segment value={mode} setValue={setMode} />
-
-          {/* Environment Filter */}
-          <div className="flex items-center gap-1 text-[9px] text-[var(--muted)]">
-            <span>Env:</span>
-            <select
-              value={envFilter}
-              onChange={(e) => setEnvFilter(e.target.value)}
-              className="h-7 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[9px] outline-none"
-            >
-              <option value="ALL">ALL</option>
-              <option value="PROD">PROD</option>
-              <option value="STG">STG</option>
-              <option value="DEV">DEV</option>
-            </select>
-          </div>
-
-          {/* Tier Zone Filter (VM drill-down mode) */}
-          {mode === "vm" && (
-            <div className="flex items-center gap-1 text-[9px] text-[var(--muted)]">
-              <span>Tier:</span>
-              <select
-                value={zone}
-                onChange={(e) => setZone(e.target.value)}
-                className="h-7 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[9px] outline-none"
-              >
-                <option value="ALL">All tiers</option>
-                {zoneOrder
-                  .filter((z) => z !== "EXTERNAL")
-                  .map((z) => (
-                    <option key={z} value={z}>{z}</option>
-                  ))}
-              </select>
-            </div>
-          )}
-        </div>
-
-        {/* Right side: Overlay Toggle, Line Style Toggle, Flow Animation Toggle, Labels Toggle, Search, Issues Only, Fullscreen */}
-        <div className="flex items-center gap-2">
-          {/* Overlay: Policy / Live */}
-          <div className="flex rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-0.5">
-            <button
-              onClick={() => setOverlay("policy")}
-              className={`h-6 rounded px-2 text-[9px] font-medium transition ${
-                overlay === "policy" ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]"
-              }`}
-            >
-              Policy
-            </button>
-            <button
-              onClick={() => setOverlay("live")}
-              className={`h-6 rounded px-2 text-[9px] font-medium transition ${
-                overlay === "live" ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]"
-              }`}
-            >
-              Live
-            </button>
-          </div>
-
-          {/* Line Style Toggle: Curved / Step */}
-          <div className="flex rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-0.5">
-            <button
-              onClick={() => setLineStyle("bezier")}
-              className={`h-6 rounded px-2 text-[9px] font-medium transition ${
-                lineStyle === "bezier" ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]"
-              }`}
-              title="Smooth Curved (Bezier) Lines"
-            >
-              Curved
-            </button>
-            <button
-              onClick={() => setLineStyle("smoothstep")}
-              className={`h-6 rounded px-2 text-[9px] font-medium transition ${
-                lineStyle === "smoothstep" ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]"
-              }`}
-              title="Orthogonal (Step) Lines"
-            >
-              Step
-            </button>
-          </div>
-
-          {/* Flow Animation Toggle */}
-          <button
-            onClick={() => setFlowAnimation((prev) => !prev)}
-            title="Toggle Probe Flow Particle Animation"
-            className={`flex h-7 items-center gap-1 rounded-md border px-2 text-[9px] font-medium transition ${
-              flowAnimation
-                ? "border-[#5750f1] bg-[#5750f1]/10 text-[#5750f1]"
-                : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]"
-            }`}
-          >
-            <span className={`h-1.5 w-1.5 rounded-full ${flowAnimation ? "bg-[#5750f1] animate-pulse" : "bg-[var(--muted)]"}`} />
-            <span>Flow</span>
-          </button>
-
-          <button
-            onClick={() => setShowEdgeLabels((value) => !value)}
-            title="토폴로지 연결선의 포트 및 프로토콜 라벨 표시/숨김 (ON/OFF)"
-            className={`flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[9px] font-medium transition ${
-              showEdgeLabels
-                ? "border-[#5750f1] bg-[#5750f1]/10 text-[#5750f1]"
-                : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]"
-            }`}
-          >
-            <span className={`h-1.5 w-1.5 rounded-full ${showEdgeLabels ? "bg-[#5750f1]" : "bg-[var(--muted)]"}`} />
-            <span>Labels: {showEdgeLabels ? "ON" : "OFF"}</span>
-          </button>
-
-          <button
-            onClick={() => setLayoutEditMode((value) => !value)}
-            title="Allow manual node movement. Dragging snaps to a 20px grid."
-            className={`flex h-7 items-center gap-1 rounded-md border px-2 text-[9px] font-medium transition ${
-              layoutEditMode
-                ? "border-[#5750f1] bg-[#5750f1]/10 text-[#5750f1]"
-                : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]"
-            }`}
-          >
-            {layoutEditMode ? "Editing layout" : "Edit layout"}
-          </button>
-
-          <button
-            onClick={resetLayout}
-            title="Discard manual positions and restore the automatic hierarchical layout."
-            className="flex h-7 items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[9px] text-[var(--muted)] transition hover:text-[var(--foreground)]"
-          >
-            Auto layout
-          </button>
-
-          {/* Search: hostname / IP / port */}
-          <div className="flex h-7 w-[200px] items-center gap-1.5 rounded-md border border-[var(--border)] px-2">
-            <SearchIcon className="h-3.5 w-3.5 shrink-0 text-[var(--muted)]" />
-            <input
-              value={query}
-              onChange={(e) => handleSearch(e.target.value)}
-              className="w-full bg-transparent text-[9px] outline-none"
-              placeholder="Search hostname, IP, port..."
-            />
-          </div>
-
-          {/* Issues Only */}
-          <label className="flex h-7 cursor-pointer items-center gap-1.5 rounded-md border border-[var(--border)] px-2 text-[9px]">
-            <input
-              type="checkbox"
-              checked={issuesOnly}
-              onChange={(e) => setIssuesOnly(e.target.checked)}
-              className="rounded"
-            />
-            <span>Issues only</span>
-          </label>
-
-          {/* Fullscreen Button */}
-          <button
-            onClick={toggleFullscreen}
-            title="Toggle fullscreen"
-            className="flex h-7 items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[9px] text-[var(--muted)] transition hover:text-[var(--foreground)]"
-          >
-            <MaximizeIcon className="h-3.5 w-3.5" />
-            <span>Fullscreen</span>
-          </button>
-        </div>
-      </div>
-
-      {/* React Flow Canvas - Reduced height to prevent vertical viewport scrolling */}
-      <div className="relative h-[calc(100vh-215px)] min-h-[480px]">
-        <ReactFlow
-          key={`${mode}-${envFilter}-${zone}-${canvasRevision}`}
-          nodes={displayNodes}
-          edges={resolvedEdges}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          fitView
-          fitViewOptions={{ padding: 0.16 }}
-          minZoom={0.25}
-          maxZoom={1.8}
-          nodesDraggable={layoutEditMode}
-          nodesConnectable={false}
-          snapToGrid
-          snapGrid={[20, 20]}
-          elevateEdgesOnSelect
-          onNodesChange={onNodesChange}
-          onNodeDragStart={onNodeDragStart}
-          onNodeDragStop={onNodeDragStop}
-          onNodeClick={(_, node) => {
-            const d = node.data as TopologyNodeData;
-            if (d.vm) {
-              setSelectedVm(d.vm);
-            } else if (d.cluster) {
-              setSelectedCluster(d.cluster);
-            } else if (d.nas) {
-              setSelectedNas(d.nas);
-            } else if (d.kind === "group" || d.kind === "external") {
-              const tierVms = envVms.filter((v) => d.kind === "group" && (v.zone === d.key || v.service === d.key));
-              const tierStatuses = envStatuses.filter((s) => {
-                const srcVm = envVms.find((v) => v.id === s.policy.sourceVmId);
-                const tgtVm = envVms.find((v) => v.id === s.policy.targetVmId);
-                if (d.kind === "external") {
-                  return !s.policy.targetVmId && s.policy.targetName === d.key;
-                }
-                return (
-                  (srcVm && (srcVm.zone === d.key || srcVm.service === d.key)) ||
-                  (tgtVm && (tgtVm.zone === d.key || tgtVm.service === d.key))
-                );
-              });
-
-              setSelectedTier({
-                tierName: d.label,
-                kind: d.kind,
-                vms: tierVms,
-                statuses: tierStatuses,
-                healthyCount: d.healthyCount,
-                warningCount: d.warningCount,
-                criticalCount: d.criticalCount,
-                issueCount: d.issueCount,
-              });
-            }
-          }}
-          onNodeDoubleClick={(_, node) => {
-            const d = node.data as TopologyNodeData;
-            if (d.kind !== "group") return;
-            if (zoneOrder.includes(d.key)) {
-              setMode("vm");
-              setZone(d.key);
-              return;
-            }
-            const hit = envVms.find((v) => v.service === d.key);
-            if (hit) {
-              setMode("vm");
-              setZone(hit.zone);
-            }
-          }}
-          onEdgeClick={(_, edge) => {
-            const d = edge.data as TopologyEdgeData;
-            setSelectedEdgeId(edge.id);
-            if (d?.status) {
-              setSelectedConnection(d.status);
-              setSelectedRelatedStatuses(d.relatedStatuses ?? (d.status ? [d.status] : []));
-            }
-          }}
-        >
-          <Background gap={20} size={1} color="var(--border)" />
-          <Controls showInteractive={false} />
-          <MiniMap
-            pannable
-            zoomable
-            nodeColor={(n) => {
-              if (n.id.endsWith("-ghost")) return "transparent";
-              if (n.type === "cluster") return "#a855f7";
-              if (n.type === "nas") return "#0ea5e9";
-              const d = n.data as any;
-              if (d?.issueCount > 0 || d?.vm?.health === "critical") return "#f04438";
-              if (d?.vm?.health === "warning") return "#f79009";
-              if (n.type === "tier") return "#64748b";
-              return "#5750f1";
-            }}
-            nodeStrokeWidth={1}
-            nodeBorderRadius={3}
-            maskColor="rgba(15, 23, 42, 0.35)"
-            maskStrokeColor="#5750f1"
-            maskStrokeWidth={1.5}
-            className="!border-[var(--border)] !bg-[var(--surface)] shadow-md"
-          />
-        </ReactFlow>
-
-        {/* Informative Legend Overlay - Centered bottom to prevent overlapping left zoom controls */}
-        <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 max-w-[90vw] rounded-md border border-[var(--border)] bg-[var(--surface)]/95 px-3 py-1.5 text-center text-[8px] text-[var(--muted)] shadow-sm backdrop-blur-sm">
-          <div>
-            <b className="text-[var(--foreground)]">Policy (Should Be)</b>: 승인/만료 ·{" "}
-            <b className="text-[var(--foreground)]">Actual</b>: Source→Target Telegraf TCP probe (양방향 지원)
-          </div>
-          <div className="mt-0.5">
-            더블클릭 → 티어 드릴다운 · 노드/연결 클릭 → 우측 슬라이드 서랍 상세 · Labels → 포트 라벨 ON/OFF · Curved/Step → 곡선/직각 선택 · Edit layout → 20px 격자 스냅
-          </div>
-        </div>
-      </div>
-
-      {/* Slide Drawers (All slide from Right, width 460px) */}
-      <VmDrawer
-        vm={selectedVm}
-        network={statuses}
-        software={software}
-        sops={sops}
-        open={!!selectedVm}
-        onClose={() => setSelectedVm(null)}
-        onSelectSoftware={(sw) => {
-          const matched = matchLegacySoftwareRelease(sw, softwareProducts, softwareReleases);
-          if (matched) setSelectedRelease(matched);
-        }}
-      />
-      <ConnectionDrawer
-        status={selectedConnection}
-        relatedStatuses={selectedRelatedStatuses}
-        sourceHandle={edgeHandleOverrides[selectedEdgeId ?? ""]?.source}
-        targetHandle={edgeHandleOverrides[selectedEdgeId ?? ""]?.target}
-        onUpdateHandles={(handles) => {
-          if (selectedEdgeId) {
-            updateEdgeHandles(selectedEdgeId, handles);
-          }
-        }}
-        open={!!selectedConnection}
-        onClose={() => {
-          setSelectedConnection(null);
-          setSelectedEdgeId(null);
-          setSelectedRelatedStatuses([]);
-        }}
-      />
-      <TierDrawer
-        data={selectedTier}
-        open={!!selectedTier}
-        onClose={() => setSelectedTier(null)}
-        onDrillDown={(tierName) => {
-          setMode("vm");
-          const cleanZone = tierName.replace(" TIER", "").trim();
-          if (zoneOrder.includes(cleanZone)) {
-            setZone(cleanZone);
-          } else {
-            setZone("ALL");
-          }
-        }}
-        onSelectVm={(vm) => {
-          setSelectedTier(null);
-          setSelectedVm(vm);
-        }}
-      />
-      <ClusterDrawer
-        cluster={selectedCluster}
-        open={!!selectedCluster}
-        onClose={() => setSelectedCluster(null)}
-      />
-      <NasDrawer
-        nas={selectedNas}
-        open={!!selectedNas}
-        onClose={() => setSelectedNas(null)}
-        onSelectVm={(hostname) => {
-          const hit = vms.find((v) => v.hostname === hostname);
-          if (hit) {
-            setSelectedNas(null);
-            setSelectedVm(hit);
-          }
-        }}
-      />
-      <SoftwareDetailDrawer
-        release={selectedRelease}
-        open={!!selectedRelease}
-        onClose={() => setSelectedRelease(null)}
-      />
-    </div>
-  );
-}
-
-function Segment({ value, setValue }: { value: ViewMode; setValue: (v: ViewMode) => void }) {
-  return (
-    <div className="flex rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-0.5">
-      {(["overview", "service", "vm"] as ViewMode[]).map((v) => (
-        <button
-          key={v}
-          onClick={() => setValue(v)}
-          className={`h-6 rounded px-2.5 text-[9px] font-medium transition ${
-            value === v ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]"
-          }`}
-        >
-          {v === "overview" ? "Overview" : v === "service" ? "Service" : "VM"}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function buildOverview(
-  vms: VmAsset[],
-  statuses: NetworkStatus[],
-  issuesOnly: boolean,
-  overlay: OverlayMode,
-  query: string,
-  flowActive: boolean,
-  onSelectConnection: (edgeId: string, status: NetworkStatus, relatedStatuses: NetworkStatus[]) => void
-) {
-  const q = query.trim().toLowerCase();
-  const issueIds = new Set(
-    statuses
-      .filter((s) => s.overall !== "NORMAL")
-      .flatMap((s) => [s.policy.sourceVmId, s.policy.targetVmId].filter(Boolean) as string[])
-  );
-
-  const groups = zoneOrder
-    .filter((z) => z !== "EXTERNAL")
-    .map((z) => {
-      const list = vms.filter((v) => v.zone === z);
-      const healthy = list.filter((v) => v.health === "healthy").length;
-      const warning = list.filter((v) => v.health === "warning").length;
-      const critical = list.filter((v) => v.health === "critical").length;
-      const issues = list.filter((v) => issueIds.has(v.id)).length + warning + critical;
-      const connCount = statuses.filter(
-        (s) =>
-          list.some((v) => v.id === s.policy.sourceVmId) ||
-          list.some((v) => v.id === s.policy.targetVmId)
-      ).length;
-
-      return {
-        z,
-        list,
-        healthy,
-        warning,
-        critical,
-        connCount,
-        issues,
-      };
-    })
-    .filter((g) => g.list.length > 0 && (issuesOnly ? g.issues > 0 : true));
-
-  const externalNames = Array.from(
-    new Set(statuses.filter((s) => !s.policy.targetVmId).map((s) => s.policy.targetName))
-  );
-
-  const nodes: Node<TopologyNodeData>[] = [
-    ...groups.map((g) => ({
-      id: `zone-${g.z}`,
-      type: "tier",
-      position: zonePos[g.z] ?? { x: 0, y: 0 },
-      style: { width: 200, height: 116 },
-      data: {
-        kind: "group" as const,
-        key: g.z,
-        label: `${g.z} TIER`,
-        count: g.list.length,
-        healthyCount: g.healthy,
-        warningCount: g.warning,
-        criticalCount: g.critical,
-        connectionsCount: g.connCount,
-        issueCount: g.issues,
-      },
-    })),
-    ...(externalNames.length && (!issuesOnly || statuses.some((s) => !s.policy.targetVmId && s.overall !== "NORMAL"))
-      ? [
-          {
-            id: "zone-EXTERNAL",
-            type: "tier",
-            position: zonePos.EXTERNAL,
-            style: { width: 200, height: 116 },
-            data: {
-              kind: "external" as const,
-              key: "EXTERNAL",
-              label: "EXTERNAL",
-              count: externalNames.length,
-              issueCount: statuses.filter((s) => !s.policy.targetVmId && s.overall !== "NORMAL").length,
-            },
-          },
-        ]
-      : []),
-  ];
-
-  const vmZone = Object.fromEntries(vms.map((v) => [v.id, v.zone]));
-  const agg = new Map<string, { source: string; target: string; count: number; issues: number; sample?: NetworkStatus; all: NetworkStatus[] }>();
-
-  for (const s of statuses) {
-    if (issuesOnly && s.overall === "NORMAL") continue;
-    if (q && !`${s.policy.port} ${s.policy.sourceName} ${s.policy.targetName}`.toLowerCase().includes(q)) {
-      continue;
-    }
-    const src = vmZone[s.policy.sourceVmId];
-    const tgt = s.policy.targetVmId ? vmZone[s.policy.targetVmId] : "EXTERNAL";
-    if (!src || !tgt || src === tgt) continue;
-    const key = `${src}->${tgt}`;
-    const cur = agg.get(key) ?? { source: src, target: tgt, count: 0, issues: 0, sample: s, all: [] };
-    cur.count++;
-    cur.all.push(s);
-    if (s.overall !== "NORMAL") cur.issues++;
-    agg.set(key, cur);
-  }
-
-  const aggEntries = [...agg.entries()];
-  const sourceEdgeCount = new Map<string, number>();
-  for (const [, a] of aggEntries) {
-    sourceEdgeCount.set(a.source, (sourceEdgeCount.get(a.source) || 0) + 1);
-  }
-  const sourceEdgeIdx = new Map<string, number>();
-
-  const edges: Edge<TopologyEdgeData>[] = aggEntries.map(([id, a]) => {
-    const label = overlay === "policy" ? `${a.count} Policies` : `${a.count} Flows`;
-    const secondary =
-      overlay === "policy"
-        ? a.issues
-          ? `${a.issues} Expiring/Issue`
-          : "All Approved"
-        : a.issues
-          ? `${a.issues} TCP Attention`
-          : "All Reachable";
-
-    const idx = sourceEdgeIdx.get(a.source) || 0;
-    sourceEdgeIdx.set(a.source, idx + 1);
-    const total = sourceEdgeCount.get(a.source) || 1;
-
+  const resolvedEdges = useMemo(() => liveEdges.filter((edge) => relationFilters[edge.data?.relationType ?? "OTHER"] !== false).map((edge) => {
+    const baseId = edge.data?.relation?.id.split(":member:")[0];
+    const focusRelation = baseId ? relatedRelations.get(baseId) : undefined;
+    const sourceVisit = visitMap.get(edge.source);
+    const targetVisit = visitMap.get(edge.target);
+    const side = sourceVisit?.side === "impact" || targetVisit?.side === "impact" ? "impact" : sourceVisit?.side === "dependency" || targetVisit?.side === "dependency" ? "dependency" : undefined;
+    const related = Boolean(focusRelation || (sourceVisit && targetVisit));
+    const tcpUp = edge.data?.relatedStatuses?.some((status) => status.observation?.tcp === "UP") ?? false;
+    const autoHandles = computeAutoHandles(edge.source, edge.target);
+    const sourceHandle = normalizeHandleSide(edgeHandles[edge.id]?.source, autoHandles.source);
+    const targetHandle = normalizeHandleSide(edgeHandles[edge.id]?.target, autoHandles.target);
     return {
-      id,
-      type: "flow",
-      source: `zone-${a.source}`,
-      target: `zone-${a.target}`,
-      markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
+      ...edge,
+      sourceHandle,
+      targetHandle,
       data: {
-        label,
-        secondary,
-        issueCount: a.issues,
-        status: a.sample,
-        relatedStatuses: a.all,
-        flowActive,
-        edgeIndex: idx,
-        totalEdges: total,
-        onSelect: () => a.sample && onSelectConnection(id, a.sample, a.all),
-      },
+        ...edge.data!,
+        showLabel: showLabels,
+        focusOpacity: mode === "dependency" && dependencyFocusId ? (related ? 1 : .1) : 1,
+        dependencySide: related ? side : undefined,
+        dependencyDepth: Math.max(sourceVisit?.depth ?? 0, targetVisit?.depth ?? 0),
+        flowActive: flowAnimation && tcpUp && (mode !== "dependency" || related),
+      }
     };
-  });
+  }), [liveEdges, relationFilters, relatedRelations, visitMap, edgeHandles, mode, showLabels, flowAnimation, dependencyFocusId, computeAutoHandles]);
 
-  return { nodes, edges };
-}
+  const onNodesChange = useCallback((changes: NodeChange[]) => setLiveNodes((nodes) => applyNodeChanges(changes, nodes) as Node<TopologyNodeData>[]), []);
+  const savePosition = (node: Node) => { const from = dragStartRef.current[node.id] ?? node.position; const position = { x: Math.round(node.position.x / 20) * 20, y: Math.round(node.position.y / 20) * 20 }; lastMoveRef.current = { id: node.id, from, to: position }; setManualPositions((current) => { const next = { ...current, [node.id]: position }; positionsRef.current = next; localStorage.setItem(storageKey, JSON.stringify(next)); return next; }); };
+  const undoMove = () => { const move = lastMoveRef.current; if (!move) return; setLiveNodes((nodes) => nodes.map((node) => node.id === move.id ? { ...node, position: move.from } : node)); setManualPositions((current) => { const next = { ...current, [move.id]: move.from }; positionsRef.current = next; localStorage.setItem(storageKey, JSON.stringify(next)); return next; }); lastMoveRef.current = null; };
+  const autoLayout = () => { localStorage.removeItem(storageKey); positionsRef.current = {}; setManualPositions({}); setLayoutRevision((value) => value + 1); };
+  const updateHandles = useCallback((id: string, value: { source?: HandleDirection; target?: HandleDirection }) => setEdgeHandles((current) => { const next = { ...current, [id]: { source: normalizeHandleSide(value.source), target: normalizeHandleSide(value.target) } }; localStorage.setItem(`rpa-topology-handles:v3:${activeProject.id}`, JSON.stringify(next)); return next; }), [activeProject.id]);
+  const selectEntity = (id: string) => { const entity = catalog.get(id); if (!entity) return; setSelectedEntityId(id); if (mode === "dependency") { setDependencyFocusId(id); setDependencyQuery(entity.label); setDependencyDrawerEntity(entity); } else if (entity.asset) setSelectedVm(entity.asset); else if (entity.cluster) setSelectedCluster(entity.cluster); else if (entity.nas) setSelectedNas(entity.nas); else if (entity.group) { const members = groupAssets(entity.group, projectAssets); setSelectedGroup({ groupName: entity.label, groupType: entity.group.groupType, environment: entity.group.environment, domain: entity.group.domain, system: entity.group.system, description: entity.group.description, assets: members, statuses: projectStatuses.filter((status) => members.some((asset) => asset.id === status.policy.sourceVmId || asset.id === status.policy.targetVmId)), software, sops }); } };
+  const openDependency = (id: string) => { const entity = catalog.get(id); setDependencyFocusId(id); setDependencyQuery(entity?.label ?? id); setMode("dependency"); setDependencyDrawerEntity(entity ?? null); }; const chooseDependencyQuery = (value: string) => { setDependencyQuery(value); const q = value.trim().toLowerCase(); const hit = searchableEntities.find((item) => item.id === value || item.label.toLowerCase() === q) ?? searchableEntities.find((item) => item.aliases.some((alias) => alias.toLowerCase().includes(q))); if (hit) { setDependencyFocusId(hit.id); setDependencyDrawerEntity(hit); } };
+  const expandVisible = () => {
+    positionsRef.current = {};
+    setManualPositions({});
+    try { localStorage.removeItem(storageKey); } catch {}
+    setExpandedGroupIds((current) => {
+      const next = new Set(current);
+      projectGroups.filter((group) => !group.parentGroupId || current.has(group.parentGroupId)).forEach((group) => next.add(group.id));
+      return next;
+    });
+  };
+  const collapseAll = () => {
+    positionsRef.current = {};
+    setManualPositions({});
+    try { localStorage.removeItem(storageKey); } catch {}
+    setExpandedGroupIds(new Set());
+  };
+  const impactSummary = { direct: dependencyGraph.visits.filter((visit) => visit.depth === 1).length, impact: dependencyGraph.visits.filter((visit) => visit.side === "impact").length, dependency: dependencyGraph.visits.filter((visit) => visit.side === "dependency").length, failed: projectStatuses.filter((status) => status.overall !== "NORMAL" && dependencyGraph.visits.some((visit) => visit.id === status.policy.sourceVmId || visit.id === status.policy.targetVmId)).length, sops: sops.filter((sop) => sop.relatedVmIds.some((id) => visitMap.has(id))).length, eosl: software.filter((item) => visitMap.has(item.vmId) && item.eoslDate && new Date(item.eoslDate).getTime() < Date.now()).length };
 
-function buildServices(
-  vms: VmAsset[],
-  statuses: NetworkStatus[],
-  issuesOnly: boolean,
-  overlay: OverlayMode,
-  query: string,
-  flowActive: boolean,
-  onSelectConnection: (edgeId: string, status: NetworkStatus, relatedStatuses: NetworkStatus[]) => void
-) {
-  const q = query.trim().toLowerCase();
-  const services = Array.from(new Set(vms.map((v) => v.service)));
-  const vmService = Object.fromEntries(vms.map((v) => [v.id, v.service]));
+  const onConnect = async (connection: Connection) => {
+    if (!connection.source || !connection.target || connection.source === connection.target) return;
+    const source = catalog.get(connection.source);
+    const target = catalog.get(connection.target);
+    if (!source || !target) return;
+    const relationType: RelationType =
+      target.kind === "cluster" || target.kind === "dbaas"
+        ? "DATABASE"
+        : target.kind === "nas"
+          ? "STORAGE"
+          : "SERVICE";
+    const entityType = (entity: SemanticEntity): ArchitectureRelation["sourceEntityType"] =>
+      entity.kind === "group" ? "TOPOLOGY_GROUP" : entity.kind === "cluster" ? "CLUSTER" : entity.kind === "external" ? "EXTERNAL" : "ASSET";
 
-  const issueByService = new Map<string, number>();
-  for (const s of statuses.filter((s) => s.overall !== "NORMAL")) {
-    const a = vmService[s.policy.sourceVmId];
-    if (a) issueByService.set(a, (issueByService.get(a) || 0) + 1);
-    if (s.policy.targetVmId) {
-      const b = vmService[s.policy.targetVmId];
-      if (b) issueByService.set(b, (issueByService.get(b) || 0) + 1);
-    }
-  }
+    const defaultProtocol = target.kind === "nas" ? "NFS" : "TCP";
+    const defaultPort = target.kind === "cluster" ? 1433 : target.kind === "nas" ? 2049 : 8080;
 
-  const visible = services.filter((s) => !issuesOnly || (issueByService.get(s) || 0) > 0);
-  const nodes: Node<TopologyNodeData>[] = visible.map((service, i) => {
-    const sVms = vms.filter((v) => v.service === service);
-    return {
-      id: `svc-${service}`,
-      type: "tier",
-      position: { x: (i % 3) * 280 + 80, y: Math.floor(i / 3) * 170 + 90 },
-      style: { width: 200, height: 116 },
-      data: {
-        kind: "group" as const,
-        key: service,
-        label: service,
-        count: sVms.length,
-        healthyCount: sVms.filter((v) => v.health === "healthy").length,
-        warningCount: sVms.filter((v) => v.health === "warning").length,
-        criticalCount: sVms.filter((v) => v.health === "critical").length,
-        connectionsCount: statuses.filter(
-          (s) =>
-            sVms.some((v) => v.id === s.policy.sourceVmId) ||
-            sVms.some((v) => v.id === s.policy.targetVmId)
-        ).length,
-        issueCount: issueByService.get(service) || 0,
-      },
+    const relation: ArchitectureRelation = {
+      id: `manual-${Date.now()}`,
+      projectGroupId: activeProject.id,
+      sourceEntityType: entityType(source),
+      sourceEntityId: connection.source,
+      targetEntityType: target.kind === "nas" ? "NAS" : entityType(target),
+      targetEntityId: connection.target,
+      relationType,
+      protocol: defaultProtocol,
+      port: defaultPort,
+      name: `${source.label} → ${target.label}`,
+      description: "아키텍처 캔버스 신규 연결 (설정 필요)",
     };
-  });
 
-  const externals = Array.from(
-    new Set(statuses.filter((s) => !s.policy.targetVmId && (issuesOnly ? s.overall !== "NORMAL" : true)).map((s) => s.policy.targetName))
-  );
-  externals.forEach((name, i) =>
-    nodes.push({
-      id: `ext-${name}`,
-      type: "tier",
-      position: { x: 940, y: 90 + i * 150 },
-      style: { width: 200, height: 116 },
-      data: {
-        kind: "external" as const,
-        key: name,
-        label: name,
-        sublabel: "External dependency",
-        issueCount: statuses.filter((s) => s.policy.targetName === name && s.overall !== "NORMAL").length,
-      },
-    })
-  );
-
-  const agg = new Map<string, { src: string; tgt: string; count: number; issues: number; sample?: NetworkStatus; all: NetworkStatus[] }>();
-  for (const s of statuses) {
-    if (issuesOnly && s.overall === "NORMAL") continue;
-    if (q && !`${s.policy.port} ${s.policy.sourceName} ${s.policy.targetName}`.toLowerCase().includes(q)) {
-      continue;
-    }
-    const src = vmService[s.policy.sourceVmId];
-    const tgt = s.policy.targetVmId ? vmService[s.policy.targetVmId] : s.policy.targetName;
-    if (!src || !tgt || src === tgt) continue;
-    const k = `${src}->${tgt}`;
-    const a = agg.get(k) ?? { src, tgt, count: 0, issues: 0, sample: s, all: [] };
-    a.count++;
-    a.all.push(s);
-    if (s.overall !== "NORMAL") a.issues++;
-    agg.set(k, a);
-  }
-
-  const aggEntries = [...agg.entries()];
-  const sourceEdgeCount = new Map<string, number>();
-  for (const [, a] of aggEntries) {
-    sourceEdgeCount.set(a.src, (sourceEdgeCount.get(a.src) || 0) + 1);
-  }
-  const sourceEdgeIdx = new Map<string, number>();
-
-  const edges: Edge<TopologyEdgeData>[] = aggEntries.map(([id, a]) => {
-    const idx = sourceEdgeIdx.get(a.src) || 0;
-    sourceEdgeIdx.set(a.src, idx + 1);
-    const total = sourceEdgeCount.get(a.src) || 1;
-
-    return {
-      id,
-      type: "flow",
-      source: `svc-${a.src}`,
-      target: services.includes(a.tgt) ? `svc-${a.tgt}` : `ext-${a.tgt}`,
-      markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
-      data: {
-        label: overlay === "policy" ? `${a.count} Policies` : `${a.count} Flows`,
-        secondary: a.issues ? `${a.issues} Issues` : overlay === "policy" ? "Approved" : "Reachable",
-        issueCount: a.issues,
-        status: a.sample,
-        relatedStatuses: a.all,
-        flowActive,
-        edgeIndex: idx,
-        totalEdges: total,
-        onSelect: () => a.sample && onSelectConnection(id, a.sample, a.all),
-      },
+    const sourceVm = source.asset;
+    const targetVm = target.asset;
+    const draftPolicy: NetworkPolicy = {
+      id: `pol-draft-${Date.now()}`,
+      projectGroupId: activeProject.id,
+      requestId: `REQ-DRAFT-${Date.now().toString().slice(-4)}`,
+      sourceVmId: sourceVm?.id ?? connection.source,
+      sourceName: source.label,
+      sourceIp: sourceVm?.ipAddress ?? "미설정 (??)",
+      targetVmId: targetVm?.id ?? (target.kind === "nas" ? target.nas?.id : connection.target),
+      targetName: target.label,
+      targetIp: targetVm?.ipAddress ?? target.cluster?.vip ?? target.nas?.ipAddress ?? "미설정 (??)",
+      protocol: "TCP",
+      port: defaultPort,
+      direction: "ONE_WAY",
+      approvalStatus: "PENDING",
+      purpose: "아키텍처 캔버스 신규 연결 (설정 필요)",
+      expiresAt: "",
+      requestedAt: new Date().toISOString(),
     };
-  });
 
-  return { nodes, edges };
-}
+    await Promise.all([
+      managementRepo.createRelation(relation),
+      managementRepo.createPolicy(draftPolicy),
+    ]);
 
-function buildVms(
-  vms: VmAsset[],
-  statuses: NetworkStatus[],
-  zone: string,
-  issuesOnly: boolean,
-  issueVmIds: Set<string>,
-  overlay: OverlayMode,
-  query: string,
-  flowActive: boolean,
-  clusters: ClusterEntity[],
-  nasAssets: NasAsset[],
-  onSelectConnection: (edgeId: string, status: NetworkStatus, relatedStatuses: NetworkStatus[]) => void
-) {
-  const q = query.trim().toLowerCase();
-  const visible = vms.filter(
-    (v) =>
-      (zone === "ALL" || v.zone === zone) &&
-      (!issuesOnly || issueVmIds.has(v.id)) &&
-      (!q || `${v.hostname} ${v.ipAddress} ${v.service}`.toLowerCase().includes(q))
-  );
-  const visibleIds = new Set(visible.map((v) => v.id));
-
-  // Automatic hierarchical/swim-lane layout.
-  // The default layout favors readable service flow; users can make small final adjustments in Edit layout mode.
-  const VM_W = 230;
-  const VM_H = 125;
-  const X_STEP = 270;
-  const Y_STEP = 165;
-
-  const zoneSpec: Record<string, { x: number; y: number; cols: number }> = {
-    WEB: { x: 520, y: 40, cols: 4 },
-    APP: { x: 260, y: 300, cols: 6 },
-    DB: { x: 520, y: 590, cols: 4 },
-    CONTROL: { x: -620, y: 300, cols: 2 },
-    BOT: { x: -880, y: 590, cols: 4 },
-    VDI: { x: -880, y: 930, cols: 4 },
-    SUPPORT: { x: 2240, y: 590, cols: 2 },
+    setCurrentRelations((items) => [relation, ...items]);
+    updateHandles(`${connection.source}:${connection.target}:${relationType}`, {
+      source: normalizeHandleSide(connection.sourceHandle),
+      target: normalizeHandleSide(connection.targetHandle),
+    });
+    setEditingRelation({ relation, sourceName: source.label, targetName: target.label, isNew: true });
   };
 
-  function positionForVm(vm: VmAsset, indexWithinZone: number, zoneCount: number) {
-    if (zone !== "ALL") {
-      const cols = Math.min(4, Math.max(1, zoneCount));
-      return {
-        x: (indexWithinZone % cols) * X_STEP + 80,
-        y: Math.floor(indexWithinZone / cols) * Y_STEP + 80,
+  const onReconnect = useCallback((oldEdge: Edge, newConnection: Connection) => {
+    if (!newConnection.source || !newConnection.target || newConnection.source === newConnection.target) return;
+    const relation = (oldEdge.data as TopologyEdgeData)?.relation;
+    if (relation) {
+      const source = catalog.get(newConnection.source);
+      const target = catalog.get(newConnection.target);
+      const entityType = (entity?: SemanticEntity): ArchitectureRelation["sourceEntityType"] =>
+        entity?.kind === "group" ? "TOPOLOGY_GROUP" : entity?.kind === "cluster" ? "CLUSTER" : entity?.kind === "external" ? "EXTERNAL" : "ASSET";
+      const updated: ArchitectureRelation = {
+        ...relation,
+        sourceEntityId: newConnection.source,
+        sourceEntityType: entityType(source),
+        targetEntityId: newConnection.target,
+        targetEntityType: target?.kind === "nas" ? "NAS" : entityType(target),
       };
+      managementRepo.updateRelation(relation.id, updated).catch(() => {});
+      setCurrentRelations((items) => items.map((r) => (r.id === relation.id ? updated : r)));
+      if (newConnection.sourceHandle || newConnection.targetHandle) {
+        updateHandles(`${newConnection.source}:${newConnection.target}:${relation.relationType}`, {
+          source: normalizeHandleSide(newConnection.sourceHandle),
+          target: normalizeHandleSide(newConnection.targetHandle),
+        });
+      }
     }
+    setLiveEdges((edges) => reconnectEdge(oldEdge, newConnection, edges) as Edge<TopologyEdgeData>[]);
+  }, [catalog, updateHandles]);
 
-    const spec = zoneSpec[vm.zone] ?? { x: 520, y: 1180, cols: 4 };
-    return {
-      x: spec.x + (indexWithinZone % spec.cols) * X_STEP,
-      y: spec.y + Math.floor(indexWithinZone / spec.cols) * Y_STEP,
-    };
-  }
+  const onReconnectStart = useCallback((_: unknown, edge: Edge) => { reconnectRef.current = edge; }, []);
+  const onReconnectEnd = useCallback((_: unknown, edge: Edge) => { if (reconnectRef.current?.id === edge.id) reconnectRef.current = null; }, []);
 
-  const zoneIndexes = new Map<string, number>();
-  const zoneCounts = new Map<string, number>();
-  for (const vm of visible) zoneCounts.set(vm.zone, (zoneCounts.get(vm.zone) ?? 0) + 1);
-
-  const nodes: Node<TopologyNodeData>[] = visible.map((vm) => {
-    const indexWithinZone = zoneIndexes.get(vm.zone) ?? 0;
-    zoneIndexes.set(vm.zone, indexWithinZone + 1);
-    return {
-      id: vm.id,
-      type: "vm",
-      position: positionForVm(vm, indexWithinZone, zoneCounts.get(vm.zone) ?? 1),
-      style: { width: VM_W, height: VM_H },
-      data: { kind: "vm" as const, key: vm.id, label: vm.hostname, vm },
-    };
-  });
-
-  // Append logical cluster nodes close to the DB lane (or below a filtered tier).
-  const relevantClusters = clusters.filter(
-    (c) => (zone === "ALL" || c.zone === zone) && (!issuesOnly || c.status !== "HEALTHY")
-  );
-  relevantClusters.forEach((cluster, index) => {
-    const position =
-      zone === "ALL"
-        ? { x: 760 + index * X_STEP, y: 805 }
-        : { x: (index % 4) * X_STEP + 80, y: Math.ceil(visible.length / 4) * Y_STEP + 110 };
-    nodes.push({
-      id: `cluster-${cluster.id}`,
-      type: "cluster",
-      position,
-      style: { width: 230, height: 135 },
-      data: {
-        kind: "cluster" as const,
-        key: cluster.id,
-        label: cluster.name,
-        cluster,
-      },
-    });
-  });
-
-  // Append NAS assets near the support/data lane.
-  const relevantNas = nasAssets.filter(
-    (n) => (zone === "ALL" || n.zone === zone) && (!issuesOnly || n.status !== "ONLINE")
-  );
-  relevantNas.forEach((nas, index) => {
-    const position =
-      zone === "ALL"
-        ? { x: 2240 + (index % 2) * X_STEP, y: 940 + Math.floor(index / 2) * Y_STEP }
-        : {
-            x: (index % 4) * X_STEP + 80,
-            y: (Math.ceil(visible.length / 4) + Math.ceil(relevantClusters.length / 4)) * Y_STEP + 110,
-          };
-    nodes.push({
-      id: `nas-${nas.id}`,
-      type: "nas",
-      position,
-      style: { width: 230, height: 135 },
-      data: {
-        kind: "nas" as const,
-        key: nas.id,
-        label: nas.hostname,
-        nas,
-      },
-    });
-  });
-
-  // External targets are kept in a dedicated lane to prevent them from cutting across VM cards.
-  const extMap = new Map<string, number>();
-  for (const s of statuses) {
-    if (visibleIds.has(s.policy.sourceVmId) && !s.policy.targetVmId && (!issuesOnly || s.overall !== "NORMAL")) {
-      extMap.set(s.policy.targetName, (extMap.get(s.policy.targetName) || 0) + (s.overall !== "NORMAL" ? 1 : 0));
+  const handleEdgeClick = (_: unknown, edge: Edge) => {
+    const relation = (edge.data as TopologyEdgeData)?.relation;
+    if (layoutEdit && relation) {
+      const source = catalog.get(relation.sourceEntityId) ?? catalog.get(edge.source);
+      const target = catalog.get(relation.targetEntityId) ?? catalog.get(edge.target);
+      setEditingRelation({ relation, sourceName: source?.label ?? edge.source, targetName: target?.label ?? edge.target });
+      return;
     }
-  }
+    const status = edge.data?.status as NetworkStatus | undefined;
+    if (status) {
+      setSelectedEdgeId(edge.id);
+      setSelectedConnection(status);
+    } else if (relation) {
+      const source = catalog.get(relation.sourceEntityId) ?? catalog.get(edge.source);
+      const target = catalog.get(relation.targetEntityId) ?? catalog.get(edge.target);
+      setEditingRelation({ relation, sourceName: source?.label ?? edge.source, targetName: target?.label ?? edge.target });
+    }
+  };
 
-  let externalIndex = 0;
-  for (const [name, issues] of extMap) {
-    nodes.push({
-      id: `ext-${name}`,
-      type: "tier",
-      position: zone === "ALL"
-        ? { x: 2240, y: 120 + externalIndex++ * 150 }
-        : { x: 1180, y: 80 + externalIndex++ * 150 },
-      style: { width: 200, height: 116 },
-      data: {
-        kind: "external" as const,
-        key: name,
-        label: name,
-        sublabel: "External dependency",
-        issueCount: issues,
-      },
-    });
-  }
+  const onRelationSave = async (updated: ArchitectureRelation) => {
+    await managementRepo.updateRelation(updated.id, updated);
+    setCurrentRelations((items) => items.map((r) => (r.id === updated.id ? updated : r)));
+    try {
+      const policies = await managementRepo.getPolicies();
+      const match = policies.find(
+        (p) =>
+          (p.sourceVmId === updated.sourceEntityId && p.targetVmId === updated.targetEntityId) ||
+          updated.id.includes(p.id)
+      );
+      if (match) {
+        await managementRepo.updatePolicy(match.id, {
+          protocol: updated.protocol === "UDP" ? "UDP" : "TCP",
+          port: updated.port ?? match.port,
+          purpose: updated.description ?? match.purpose,
+        });
+      }
+    } catch {}
+    setEditingRelation(null);
+  };
 
-  const filteredStatuses = statuses.filter(
-    (s) =>
-      visibleIds.has(s.policy.sourceVmId) &&
-      (s.policy.targetVmId ? visibleIds.has(s.policy.targetVmId) : true) &&
-      (!issuesOnly || s.overall !== "NORMAL") &&
-      (!q || `${s.policy.port} ${s.policy.protocol} ${s.policy.requestId ?? ""}`.toLowerCase().includes(q))
-  );
+  const onRelationDelete = async (id: string) => {
+    await managementRepo.deleteRelation(id);
+    setCurrentRelations((items) => items.filter((r) => r.id !== id));
+    setEditingRelation(null);
+  };
 
-  const sourceCounts = new Map<string, number>();
-  for (const s of filteredStatuses) {
-    sourceCounts.set(s.policy.sourceVmId, (sourceCounts.get(s.policy.sourceVmId) || 0) + 1);
-  }
-  const sourceIdxMap = new Map<string, number>();
+  const onRelationCancel = async () => {
+    if (editingRelation?.isNew && editingRelation.relation.id) {
+      const relId = editingRelation.relation.id;
+      await managementRepo.deleteRelation(relId).catch(() => {});
+      try {
+        const policies = await managementRepo.getPolicies();
+        const draftPol = policies.find(
+          (p) =>
+            p.id.includes(relId) ||
+            (editingRelation.relation.sourceEntityId === p.sourceVmId &&
+              editingRelation.relation.targetEntityId === p.targetVmId &&
+              p.id.startsWith("pol-draft"))
+        );
+        if (draftPol) {
+          await managementRepo.deletePolicy(draftPol.id).catch(() => {});
+        }
+      } catch {}
+      setCurrentRelations((items) => items.filter((r) => r.id !== relId));
+      setLiveEdges((edges) => edges.filter((e) => (e.data as TopologyEdgeData)?.relation?.id !== relId));
+    }
+    setEditingRelation(null);
+  };
 
-  const edges: Edge<TopologyEdgeData>[] = filteredStatuses.map((s) => {
-    const isBidi = s.isBidirectional || s.policy.direction === "BIDIRECTIONAL";
-    const label = `${s.policy.protocol}/${s.policy.port}${isBidi ? " (⇄)" : ""}`;
-    const secondary =
-      overlay === "policy"
-        ? `${s.policy.approvalStatus}${
-            s.daysToExpiry != null
-              ? ` · ${s.daysToExpiry >= 0 ? `D-${s.daysToExpiry}` : `D+${Math.abs(s.daysToExpiry)}`}`
-              : ""
-          }`
-        : s.overall === "RETURN_DIRECTION_FAILED"
-          ? "RETURN FAILED"
-          : `TCP ${s.observation?.tcp ?? "NO DATA"}${
-              s.observation?.tcpLatencyMs != null ? ` (${s.observation.tcpLatencyMs}ms)` : ""
-            }`;
-
-    const sourceId = s.policy.sourceVmId;
-    const targetId = s.policy.targetVmId ?? `ext-${s.policy.targetName}`;
-
-    const edgeIdx = sourceIdxMap.get(sourceId) || 0;
-    sourceIdxMap.set(sourceId, edgeIdx + 1);
-    const totalEdg = sourceCounts.get(sourceId) || 1;
-
-    return {
-      id: s.policy.id,
-      type: "flow",
-      source: sourceId,
-      target: targetId,
-      markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
-      markerStart: isBidi ? { type: MarkerType.ArrowClosed, width: 12, height: 12 } : undefined,
-      data: {
-        label,
-        secondary,
-        issueCount: s.overall === "NORMAL" ? 0 : 1,
-        status: s,
-        relatedStatuses: [s],
-        flowActive,
-        edgeIndex: edgeIdx,
-        totalEdges: totalEdg,
-        onSelect: () => onSelectConnection(s.policy.id, s, [s]),
-      },
-    };
-  });
-
-  return { nodes, edges };
+  return <div className="space-y-2"><div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2 text-[10px]"><div className="flex flex-wrap items-center gap-2"><div className="flex rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-0.5">{(["topology", "dependency"] as ArchitectureMode[]).map((view) => <button key={view} type="button" onClick={() => setMode(view)} className={`h-6 rounded px-2.5 text-[9px] font-semibold ${mode === view ? "bg-[var(--surface)] shadow-sm" : "text-[var(--muted)]"}`}>{view === "topology" ? "전체 구성" : "Dependency"}</button>)}</div><label className="flex items-center gap-1 text-[var(--muted)]">Project <span className="rounded border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1 text-[var(--foreground)]">{activeProject.name}</span></label><label className="flex items-center gap-1 text-[var(--muted)]">Environment <select value={environment} onChange={(event) => setEnvironment(event.target.value)} className="h-7 rounded border border-[var(--border)] bg-[var(--surface)] px-2"><option>ALL</option><option>PROD</option><option>QA</option><option>DEV</option></select></label>{mode === "dependency" && <><label className="flex items-center gap-1 text-[var(--muted)]">대상 <span className="flex h-7 w-52 items-center gap-1 rounded border border-[var(--border)] px-2"><SearchIcon className="h-3 w-3" /><input list="dependency-targets" value={dependencyQuery} onChange={(event) => chooseDependencyQuery(event.target.value)} className="w-full bg-transparent outline-none" placeholder="자산 / 그룹 검색" /><datalist id="dependency-targets">{searchableEntities.map((item) => <option key={item.id} value={item.label}>{item.id}</option>)}</datalist></span></label><label className="text-[var(--muted)]">연결 범위 <select value={String(dependencyDepth)} onChange={(event) => setDependencyDepth(event.target.value === "all" ? "all" : Number(event.target.value) as 1 | 2 | 3)} className="ml-1 h-7 rounded border border-[var(--border)] bg-[var(--surface)] px-2"><option value="1">직접 연결</option><option value="2">2단계</option><option value="3">3단계</option><option value="all">전체</option></select></label></>}</div><div className="flex flex-wrap items-center gap-1.5"><button type="button" onClick={() => setOverlay((value) => value === "policy" ? "live" : "policy")} className="h-7 rounded border border-[var(--border)] px-2">{overlay === "policy" ? "Policy" : "Actual"}</button><Toggle label="Flow" active={flowAnimation} onClick={() => setFlowAnimation((value) => !value)} /><Toggle label="Labels" active={showLabels} onClick={() => setShowLabels((value) => !value)} /><Toggle label="Edit Layout" active={layoutEdit} onClick={() => setLayoutEdit((value) => !value)} /><button type="button" onClick={() => flowInstance.current?.fitView({ padding: .16, duration: 240 })} className="h-7 rounded border border-[var(--border)] px-2">Fit</button><button type="button" onClick={autoLayout} className="h-7 rounded border border-[var(--border)] px-2">Auto Layout</button>{lastMoveRef.current && <button type="button" onClick={undoMove} className="h-7 rounded border border-[var(--border)] px-2">Undo move</button>}{selectedEntityId && mode === "topology" && <button type="button" onClick={() => openDependency(selectedEntityId)} className="h-7 rounded border border-[#5750f1]/40 px-2 text-[#5750f1]">Dependency 보기</button>}</div></div>
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-[9px]"><div className="flex flex-wrap gap-1">{(Object.keys(relationFilters) as RelationType[]).map((type) => <label key={type} className="flex items-center gap-1 rounded border border-[var(--border)] bg-[var(--surface-2)] px-1.5 py-0.5"><input type="checkbox" checked={relationFilters[type]} onChange={(event) => setRelationFilters((current) => ({ ...current, [type]: event.target.checked }))} className="h-3 w-3 accent-[#5750f1]" />{type}</label>)}</div><div className="flex items-center gap-2"><button type="button" onClick={collapseAll} className="rounded border border-[var(--border)] px-2 py-1">Collapse all</button><button type="button" onClick={expandVisible} className="rounded border border-[var(--border)] px-2 py-1">Expand one level</button><span className="flex h-6 w-44 items-center gap-1 rounded border border-[var(--border)] px-2"><SearchIcon className="h-3 w-3" /><input value={query} onChange={(event) => setQuery(event.target.value)} className="w-full bg-transparent outline-none" placeholder="hostname / IP" /></span><label className="flex items-center gap-1"><input type="checkbox" checked={issuesOnly} onChange={(event) => setIssuesOnly(event.target.checked)} />Issues only</label></div></div>
+    {mode === "dependency" && dependencyFocusId && <><ImpactSummary values={impactSummary} /><div className="flex items-center gap-4 rounded border border-[var(--border)] bg-[var(--surface)] px-3 py-1 text-[8px]"><span><i className="mr-1 inline-block h-2 w-2 rounded-full bg-[#5750f1]" />선택 대상</span><span className="text-[#0e9384]">← 영향 대상</span><span className="text-[#5750f1]">→ 필요 자원</span></div></>}
+    <div className="relative h-[calc(100vh-260px)] min-h-[510px] overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)]">{isLayouting && <div className="absolute right-3 top-3 z-30 rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[9px] text-[var(--muted)] shadow">Calculating layout...</div>}{layoutEdit && <div className="absolute left-3 top-3 z-30 rounded border border-[#5750f1]/40 bg-[var(--surface)] px-2 py-1 text-[8px] font-semibold text-[#5750f1] shadow">EDIT MODE · Drag handles to reconnect · 20px Grid Snap</div>}<ReactFlow nodes={resolvedNodes} edges={resolvedEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} minZoom={.18} maxZoom={1.6} nodesDraggable={layoutEdit} nodesConnectable={layoutEdit} edgesReconnectable={layoutEdit} connectionMode={ConnectionMode.Loose} connectionLineType={ConnectionLineType.SmoothStep} snapToGrid snapGrid={[20, 20]} onInit={(instance) => { flowInstance.current = instance as unknown as typeof flowInstance.current; }} onNodesChange={onNodesChange} onNodeDragStart={(_, node) => { dragStartRef.current[node.id] = { ...node.position }; }} onNodeDragStop={(_, node) => savePosition(node)} onConnect={onConnect} onReconnect={onReconnect} onReconnectStart={onReconnectStart} onReconnectEnd={onReconnectEnd} onNodeClick={(_, node) => selectEntity(node.id)} onNodeDoubleClick={(event, node) => { if (catalog.get(node.id)?.group) { event.stopPropagation(); toggleGroup(node.id); } }} onPaneClick={() => { if (mode === "dependency") { setDependencyFocusId(null); setDependencyQuery(""); } }} onEdgeClick={handleEdgeClick}><Background gap={20} size={1} color="var(--border)" /><Controls showInteractive={false} /><MiniMap pannable zoomable className="!border-[var(--border)] !bg-[var(--surface)]" nodeColor={(node) => node.data.selectedTarget ? "#5750f1" : node.type === "clusterCard" ? "#a855f7" : node.type === "nasCard" ? "#0ea5e9" : "#98a2b3"} /></ReactFlow><div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded border border-[var(--border)] bg-[var(--surface)]/95 px-3 py-1 text-[8px] text-[var(--muted)] shadow">Policy (Should Be) · Actual (TCP Probe) · Group +/− inline expand · 20px Grid Snap</div></div>
+    <GroupDrawer data={selectedGroup} open={!!selectedGroup} onClose={() => setSelectedGroup(null)} onSelectAsset={(asset) => setSelectedVm(asset)} onDrillDown={() => { if (selectedEntityId) toggleGroup(selectedEntityId); setSelectedGroup(null); }} /><VmDrawer vm={selectedVm} network={projectStatuses} software={software} sops={sops} open={!!selectedVm} onClose={() => setSelectedVm(null)} onSelectSoftware={(item) => { const release = matchLegacySoftwareRelease(item, softwareProducts, softwareReleases); if (release) setSelectedRelease(release); }} /><ConnectionDrawer sourceHandle={edgeHandles[selectedEdgeId ?? ""]?.source} targetHandle={edgeHandles[selectedEdgeId ?? ""]?.target} onUpdateHandles={(value) => selectedEdgeId && updateHandles(selectedEdgeId, value)} status={selectedConnection} relatedStatuses={selectedConnection ? [selectedConnection] : []} open={!!selectedConnection} onClose={() => setSelectedConnection(null)} onEdit={() => { if (!selectedConnection) return; const currentEdge = liveEdges.find((e) => e.id === selectedEdgeId); const rel: ArchitectureRelation = currentEdge?.data?.relation ?? { id: `pol-rel-${selectedConnection.policy.id}`, projectGroupId: activeProject.id, sourceEntityType: "ASSET", sourceEntityId: selectedConnection.policy.sourceVmId, targetEntityType: "ASSET", targetEntityId: selectedConnection.policy.targetVmId ?? "", relationType: "SERVICE", protocol: selectedConnection.policy.protocol, port: selectedConnection.policy.port, name: `${selectedConnection.policy.sourceName} → ${selectedConnection.policy.targetName}`, description: selectedConnection.policy.purpose ?? undefined }; setSelectedConnection(null); setEditingRelation({ relation: rel, sourceName: selectedConnection.policy.sourceName, targetName: selectedConnection.policy.targetName }); }} /><ClusterDrawer cluster={selectedCluster} open={!!selectedCluster} onClose={() => setSelectedCluster(null)} /><NasDrawer nas={selectedNas} open={!!selectedNas} onClose={() => setSelectedNas(null)} onSelectVm={(hostname) => setSelectedVm(projectAssets.find((item) => item.hostname === hostname) ?? null)} /><SoftwareDetailDrawer release={selectedRelease} open={!!selectedRelease} onClose={() => setSelectedRelease(null)} /><DependencyDrawer entity={dependencyDrawerEntity} open={!!dependencyDrawerEntity} onClose={() => setDependencyDrawerEntity(null)} visits={dependencyGraph.visits} catalog={catalog} statuses={projectStatuses} software={software} sops={sops} assets={projectAssets} /><RelationEditorDrawer relation={editingRelation?.relation ?? null} open={!!editingRelation} onClose={onRelationCancel} onCancel={onRelationCancel} onSave={onRelationSave} onDelete={onRelationDelete} sourceName={editingRelation?.sourceName} targetName={editingRelation?.targetName} />
+  </div>;
 }
+
+function Toggle({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) { return <button type="button" aria-pressed={active} onClick={onClick} className={`h-7 rounded border px-2 ${active ? "border-[#5750f1] bg-[#5750f1]/10 text-[#5750f1]" : "border-[var(--border)] text-[var(--muted)]"}`}>{label}</button>; }
+function ImpactSummary({ values }: { values: Record<string, number> }) { const labels: Record<string, string> = { direct: "직접 연결", impact: "영향 대상", dependency: "필요 자원", failed: "실패 연결", sops: "관련 SOP", eosl: "EOSL 위험" }; return <div className="grid grid-cols-3 gap-px overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--border)] sm:grid-cols-6">{Object.entries(values).map(([key, value]) => <div key={key} className="bg-[var(--surface)] px-2 py-1.5"><div className="text-[8px] text-[var(--muted)]">{labels[key]}</div><div className="text-[13px] font-semibold tabular-nums">{value}</div></div>)}</div>; }
+function DependencyDrawer({ entity, open, onClose, visits, catalog, statuses, software, sops, assets }: { entity: SemanticEntity | null; open: boolean; onClose: () => void; visits: Array<{ id: string; side: string; depth: number }>; catalog: Map<string, SemanticEntity>; statuses: NetworkStatus[]; software: SoftwareInstall[]; sops: SopDocument[]; assets: Asset[] }) { const [tab, setTab] = useState("Overview"); if (!entity) return null; const ids = new Set([entity.id, ...(entity.group ? groupAssets(entity.group, assets).map((asset) => asset.id) : []), ...(entity.cluster ? entity.cluster.members.map((member) => member.assetId) : [])]); const relatedStatuses = statuses.filter((status) => ids.has(status.policy.sourceVmId) || (!!status.policy.targetVmId && ids.has(status.policy.targetVmId))); const relatedSoftware = software.filter((item) => ids.has(item.vmId)); const relatedSops = sops.filter((item) => item.relatedVmIds.some((id) => ids.has(id))); const tabs = ["Overview", "영향 범위", "Network", "Software", "SOP"]; return <SlideDrawer open={open} onClose={onClose} title={entity.label} subtitle={`${entity.kind.toUpperCase()} · 전체 구성 내 Dependency`} width={460}><div className="border-b border-[var(--border)] px-3 pt-2"><div className="flex gap-1">{tabs.map((item) => <button key={item} type="button" onClick={() => setTab(item)} className={`border-b-2 px-2 py-2 text-[9px] ${tab === item ? "border-[#5750f1] font-semibold text-[#5750f1]" : "border-transparent text-[var(--muted)]"}`}>{item}</button>)}</div></div><div className="space-y-2 p-4 text-[10px]">{tab === "Overview" && <><KV k="Entity ID" v={entity.id} /><KV k="Type" v={entity.kind.toUpperCase()} /><KV k="Aliases" v={entity.aliases.join(", ") || "-"} /></>}{tab === "영향 범위" && visits.filter((visit) => visit.id !== entity.id).map((visit) => <div key={`${visit.side}:${visit.id}`} className="flex justify-between rounded border border-[var(--border)] p-2"><span>{catalog.get(visit.id)?.label ?? visit.id}</span><span className="text-[var(--muted)]">{visit.side === "impact" ? "영향 대상" : "필요 자원"} · {visit.depth}단계</span></div>)}{tab === "Network" && relatedStatuses.map((status) => <div key={status.policy.id} className="rounded border border-[var(--border)] p-2"><div>{status.policy.sourceName} → {status.policy.targetName}</div><div className="text-[var(--muted)]">{status.policy.protocol}/{status.policy.port} · {status.policy.approvalStatus} · TCP {status.observation?.tcp ?? "NO_DATA"} · {status.overall}</div></div>)}{tab === "Software" && relatedSoftware.map((item) => <div key={item.id} className="flex justify-between rounded border border-[var(--border)] p-2"><span>{item.name} {item.version}</span><span className="font-mono text-[var(--muted)]">EOSL {item.eoslDate ?? "UNKNOWN"}</span></div>)}{tab === "SOP" && relatedSops.map((item) => <a key={item.id} href={item.url ?? "#"} className="block rounded border border-[var(--border)] p-2 hover:bg-[var(--surface-2)]"><div className="font-semibold">{item.title}</div><div className="text-[var(--muted)]">{item.category} · {item.owner}</div></a>)}{((tab === "Network" && !relatedStatuses.length) || (tab === "Software" && !relatedSoftware.length) || (tab === "SOP" && !relatedSops.length)) && <div className="rounded border border-dashed border-[var(--border)] p-3 text-center text-[var(--muted)]">관련 데이터가 없습니다.</div>}</div></SlideDrawer>; }
+function KV({ k, v }: { k: string; v: React.ReactNode }) { return <div className="flex min-h-8 items-center border-b border-[var(--border)]"><span className="w-28 text-[var(--muted)]">{k}</span><span className="font-medium">{v}</span></div>; }

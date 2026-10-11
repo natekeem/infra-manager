@@ -23,15 +23,18 @@ This spec exists to stop future coding agents from gradually turning the portal 
 
 ## Detail interaction
 
-VM and network details use a **left sliding Drawer**, preserving the current page/context behind it. Do not replace it with center modal or full navigation page.
+VM, network, cluster, NAS and software details use a **right sliding Drawer** (460px), preserving the left navigation and current page context. Do not replace it with a center modal or full navigation page.
 
 ## Architecture scalability
 
 - first load: grouped tiers only
-- service view: service-level nodes
-- VM view: explicit drill-down; default filter should prevent an unreadable 30+ node wall
+- operator views: 전체 구성 and Dependency only
+- group navigation: inline multi-group expand/collapse on the same full-context canvas
+- assets: leaf assets appear inside actual React Flow parent containers; the default remains collapsed
 - issue-only: isolate risky flows
 - search: hostname/IP first; port/request ID later
+- deterministic ELK layered layout; manual 20px-grid editing is a final correction layer
+- Dependency is full-graph highlight mode, defaults to depth 2, and keeps Monitoring disabled
 
 ## Executive presentation
 

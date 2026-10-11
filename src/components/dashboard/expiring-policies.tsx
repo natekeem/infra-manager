@@ -26,11 +26,11 @@ export function ExpiringPolicies({ statuses, onSelect }: { statuses: NetworkStat
       <table className="w-full min-w-[540px] text-left text-[10px]">
         <thead>
           <tr className="border-b border-[var(--border)] bg-[var(--surface-2)] text-[9px] uppercase tracking-[0.04em] text-[var(--muted)]">
-            <th className="px-3 py-2 font-medium">Flow</th>
-            <th className="px-3 py-2 font-medium">Port</th>
-            <th className="px-3 py-2 font-medium">Expiry / D-Day</th>
+            <th className="px-3 py-2 font-medium">흐름</th>
+            <th className="px-3 py-2 font-medium">포트</th>
+            <th className="px-3 py-2 font-medium">만료 / D-Day</th>
             <th className="px-3 py-2 font-medium">TCP</th>
-            <th className="px-3 py-2 font-medium">Request ID</th>
+            <th className="px-3 py-2 font-medium">요청 ID</th>
           </tr>
         </thead>
         <tbody>
@@ -45,7 +45,7 @@ export function ExpiringPolicies({ statuses, onSelect }: { statuses: NetworkStat
               >
                 <td className="px-3 py-2">
                   <div className="font-medium text-[11px]">{s.policy.sourceName} → {s.policy.targetName}</div>
-                  <div className="text-[9px] text-[var(--muted)]">{s.policy.purpose ?? "Service Flow"}</div>
+                  <div className="text-[9px] text-[var(--muted)]">{s.policy.purpose ?? "서비스 흐름"}</div>
                 </td>
                 <td className="px-3 py-2 font-mono">{s.policy.protocol}/{s.policy.port}</td>
                 <td className="px-3 py-2">
@@ -58,7 +58,7 @@ export function ExpiringPolicies({ statuses, onSelect }: { statuses: NetworkStat
                 </td>
                 <td className="px-3 py-2 font-semibold">
                   <Badge tone={s.observation?.tcp === "UP" ? "success" : "danger"} dot>
-                    {s.observation?.tcp ?? "NO DATA"}
+                    {s.observation?.tcp ?? "데이터 없음"}
                   </Badge>
                 </td>
                 <td className="px-3 py-2 font-mono text-[9px] text-[var(--muted)]">

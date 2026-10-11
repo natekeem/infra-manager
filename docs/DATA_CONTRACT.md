@@ -16,9 +16,11 @@ InfluxDB stores Telegraf time series:
 
 ## Join key
 
-Preferred join key for network observations: `policy_id` as a Telegraf tag. If that is impossible, map a composite key:
+Network observations are independent facts; a policy ID is not required in Telegraf. Join the declared policy to the latest directional observation with:
 
 `source_vm_id + target_ip + protocol + port`
+
+For a `BIDIRECTIONAL` policy, evaluate the reverse identity independently. A successful forward probe with a failed return probe is `RETURN_DIRECTION_FAILED`.
 
 Do not join only by target IP because one target may expose several required ports.
 

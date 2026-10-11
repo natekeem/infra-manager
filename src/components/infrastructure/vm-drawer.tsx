@@ -1,12 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import type { NetworkStatus, SoftwareInstall, SopDocument, VmAsset } from "@/domain/models";
+import type { AssetSoftwareInstallation, NetworkStatus, SoftwareInstall, SoftwareRelease, SopDocument, VmAsset } from "@/domain/models";
 import { SlideDrawer } from "@/components/common/slide-drawer";
 import { Badge } from "@/components/tailgrids/core/badge";
 import { StatusBadge } from "@/components/network/status-badge";
 import { getEoslState } from "@/domain/eosl";
 import { ArrowUpRightIcon } from "@/components/common/icons";
+import { getAppNow } from "@/domain/app-time";
+import { daysUntilEosl, deriveLifecycleStatus, matchVersionRule } from "@/domain/software-lifecycle";
 
 type DrawerTab = "overview" | "network" | "software" | "sop";
 
@@ -18,6 +20,8 @@ export function VmDrawer({
   open,
   onClose,
   onSelectSoftware,
+  installations = [],
+  releases = [],
 }: {
   vm: VmAsset | null;
   network: NetworkStatus[];
@@ -26,6 +30,8 @@ export function VmDrawer({
   open: boolean;
   onClose: () => void;
   onSelectSoftware?: (sw: SoftwareInstall) => void;
+  installations?: AssetSoftwareInstallation[];
+  releases?: SoftwareRelease[];
 }) {
   const [activeTab, setActiveTab] = useState<DrawerTab>("overview");
 
@@ -35,8 +41,10 @@ export function VmDrawer({
     (s) => s.policy.sourceVmId === vm.id || s.policy.targetVmId === vm.id
   );
   const installed = software.filter((s) => s.vmId === vm.id);
+  const catalogInstalled = installations.filter((item) => item.assetId === vm.id);
   const docs = sops.filter((s) => s.relatedVmIds.includes(vm.id));
-  const eosl = getEoslState(vm.eoslDate, new Date("2026-09-21T00:28:00+09:00"));
+  const osRelease = releases.find((release) => release.productName.toLowerCase().includes((vm.osName ?? "").toLowerCase()) && !!vm.osVersion && matchVersionRule(vm.osVersion, release.versionMatchRule, release.matchPattern, release.version));
+  const eosl = getEoslState(osRelease?.eoslDate ?? vm.eoslDate, getAppNow());
   const eoslTone =
     eosl.state === "EOSL"
       ? "danger"
@@ -57,9 +65,9 @@ export function VmDrawer({
         <div className="flex border-b border-[var(--border)] bg-[var(--surface-2)] px-4 pt-2">
           {(
             [
-              { id: "overview", label: "Overview" },
-              { id: "network", label: `Network (${connections.length})` },
-              { id: "software", label: `Software (${installed.length})` },
+              { id: "overview", label: "개요" },
+              { id: "network", label: `네트워크 (${connections.length})` },
+              { id: "software", label: `소프트웨어 (${catalogInstalled.length || installed.length})` },
               { id: "sop", label: `SOP (${docs.length})` },
             ] as const
           ).map((tab) => (
@@ -94,7 +102,7 @@ export function VmDrawer({
                 {vm.health}
               </Badge>
               <span className="text-[9px] text-[var(--muted)]">
-                Verified {vm.lastVerifiedAt?.slice(0, 16).replace("T", " ")}
+                확인 일시 {vm.lastVerifiedAt?.slice(0, 16).replace("T", " ")}
               </span>
             </div>
 
@@ -111,21 +119,21 @@ export function VmDrawer({
               ))}
             </div>
 
-            <Section title="Asset Specification">
-              <KV k="Service" v={vm.service} />
-              <KV k="Tier Zone" v={vm.zone} />
-              <KV k="Criticality" v={vm.criticality} />
-              <KV k="Owner" v={vm.owner ?? "-"} />
-              <KV k="CPU Cores" v={`${vm.cpuCores ?? 8} vCPU`} />
-              <KV k="Memory" v={`${vm.memoryGb ?? 32} GB`} />
-              <KV k="Disk Size" v={`${vm.diskGb ?? 500} GB`} />
-              <KV k="OS Name" v={`${vm.osName} ${vm.osVersion ?? ""}`} />
+            <Section title="자산 상세 사양">
+              <KV k="서비스" v={vm.service} />
+              <KV k="티어 영역" v={vm.zone} />
+              <KV k="중요도" v={vm.criticality} />
+              <KV k="담당자" v={vm.owner ?? "-"} />
+              <KV k="CPU 코어" v={`${vm.cpuCores ?? 8} vCPU`} />
+              <KV k="메모리" v={`${vm.memoryGb ?? 32} GB`} />
+              <KV k="디스크 용량" v={`${vm.diskGb ?? 500} GB`} />
+              <KV k="운영체제 (OS)" v={`${vm.osName} ${vm.osVersion ?? ""}`} />
               <KV
-                k="OS Lifecycle"
+                k="OS 수명주기"
                 v={
                   <span className="flex items-center gap-2">
                     <Badge tone={eoslTone}>{eosl.state}</Badge>
-                    <span className="font-mono text-[9px]">{vm.eoslDate ?? "Not mapped"}</span>
+                    <span className="font-mono text-[9px]">{osRelease?.eoslDate ?? vm.eoslDate ?? "미매핑"}{osRelease ? " · Catalog" : " · Legacy fallback"}</span>
                   </span>
                 }
               />
@@ -144,7 +152,7 @@ export function VmDrawer({
         {activeTab === "network" && (
           <div className="p-4 space-y-2">
             <div className="mb-2 text-[10px] text-[var(--muted)]">
-              Inbound & Outbound approved policy flows and observed TCP probes
+              인바운드 및 아웃바운드 승인 정책 흐름과 TCP 실측 프로브
             </div>
             <div className="divide-y divide-[var(--border)] rounded-md border border-[var(--border)]">
               {connections.map((s) => (
@@ -171,11 +179,16 @@ export function VmDrawer({
         {activeTab === "software" && (
           <div className="p-4 space-y-2">
             <div className="mb-2 text-[10px] text-[var(--muted)]">
-              Detected software packages, matched catalog releases, and support lifecycle
+              감지된 소프트웨어 패키지, 카탈로그 릴리스 매칭 및 지원 수명주기
             </div>
             <div className="divide-y divide-[var(--border)] rounded-md border border-[var(--border)]">
-              {installed.map((sw) => {
-                const state = getEoslState(sw.eoslDate, new Date("2026-09-21T00:28:00+09:00"));
+              {catalogInstalled.length > 0 ? catalogInstalled.map((sw) => {
+                const release = releases.find((item) => item.id === sw.matchedReleaseId);
+                const state = deriveLifecycleStatus(release?.eoslDate);
+                const days = daysUntilEosl(release?.eoslDate);
+                return <div key={sw.id} className="flex items-center justify-between gap-2 p-2.5 hover:bg-[var(--surface-2)] transition"><div><div className="text-[11px] font-medium">{sw.productName}</div><div className="text-[9px] text-[var(--muted)]">감지 {sw.detectedVersion} · 매칭 {release?.version ?? "-"}</div><div className="font-mono text-[8px] text-[var(--muted-2)]">EOSL {release?.eoslDate ?? "UNKNOWN"} · {days == null ? "-" : days < 0 ? `D+${Math.abs(days)}` : `D-${days}`} · {sw.matchStatus ?? "MATCHED"}</div></div><Badge tone={state === "SUPPORTED" ? "success" : state === "EOSL" ? "danger" : state === "UNMAPPED" ? "neutral" : "warning"}>{state}</Badge></div>;
+              }) : installed.map((sw) => {
+                const state = getEoslState(sw.eoslDate, getAppNow());
                 const tone =
                   state.state === "EOSL"
                     ? "danger"
@@ -210,7 +223,7 @@ export function VmDrawer({
         {activeTab === "sop" && (
           <div className="p-4 space-y-2">
             <div className="mb-2 text-[10px] text-[var(--muted)]">
-              Standard Operating Procedures (SOP) linked to this asset
+              이 자산과 연결된 표준 운영 절차서 (SOP)
             </div>
             <div className="space-y-1.5">
               {docs.map((doc) => (
